@@ -1,0 +1,479 @@
+/**
+ * 渲染页配置条目的统一排布（2026-10-11 起定下的格式）。
+ *
+ * 每个条目 = 「配置名 + 控件」：名称在左、控件右对齐，一行高。
+ * 栏与栏之间有一条竖分割线（`.cfg-grid::before/::after`）。
+ * 详细信息不做 ⓘ 圆圈，改成挂在条目根元素上的原生 `title`，鼠标悬停即显示。
+ *
+ * 这层样式是**全局**的（不加 scoped），因为条目经常由插槽从别的视图塞进来
+ * （例如 `RenderView.vue` 通过 `#output-extra` 传的那几个），
+ * 父组件的 scoped 样式管不到插槽内容。
+ */
+
+/* 现在是**三栏**（普通配置页）。要改回两栏：把 `repeat(3, ...)` 改成 `repeat(2, ...)`，
+   删掉 `.cfg-grid::after`（2/3 处那条线），并把 ::before 拨到
+   `calc(var(--phi-space-1) + (100% - var(--phi-space-1) * 2) / 2)`。
+   **例外**：三级菜单（齿轮）弹窗里的网格自己排成两栏 —— 那段覆盖写在
+   `DPR/src/components/PhiSubMenu.vue` 的 scoped 样式里（`.phi-submenu__dialog-body :deep(.cfg-grid)`），
+   全局规则保持三栏不动。
+   想只让**某一块**变两栏，别动这里，加 `cfg-grid--two` 类即可（见下面那段，谱面信息在用）。
+   注意 `column-gap` 必须留 0，否则竖线的位置算不准（留白交给 `.cfg-item` 的内边距）。 */
+.cfg-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 0;
+  row-gap: var(--phi-space-1);
+  padding: var(--phi-space-2) var(--phi-space-1) var(--phi-space-3);
+}
+
+/* 栏与栏中间那条竖线：::before 在 1/3 处、::after 在 2/3 处 */
+.cfg-grid::before,
+.cfg-grid::after {
+  content: '';
+  position: absolute;
+  top: var(--phi-space-2);
+  bottom: var(--phi-space-3);
+  width: 1px;
+  background: var(--phi-border-l2);
+  pointer-events: none;
+}
+
+.cfg-grid::before {
+  left: calc(var(--phi-space-1) + (100% - var(--phi-space-1) * 2) / 3);
+}
+
+.cfg-grid::after {
+  left: calc(var(--phi-space-1) + (100% - var(--phi-space-1) * 2) * 2 / 3);
+}
+
+/* 两栏网格：目前只有「谱面信息」里的 曲名 / 曲师 / 谱师 / 画师 用它
+   （「曲名 曲师 谱师 画师改成一行两个」）。
+   栏间竖线只留中间那一条：::before 拨到 1/2、::after（原来 2/3 那条）整条去掉 ——
+   配方和 `PhiSubMenu.vue` 里弹窗网格那段覆盖一样。 */
+.cfg-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cfg-grid--two::before {
+  left: calc(var(--phi-space-1) + (100% - var(--phi-space-1) * 2) / 2);
+}
+
+.cfg-grid--two::after {
+  display: none;
+}
+
+/* 两栏网格里的控件比三栏时更宽（「输入框拉长点」）：
+   标签让出一部分宽度，控件在半栏里也尽量铺开（三栏时是 标签 ≤52% / 控件 40%）。 */
+.cfg-grid--two .cfg-item__label {
+  max-width: 38%;
+}
+
+.cfg-grid--two .cfg-item__control {
+  flex: 0 0 62%;
+}
+/* 同一分区里连着两个 `.cfg-grid` 时，上面那个的 padding-bottom 已经算过间距，
+   下面这个不要再加 padding-top —— 否则两个网格之间会空出一条（8+12=20px）的带子，
+   栏间竖线也会断开重来。 */
+.cfg-grid + .cfg-grid {
+  padding-top: 0;
+}
+
+/* 整行的网格（里面只有 full 条目，例如「文件名格式」「Tip」）不画栏间竖线 ——
+   那种网格的控件本来就横跨整行，中间那两条线纯属噪声。`:has()` 在 WebView2 / Chromium 里可用。 */
+.cfg-grid:not(:has(.cfg-item:not(.cfg-item--full)))::before,
+.cfg-grid:not(:has(.cfg-item:not(.cfg-item--full)))::after {
+  display: none;
+}
+
+.cfg-item {
+  display: flex;
+  align-items: center;
+  gap: var(--phi-space-3);
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 var(--phi-space-3);
+}
+
+/* 多行文本 / 长文本（Tip、文件名格式）独占整行 */
+.cfg-item--full {
+  grid-column: 1 / -1;
+}
+
+/* 整行的控件可以更长 —— 它不用跟三栏的节奏对齐，右侧留白没意义 */
+.cfg-item--full .cfg-item__control {
+  flex: 0 0 68%;
+}
+
+.cfg-item__label {
+  flex: 0 1 auto;
+  max-width: 52%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* 15px → 16px：「二级菜单下配置的文字放大点」。与输入框里的文字
+     （`.config-root .v-field__input` 等，同一天也显式定成 1rem）拉平。 */
+  font-size: 16px;
+  color: var(--phi-label-secondary);
+}
+
+.cfg-item__control {
+  flex: 0 0 40%;
+  min-width: 0;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--phi-space-2);
+  /* 下面那条「校验红字浮到左边」的定位基准 */
+  position: relative;
+}
+
+/* 校验红字（Vuetify 的 `rules` 提示，例如「必须是有效的码率」）原来落在控件下面：
+   控件写的是 `hide-details="auto"`，只在报错时才展开那一行，所以一有错这一行就被撑高、
+   下面的行整体往下跳。改成浮在控件左侧、贴着控件左边缘右对齐 —— 不占位、行高不变，
+   红字往左出现而不是往下弹。
+   垂直用 `top: 50%` 居中（红字跟输入框里的文字一条水平线），
+   `pointer-events: none` 是为了不让它挡住左边的条目名。 */
+.cfg-item__control .v-input__details {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + var(--phi-space-2));
+  transform: translateY(-50%);
+  min-height: 0;
+  padding-top: 0;
+  margin-bottom: 0;
+  text-align: right;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 配置区里的输入控件（v-text-field / v-textarea / v-combobox / v-select）统一加一圈外框，
+   和方形开关保持一致：直角 + 1px --phi-border-l3，底色沿用 Vuetify 的 filled 填充。
+   同时去掉 filled 变体底部那条下划线，只保留外框；聚焦时改成外框变色。
+   作用范围是 `.config-root` —— 弹窗里的输入框不在其中，保持原样。 */
+.config-root .v-field {
+  /* box-sizing 在这里其实是空操作：`.v-field` 的高度是 auto（由里面的
+     `--v-input-control-height` 撑出来），border-box 只在显式设高时才改变结果。
+     真正决定外高的是下面 `.cfg-switch` 那条 —— 开关必须量着输入框的外高来定。 */
+  box-sizing: border-box;
+  border: 1px solid var(--phi-border-l3);
+  border-radius: 0;
+}
+
+/* 设置页与渲染配置页的文字一律纯白（2026-10-11 需求「设置配置的字体全改成白色」）。
+   这两个页面都以 `.config-root` 为根，所以在这一层把语义别名重定成纯白就够了：
+   一级分组标题（`--phi-label-primary`）、二级分区标题与说明文字
+   （`--phi-label-secondary`）一起变白 —— 层级仍靠字号与字重区分。
+   **故意没动** `--phi-label-tertiary` 与 `--phi-label-caption`：它们还要服务三处
+   「淡」的语义 —— 输入框占位符、未启用的条目、方形开关里没被选中那半边的记号；
+   全变白就分不出「空值 / 真值」「禁用 / 可改」「选中 / 没选」了。
+   语义色也不动（校验红字、✅/❌ 的绿红、链接与滑杆的强调色）。
+   「关于」里那几段说明文字用的是 tertiary（见 SettingsView.vue 的局部样式），
+   那几处是正文不是提示，已在那里单独改白。 */
+.config-root {
+  --phi-label-primary: var(--phi-static-bluish-00);
+  --phi-label-secondary: var(--phi-static-bluish-00);
+}
+
+/* 条目名、输入框里的文字/浮标、勾选框的文案一律纯白（2026-10-11 起）。 */
+.config-root .cfg-item__label,
+.config-root .v-label,
+.config-root .v-field__input,
+.config-root .v-field input,
+.config-root .v-field textarea,
+.config-root .v-field__input input,
+.config-root .v-select__selection,
+.config-root .v-selection-control__label {
+  color: var(--phi-static-bluish-00);
+}
+
+/* 输入框里的文字与条目名、选项文案保持同一个字号（「二级菜单下配置的
+   文字放大点」）：条目名在 `.cfg-item__label` 里是 16px，这里把 Vuetify 输入控件的文字
+   也显式钉成 1rem（16px），免得以后 Vuetify 改默认值导致两边不齐。 */
+.config-root .v-field__input,
+.config-root .v-field input,
+.config-root .v-field textarea,
+.config-root .v-select__selection,
+.config-root .v-selection-control__label {
+  font-size: 1rem;
+}
+
+/* 输入框的占位符保持次要色，免得空值和真值分不清 */
+.config-root .v-field input::placeholder,
+.config-root .v-field textarea::placeholder {
+  color: var(--phi-label-tertiary);
+}
+
+/* 未启用的条目文字也改成淡色（2026-10-11 起）：
+   控件本身已经被 Vuetify 灰掉了，条目名和里面的数值还保持纯白会显得「还能改」。
+   `:has(:disabled)` 同时覆盖输入框（`<input disabled>`）与方形开关（`<button disabled>`）。 */
+.config-root .cfg-item:has(:disabled) .cfg-item__label,
+.config-root .v-field--disabled .v-field__input,
+.config-root .v-field--disabled .v-field__input input,
+.config-root .v-field--disabled input,
+.config-root .v-field--disabled textarea,
+.config-root .v-field--disabled .v-select__selection {
+  color: var(--phi-label-tertiary);
+}
+
+/* 去掉 filled 变体底部那条下划线（它和上面的外框叠在一起会变成两条线） */
+.config-root .v-field__outline {
+  display: none;
+}
+
+/* 聚焦时用外框变色代替原来的下划线 */
+.config-root .v-field--focused {
+  border-color: var(--phi-accent);
+}
+
+/* 「宽 : 高」这种一个条目里放两个输入框时的分隔符 */
+.cfg-colon {
+  flex: none;
+  color: var(--phi-label-tertiary);
+}
+
+/* ---------- 方形开关（取代勾选框）：左边打勾、右边打叉 ----------
+   尺寸对齐文本框：**宽 = 同栏文本框宽的一半（96px），高与文本框一致（42px）**。
+   42px 是实测出来的：Vuetify 的 compact 输入框本身 40px，再加上面那圈 1px 外框（上下各 1px）。
+    「去掉圆角」「改成左边 ✅ 右边 ❌ 的那种」⇒ 圆角为 0，左右各占一半，没有滑块。
+   外观再改成：**灰底留给「选中」的那一格，未选中的一格不填色**，整个控件外面加一圈外框。
+   即「开」= 左格填灰、「关」= 右格填灰（开关类配置默认就是关，所以默认看到的是右边那格是灰的）。 */
+.cfg-switch {
+  position: relative;
+  display: flex;
+  flex: none;
+  width: 96px;
+  height: 42px;
+  padding: 0;
+  box-sizing: border-box;
+  /* 只有一圈外框，底色透明 —— 灰底由选中那一格自己画 */
+  border: 1px solid var(--phi-border-l3);
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--phi-duration) var(--phi-ease);
+}
+
+.cfg-switch:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cfg-switch:focus-visible {
+  outline: var(--phi-focus-ring-width) solid var(--phi-accent);
+  outline-offset: 2px;
+}
+
+/* 半尺寸开关：96×42 的一半（48×21），记号也缩到 12px。
+   给二级分区标题行用 —— 「二级菜单的勾选框放到二级菜单标题右边，
+   有点间隙，勾选框调小50%」。 */
+.cfg-switch--small {
+  width: 48px;
+  height: 21px;
+}
+
+.cfg-switch__opt {
+  flex: 1 1 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--phi-label-caption);
+  transition:
+    background-color var(--phi-duration) var(--phi-ease),
+    color var(--phi-duration) var(--phi-ease);
+}
+
+/* 两个格子中间那条分界线 */
+.cfg-switch__opt--no {
+  border-left: 1px solid var(--phi-border-l2);
+}
+
+/* 勾选标记：只有**被选中**的那半边保留语义色（开 = 绿色 ✅、关 = 红色 ❌），
+   另一半灰掉 —— 「未选中的时候 ✅/❌ 是灰色」。
+   （原先是两边都上语义色，与选中无关；后来纠正成现在这样。
+   未选中的记号不加 color，就落在上面 `.cfg-switch__opt` 的 `--phi-label-caption` 上。） */
+.cfg-switch--on .cfg-switch__opt--yes {
+  color: var(--phi-static-green-400);
+}
+.cfg-switch:not(.cfg-switch--on) .cfg-switch__opt--no {
+  color: var(--phi-static-red-400);
+}
+
+/* 选中那一格填灰色：开 = 左格（勾），关 = 右格（叉）；未选中的一格保持不填色。
+   这里只改底色、不动 color —— 记号的颜色由上面那条「选中才上语义色」的规则决定。 */
+.cfg-switch--on .cfg-switch__opt--yes,
+.cfg-switch:not(.cfg-switch--on) .cfg-switch__opt--no {
+  background: var(--phi-interactive-active);
+}
+
+/* 悬停时给没选中的那一格一点底色反馈（同样只动底色，不动记号颜色） */
+.cfg-switch:hover:not(:disabled):not(.cfg-switch--on) .cfg-switch__opt--yes,
+.cfg-switch--on:hover:not(:disabled) .cfg-switch__opt--no {
+  background: var(--phi-interactive-hover);
+}
+
+/* 二选一（单选）框：外壳照抄上面 `.cfg-switch` —— 直角、透明底、一圈 `--phi-border-l3`、
+   两格之间一条 `--phi-border-l2` 分界线、只有选中那格填 `--phi-interactive-active`。
+   区别只有两点：宽度按选项文字自适应（不再是固定 96px），两格里是文字不是 ✅/❌。
+   「还是改成一个罗马模式/中文模式的二选一框吧，可以套用勾选框的样式」
+   ⇒ 「其他语言」弹窗里原来那两个独立开关合成这一个控件（见 `CfgRadio.vue`）。 */
+.cfg-radio {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  min-height: 42px;
+  box-sizing: border-box;
+  border: 1px solid var(--phi-border-l3);
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.cfg-radio__opt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--phi-space-3);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--phi-label-caption);
+  cursor: pointer;
+  transition:
+    background-color var(--phi-duration) var(--phi-ease),
+    color var(--phi-duration) var(--phi-ease);
+}
+
+/* 两格中间那条分界线（与 `.cfg-switch__opt--no` 同一条） */
+.cfg-radio__opt + .cfg-radio__opt {
+  border-left: 1px solid var(--phi-border-l2);
+}
+
+.cfg-radio__opt--on {
+  background: var(--phi-interactive-active);
+  color: var(--phi-static-bluish-00);
+}
+
+.cfg-radio__opt:hover:not(:disabled):not(.cfg-radio__opt--on) {
+  background: var(--phi-interactive-hover);
+}
+
+.cfg-radio__opt:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cfg-radio__opt:focus-visible {
+  outline: var(--phi-focus-ring-width) solid var(--phi-accent);
+  outline-offset: -2px;
+}
+
+/* ✅/❌ 开关的条目文字沿用上面那条「统一纯白」；下面这条注释标记一下这里**不要**再加
+   按选中上色的规则 —— 「未选中的时候灰色」指的是 ✅/❌ 记号本身，
+   不是条目名（记号那条规则在本文件「方形开关」一节里）。 */
+
+/* 只画开关本体、不给条目名（`bare`）：三级菜单的标题行用它，
+   行高与内边距由 PhiSubMenu 的标题行接管。 */
+.cfg-item--bare {
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+}
+.cfg-item--bare .cfg-item__control {
+  flex: none;
+  margin-left: 0;
+}
+
+/* ---------- 拉动进度条（滑块） ---------- */
+/* ⚠️ 目前**没有任何界面在用**：2026-10-11 先有「有0~1这样范围限制的做成拉动条」，随后又改成
+   「去除所有拉动条，全部改成文本框」，五个 0~1 的数值都已复原成 `v-text-field`，
+   `CfgSlider.vue` 不再被 import。这一节连同组件一起留着，方便再改回来。
+   2026-10-11（看齿轮弹窗截图）：「拉动条也改成矩形，已拉过区域是灰色，未拉过不填色」
+   —— 轨道与滑块都是方块（Vuetify 默认轨道 6px 圆角、滑块 50% 圆），已拉过的那段是灰色，
+   没拉到的部分完全不填色。全项目的 `v-slider` 只出现在 `CfgSlider.vue` 这一处，
+   所以直接钉在 `.cfg-slider` 上即可。`!important` 是用来压过 Vuetify 由 `color` 写在元素上的行内背景。 */
+.cfg-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cfg-slider .v-slider-track {
+  border-radius: 0 !important;
+}
+/* 未拉过的部分不填色（原来是一层半透明的 surface-variant） */
+.cfg-slider .v-slider-track__background {
+  background-color: transparent !important;
+}
+/* 已拉过的部分：灰色（`--phi-static-neutral-500` = #7f8287） */
+.cfg-slider .v-slider-track__fill {
+  background-color: var(--phi-static-neutral-500) !important;
+}
+.cfg-slider .v-slider-thumb__surface,
+.cfg-slider .v-slider-thumb__surface::before {
+  border-radius: 0 !important;
+}
+/* 滑块头（可拖的那个方块）改深灰（2026-10-11：「拉动条头改成深灰色」）。
+   颜色写在 `color` 上：`__surface` 是 `background-color: currentColor`、`::before`
+   （悬停/聚焦时浮起来的那层）是 `background: currentColor`，一处就够。 */
+.cfg-slider .v-slider-thumb__surface {
+  color: var(--phi-static-neutral-600) !important;
+}
+
+.cfg-slider__value {
+  flex: none;
+  width: 48px;
+  text-align: right;
+  font-size: var(--phi-font-size-secondary);
+  font-variant-numeric: tabular-nums;
+  color: var(--phi-label-primary);
+}
+
+/* ===== 配置类弹窗的共用皮肤 =====
+   齿轮（三级菜单）弹窗与「文件名格式」说明弹窗用同一套外观 —— 2026-10-11：
+   「文件名格式页改成和齿轮配置页一个样式」。取值与 `PhiSubMenu.vue` 里 `.phi-submenu__dialog*`
+   那几条 scoped 规则**逐条相同**（齿轮弹窗那边暂时保留自己的一份：SFC 的 scoped 选择器靠
+   `[data-v]` 把优先级提到 (0,2,0) 才压得住 `App.vue` 的 `.log-card-only-window`，
+   这里的全局规则只有 (0,1,0)，合并前得先处理掉那条 `!important` 的优先级问题）。
+
+   底色用内容区那块（`--phi-bg-base` = `--phi-static-bluish-950` = `#151517` = `rgb(21 21 23)`），
+   再留一层 `--phi-config-dialog-alpha` 不透明度（透出下面的配置页）；直角；标题行居中、1.5rem、
+   上 20px / 左右 26px / 下 8px；弹窗内部不加额外内边距（条目位置交给 `.cfg-grid` 自带的
+   `8px 4px 12px`）；**没有关闭按钮**，只靠点空白处（或 Esc）关闭。 */
+.log-card-only-window.phi-config-dialog {
+  --phi-config-dialog-alpha: 88%;
+  background: rgb(21 21 23 / var(--phi-config-dialog-alpha)) !important;
+  border-radius: 0 !important;
+  width: 100%;
+}
+
+.phi-config-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--phi-space-2);
+  position: relative;
+  width: 100%;
+  padding: calc(var(--phi-space-3) + var(--phi-space-2)) calc(var(--phi-space-3) * 2.2) var(--phi-space-2);
+  user-select: none;
+  cursor: default;
+}
+
+/* 标题：1.5rem、不加粗、纯白，与齿轮弹窗标题一致 */
+.phi-config-dialog__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--phi-static-bluish-00);
+}
+
+/* 选择器写两层是为了压过 Vuetify 的 `.v-card-text`（同为 (0,1,0)，它后加载会赢） */
+.phi-config-dialog .phi-config-dialog__body {
+  padding: 0 0 var(--phi-space-3);
+}

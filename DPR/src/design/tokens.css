@@ -1,0 +1,425 @@
+/*
+ * DPR 设计令牌（从 DSH Desktop 的设计体系搬来，前缀换成 --phi-）
+ *
+ * 分三层，改色只需要动第 1 层：
+ *   1. --phi-static-*   原始色阶（值来自 DSH 的 --dsw-static-*，一一对应）
+ *   2. --phi-*          语义别名（值来自 DSH 的 --dsw-alias-* / --dsw-specific-*）
+ *   3. 主题覆盖         body[data-phi-theme='...'] 只改第 2 层的指向
+ *
+ * 与 DSH 的三处刻意不同：
+ *   - 不用 --dsw-menu-backdrop-filter / --dsw-mask-blur 那套毛玻璃材质
+ *   - 不定义任何位移 / 渐入动效令牌（--phi-duration 只用于颜色与描边过渡）
+ *   - 字体沿用项目自带字体栈，不用 DSH 的 Montserrat 品牌字体
+ *
+ * 主题只有一套：DeepDark（深色）。2026-10-11 起删掉了 Light / Dark / LightBlue，
+ * 令牌层不再按主题名切换（`body` 直接吃深色令牌，data-phi-theme 只是留个标记）。
+ */
+
+/* ============================================================
+   1. 原始色阶（--phi-static-*）  DSH --dsw-static-* 的逐值对应
+   ============================================================ */
+:root {
+  /* 蓝 */
+  --phi-static-blue-50: #eff6ff;
+  --phi-static-blue-50p: #eaf3ff;
+  --phi-static-blue-75: #e5f0ff;
+  --phi-static-blue-100: #dbeafe;
+  --phi-static-blue-300: #93c5fd;
+  --phi-static-blue-400: #60a5fa;
+  --phi-static-blue-450: #4d93f8;
+  --phi-static-blue-500: #3b82f6;
+  --phi-static-blue-600: #2563eb;
+  --phi-static-blue-800: #1e40af;
+  --phi-static-blue-900: #0e3074;
+  --phi-static-blue-950: #172554;
+
+  /* 品牌蓝（DSH 的 deepseek 色阶） */
+  --phi-static-brand-50: #edf3fe;
+  --phi-static-brand-100: #e4edfd;
+  --phi-static-brand-200: #d3e2ff;
+  --phi-static-brand-300: #b7c8fe;
+  --phi-static-brand-400: #7aaaff;
+  --phi-static-brand-450: #5686fe;
+  --phi-static-brand-500: #4176e6;
+  --phi-static-brand-600: #4868b2;
+  --phi-static-brand-800: #34415b;
+  --phi-static-brand-900: #283142;
+
+  /* 中性（不带蓝） */
+  --phi-static-neutral-00: #fff;
+  --phi-static-neutral-50: #fafafa;
+  --phi-static-neutral-100: #f5f5f5;
+  --phi-static-neutral-150: #ededed;
+  --phi-static-neutral-200: #e5e5e5;
+  --phi-static-neutral-250: #dcdcdc;
+  --phi-static-neutral-300: #d4d4d4;
+  --phi-static-neutral-400: #a2a4a6;
+  --phi-static-neutral-500: #7f8287;
+  --phi-static-neutral-550: #65676b;
+  --phi-static-neutral-600: #545557;
+  --phi-static-neutral-700: #3c3c3d;
+  --phi-static-neutral-800: #292929;
+  --phi-static-neutral-850: #212123;
+  --phi-static-neutral-900: #0f0f0f;
+  --phi-static-neutral-1000: #000;
+
+  /* 中性偏蓝（DSH 界面底色的主色系） */
+  --phi-static-bluish-00: #fff;
+  --phi-static-bluish-50: #f9fafb;
+  --phi-static-bluish-60: #f5f6f7;
+  --phi-static-bluish-75: #f1f3f5;
+  --phi-static-bluish-100: #ebeef2;
+  --phi-static-bluish-150: #e9ecf2;
+  --phi-static-bluish-200: #e1e5ee;
+  --phi-static-bluish-300: #cfd3d6;
+  --phi-static-bluish-400: #adb2b8;
+  --phi-static-bluish-500: #979da6;
+  --phi-static-bluish-600: #81858c;
+  --phi-static-bluish-700: #61666b;
+  --phi-static-bluish-750: #43454a;
+  --phi-static-bluish-800: #353638;
+  --phi-static-bluish-850: #2c2c2e;
+  --phi-static-bluish-875: #232324;
+  --phi-static-bluish-900: #1b1b1c;
+  --phi-static-bluish-950: #151517;
+  --phi-static-bluish-1000: #0f1115;
+
+  /* 语义色 */
+  --phi-static-green-100: #e6faed;
+  --phi-static-green-400: #4ed17e;
+  --phi-static-green-500: #22c55e;
+  --phi-static-green-900: #233c2c;
+  --phi-static-amber-100: #fef5e7;
+  --phi-static-amber-400: #f7ad31;
+  --phi-static-amber-500: #f59e0b;
+  --phi-static-amber-600: #dd8629;
+  --phi-static-amber-900: #27241f;
+  --phi-static-red-400: #f25a5a;
+  --phi-static-red-600: #d92d20;
+
+  /* 几何（DSH --dsw-radius-*） */
+  --phi-radius-xs: 4px;
+  --phi-radius-sm: 8px;
+  --phi-radius-md: 12px;
+  --phi-radius-lg: 16px;
+  --phi-radius-xl: 20px;
+  --phi-radius-panel: 28px;
+  --phi-radius-pill: 999px;
+
+  /* 间距阶梯（4 的倍数，DSH 未给令牌，按同体系补） */
+  --phi-space-1: 4px;
+  --phi-space-2: 8px;
+  --phi-space-3: 12px;
+  --phi-space-4: 16px;
+  --phi-space-5: 20px;
+  --phi-space-6: 24px;
+  --phi-space-8: 32px;
+
+  /* 字号（DSH --dsh-content-font-size 系列） */
+  --phi-font-size: 14px;
+  --phi-font-size-secondary: 13px;
+  --phi-font-size-caption: 12px;
+  --phi-font-size-title: 16px;
+  --phi-font-size-h1: 21px;
+  --phi-font-size-h2: 19px;
+  --phi-font-size-brand: 22px;
+
+  /* 字体栈（沿用项目自带字体，不引入 DSH 的 Montserrat） */
+  --phi-font-family: HarmonyOSSansSC, SarasaUiSC, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --phi-font-family-code: CascadiaMono, 'SF Mono', 'JetBrains Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+
+  /* 动效：只用于颜色/描边过渡，不做位移与渐入 */
+  --phi-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --phi-duration: 0.2s;
+  --phi-duration-fast: 0.1s;
+
+  /* 焦点环 */
+  --phi-focus-ring-width: 2px;
+
+  /* 滚动条（DSH --dsh-scrollbar-*） */
+  --phi-scrollbar-width: 5px;
+
+  /* 布局（值取自 DSH 的骨架：ui-layout 的 frame / ui-sidebar 的 root）
+     - 标题栏：DSH 由宿主注入 --dsh-windows-titlebar-height，取 40px
+     - 侧栏：inline-padding 12px + 条目 margin 0 2px；收起态是 36px 方形条
+     - 内容区左上圆角 16px、与侧栏之间 0.5px 描边（DSH --dsh-windows-content-radius） */
+  --phi-titlebar-height: 40px;
+  --phi-content-radius: 16px;
+  --phi-nav-width: 280px;
+  --phi-nav-width-rail: 56px;
+  --phi-nav-inline-padding: 12px;
+  --phi-nav-item-height: 36px;
+  --phi-nav-item-margin: 2px;
+  --phi-nav-gap: 12px;
+  --phi-nav-logo-height: 36px;
+  --phi-nav-icon-button: 28px;
+  --phi-content-max-width: 1100px;
+}
+
+/* ============================================================
+   2. 语义别名 —— 兜底值（先按 DSH 浅色给一套完整的，随后由下面唯一的深色块在 body 上覆盖）
+   ============================================================ */
+:root {
+  /* 底层背景 / 层级（DSH --dsw-alias-bg-*） */
+  --phi-bg-page: var(--phi-static-bluish-60);
+  --phi-bg-base: var(--phi-static-bluish-00);
+  --phi-bg-layer-1: var(--phi-static-bluish-00);
+  --phi-bg-layer-2: var(--phi-static-bluish-00);
+  --phi-bg-layer-3: var(--phi-static-bluish-00);
+  --phi-bg-overlay: var(--phi-static-bluish-150);
+  --phi-bg-module: var(--phi-static-bluish-60);
+  --phi-bg-skeleton: #0000000a;
+  --phi-bg-mask-1: #0000003d;
+  --phi-bg-mask-2: #0000001f;
+  --phi-bg-mask-3: #0000007a;
+
+  /* 侧栏（DSH --dsw-specific-sidebar-*） */
+  --phi-nav-fill: var(--phi-static-bluish-50);
+  --phi-nav-item-hover: var(--phi-static-bluish-75);
+  --phi-nav-item-active: var(--phi-static-bluish-100);
+  --phi-nav-item-active-accent: var(--phi-static-brand-100);
+
+  /* 描边（DSH --dsw-alias-border-*） */
+  --phi-border-l1: #0000000a;
+  --phi-border-l2: #0000001a;
+  --phi-border-l3: #0000001f;
+  --phi-border-l4: #00000029;
+
+  /* 交互反馈（DSH --dsw-alias-interactive-*） */
+  --phi-interactive-hover: #2631480f;
+  --phi-interactive-active: #2631481a;
+  --phi-interactive-hover-accent: #26314824;
+  --phi-interactive-hover-danger: #ec13130d;
+  --phi-interactive-hover-solid: var(--phi-static-bluish-75);
+
+  /* 文字（DSH --dsw-alias-label-*） */
+  --phi-label-primary: var(--phi-static-bluish-1000);
+  --phi-label-secondary: var(--phi-static-bluish-700);
+  --phi-label-tertiary: var(--phi-static-bluish-600);
+  --phi-label-caption: var(--phi-static-bluish-400);
+  --phi-label-dimmed: var(--phi-static-bluish-200);
+  --phi-label-inverted: var(--phi-static-bluish-00);
+
+  /* 品牌与状态 */
+  --phi-brand: var(--phi-static-bluish-1000);
+  --phi-accent: var(--phi-static-brand-500);
+  --phi-brand-fill: var(--phi-static-bluish-1000);
+  --phi-brand-text: var(--phi-static-bluish-1000);
+  --phi-link: var(--phi-static-brand-500);
+  --phi-success: var(--phi-static-green-500);
+  --phi-warning: var(--phi-static-amber-500);
+  --phi-warning-label: var(--phi-static-amber-600);
+  --phi-danger: var(--phi-static-red-600);
+  --phi-info: var(--phi-static-brand-500);
+  --phi-idle: var(--phi-static-neutral-300);
+
+  /* 按钮 */
+  --phi-button-primary-fill: var(--phi-brand-fill);
+  --phi-button-primary-hover: var(--phi-static-bluish-750);
+  --phi-button-primary-dimmed: var(--phi-static-bluish-100);
+  --phi-button-floating-fill: var(--phi-static-bluish-00);
+  --phi-button-floating-hover: var(--phi-static-bluish-75);
+  --phi-button-elevated-fill: var(--phi-static-bluish-00);
+  --phi-button-contrast-fill: var(--phi-static-bluish-700);
+  --phi-button-ghost-active-fill: var(--phi-static-bluish-100);
+  --phi-button-ghost-active-hover: var(--phi-static-bluish-150);
+  --phi-button-ghost-active-border: var(--phi-static-bluish-500);
+  --phi-button-info-fill: var(--phi-static-brand-500);
+  --phi-button-info-hover: var(--phi-static-brand-400);
+
+  /* 浮层 / 提示 */
+  --phi-menu-fill: var(--phi-bg-layer-1);
+  --phi-menu-group-header-fill: #f8f9faf0;
+  --phi-tooltip-bg: var(--phi-static-bluish-850);
+  --phi-tooltip-key-bg: color-mix(in srgb, var(--phi-tooltip-bg), white 18%);
+  --phi-toast-bg: var(--phi-static-bluish-800);
+  --phi-toast-label: var(--phi-static-bluish-00);
+  --phi-selector-fill: var(--phi-static-bluish-60);
+  --phi-tip-fill: var(--phi-static-bluish-60);
+  --phi-input-major: var(--phi-static-bluish-00);
+  --phi-bubble: var(--phi-static-brand-50);
+  --phi-bubble-highlight: var(--phi-static-brand-200);
+
+  /* 代码 / 等宽块 */
+  --phi-code-block: var(--phi-static-bluish-50);
+  --phi-code-block-banner: var(--phi-static-bluish-50);
+  --phi-code-inline: var(--phi-static-neutral-50);
+  --phi-code-tag: var(--phi-static-bluish-75);
+  --phi-code-placeholder: var(--phi-static-bluish-60);
+
+  /* 滚动条 */
+  --phi-scrollbar-thumb: var(--phi-static-neutral-200);
+  --phi-scrollbar-thumb-hover: var(--phi-static-neutral-300);
+
+  /* 层级：DSH 用 0.5px 描边当"高度的边"，再叠极淡扩散阴影 */
+  --phi-elevation-stroke: 0 0 0 0.5px var(--phi-border-l4);
+  --phi-elevation-panel:
+    var(--phi-elevation-stroke), 0 3px 8px 0 #00000008, 0 0 16px 0 #00000005;
+  --phi-elevation-prominent:
+    var(--phi-elevation-stroke), 0 3px 8px 0 #0000000a, 0 0 20px 0 #0000000d;
+  --phi-elevation-soft:
+    var(--phi-elevation-stroke), 0 4px 16px 0 #00000008, 0 0 24px 0 #00000008;
+  --phi-shadow-lv1: 0 2px 4px 0 #0000000d;
+  --phi-shadow-lv2: 0 4px 12px 0 #00000005, 0 2px 8px 0 #0000000a;
+  --phi-shadow-lv3: 0 0 1px 0 #0003, 0 0 4px 0 #00000005, 0 12px 32px 0 #00000014;
+
+  /* 兼容别名：App.vue 里原有的 themeColor(...) 取色键，逐步淘汰 */
+  --phi-alias-primary: rgb(233, 233, 233);
+  --phi-alias-secondary: #0000;
+  --phi-alias-accent: #0000;
+  --phi-alias-surface: var(--phi-bg-page);
+  --phi-alias-back: var(--phi-bg-page);
+  --phi-alias-scrollbar: var(--phi-scrollbar-thumb);
+  --phi-alias-btn: var(--phi-static-bluish-00);
+  --phi-alias-btn-large: var(--phi-static-bluish-00);
+  --phi-alias-bg-left: #fff;
+  --phi-alias-bg-right: #fff;
+  --phi-alias-top-left: #0000;
+  --phi-alias-top-right: #0000;
+  --phi-alias-container: var(--phi-bg-layer-1);
+  --phi-alias-dialog: var(--phi-bg-layer-1);
+  --phi-alias-overlay: var(--phi-bg-layer-1);
+}
+
+/* ============================================================
+   2b. 唯一的主题：DeepDark（深色，DSH 深色）
+   2026-10-11 起只保留这一套；Light / Dark / LightBlue 三块已删。
+   ============================================================ */
+:root,
+body {
+  --phi-bg-page: var(--phi-static-bluish-875);
+  --phi-bg-base: var(--phi-static-bluish-950);
+  --phi-bg-layer-1: var(--phi-static-bluish-875);
+  --phi-bg-layer-2: var(--phi-static-bluish-850);
+  --phi-bg-layer-3: var(--phi-static-bluish-800);
+  --phi-bg-overlay: var(--phi-static-bluish-700);
+  --phi-bg-module: var(--phi-static-bluish-800);
+  --phi-bg-skeleton: #ffffff14;
+  --phi-bg-mask-1: #00000080;
+  --phi-bg-mask-2: #0003;
+  --phi-bg-mask-3: #0000007a;
+
+  --phi-nav-fill: var(--phi-static-bluish-900);
+  --phi-nav-item-hover: var(--phi-static-bluish-850);
+  --phi-nav-item-active: var(--phi-static-bluish-750);
+  --phi-nav-item-active-accent: var(--phi-static-bluish-800);
+
+  --phi-border-l1: #ffffff0f;
+  --phi-border-l2: #ffffff1f;
+  --phi-border-l3: #ffffff29;
+  --phi-border-l4: #fff3;
+
+  --phi-interactive-hover: #ffffff14;
+  --phi-interactive-active: #ffffff24;
+  --phi-interactive-hover-accent: #ffffff3d;
+  --phi-interactive-hover-danger: #f25a5a26;
+  --phi-interactive-hover-solid: var(--phi-static-bluish-800);
+
+  --phi-label-primary: var(--phi-static-bluish-50);
+  --phi-label-secondary: var(--phi-static-bluish-300);
+  --phi-label-tertiary: var(--phi-static-bluish-400);
+  --phi-label-caption: var(--phi-static-bluish-600);
+  --phi-label-dimmed: var(--phi-static-bluish-750);
+  --phi-label-inverted: var(--phi-static-bluish-800);
+
+  --phi-brand: var(--phi-static-bluish-50);
+  --phi-accent: var(--phi-static-brand-400);
+  --phi-brand-fill: var(--phi-static-bluish-50);
+  --phi-brand-text: var(--phi-static-bluish-50);
+  --phi-link: var(--phi-static-brand-400);
+  --phi-success: var(--phi-static-green-500);
+  --phi-warning: var(--phi-static-amber-500);
+  --phi-warning-label: var(--phi-static-amber-400);
+  --phi-danger: var(--phi-static-red-400);
+  --phi-info: var(--phi-static-brand-450);
+  --phi-idle: var(--phi-static-neutral-600);
+
+  --phi-button-primary-fill: var(--phi-brand-fill);
+  --phi-button-primary-hover: var(--phi-static-bluish-100);
+  --phi-button-primary-dimmed: var(--phi-static-bluish-750);
+  --phi-button-floating-fill: var(--phi-static-bluish-850);
+  --phi-button-floating-hover: var(--phi-static-bluish-800);
+  --phi-button-elevated-fill: var(--phi-static-bluish-750);
+  --phi-button-contrast-fill: var(--phi-static-bluish-50);
+  --phi-button-ghost-active-fill: var(--phi-static-bluish-750);
+  --phi-button-ghost-active-hover: var(--phi-static-bluish-700);
+  --phi-button-ghost-active-border: var(--phi-static-bluish-600);
+  --phi-button-info-fill: var(--phi-static-brand-400);
+  --phi-button-info-hover: var(--phi-static-brand-500);
+
+  --phi-menu-fill: var(--phi-bg-layer-1);
+  --phi-menu-group-header-fill: #303136f0;
+  --phi-tooltip-bg: var(--phi-static-bluish-750);
+  --phi-tooltip-key-bg: color-mix(in srgb, var(--phi-tooltip-bg), white 18%);
+  --phi-toast-bg: var(--phi-static-bluish-750);
+  --phi-toast-label: var(--phi-static-bluish-00);
+  --phi-selector-fill: var(--phi-static-bluish-800);
+  --phi-tip-fill: var(--phi-static-bluish-800);
+  --phi-input-major: var(--phi-static-bluish-850);
+  --phi-bubble: var(--phi-static-bluish-850);
+  --phi-bubble-highlight: var(--phi-static-bluish-750);
+
+  --phi-code-block: var(--phi-static-bluish-900);
+  --phi-code-block-banner: var(--phi-static-bluish-850);
+  --phi-code-inline: var(--phi-static-neutral-800);
+  --phi-code-tag: var(--phi-static-bluish-850);
+  --phi-code-placeholder: var(--phi-static-bluish-850);
+
+  --phi-scrollbar-thumb: var(--phi-static-neutral-700);
+  --phi-scrollbar-thumb-hover: var(--phi-static-neutral-600);
+}
+
+/* ============================================================
+   3. 基础样式：字体、滚动条、焦点环、选区
+   ============================================================ */
+body {
+  background-color: var(--phi-bg-page);
+  color: var(--phi-label-primary);
+  font-family: var(--phi-font-family);
+  font-size: var(--phi-font-size);
+}
+
+/* 细滚动条（DSH 的 5px 圆头样式） */
+::-webkit-scrollbar {
+  width: var(--phi-scrollbar-width);
+  height: var(--phi-scrollbar-width);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--phi-scrollbar-thumb);
+  border-radius: var(--phi-radius-pill);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--phi-scrollbar-thumb-hover);
+}
+
+/* 焦点环：键盘操作才显示（照 DSH 的输入模态判断） */
+:focus-visible {
+  outline-color: var(--phi-accent);
+  outline-width: var(--phi-focus-ring-width);
+}
+html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
+  outline-color: transparent;
+}
+
+/* 连续曲率圆角（DSH 的签名细节）。浏览器不支持时静默回落到普通圆角。
+   真正需要是正圆的地方（开关滑块、发送按钮、胶囊）单独写 corner-shape: round。 */
+@supports (corner-shape: superellipse(1.5)) {
+  :root {
+    --phi-corner-shape: superellipse(1.5);
+  }
+  *,
+  :before,
+  :after {
+    corner-shape: var(--phi-corner-shape);
+  }
+  .phi-round,
+  [class*='rounded'],
+  .v-avatar,
+  .v-switch__thumb {
+    corner-shape: round;
+  }
+}

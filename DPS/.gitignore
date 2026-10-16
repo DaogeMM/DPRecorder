@@ -1,0 +1,43 @@
+inner.rs
+
+/.env
+/.idea
+/http-cacache
+/prpr/build.rs
+/target
+/assets/charts
+/assets/texture
+/wbindgen
+/dist
+/conf.yml
+/cache
+/data
+/.cargo
+/config.txt
+/assets/res
+/test.uml
+/monitor-config.yml
+
+# /prpr-avc/static-lib
+
+# Mac
+
+._*
+/run_ios.sh
+/prebuild_ios.sh
+/build_ios.sh
+/build
+/*.ipa
+/phira.app
+/Assets.xcassets
+/LaunchScreen.storyboard
+/phira.xcodeproj
+/dist
+/project.yml
+/prpr.scent
+/.cargo
+
+# Test
+
+/log*
+/.vscode

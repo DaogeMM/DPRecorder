@@ -1,0 +1,41 @@
+{
+    "empty": "(暂无任务)",
+    "status": {
+        "pending": "等待中…",
+        "loading": "加载中…",
+        "mixing": "混音中…",
+        "rendering": "渲染中 ({ progress }%), { fps } FPS, 预计 { estimate } 结束",
+        "paused": "已暂停 ({ progress }%)",
+        "done": "已完成，耗时 { duration }",
+        "canceled": "已取消",
+        "failed": "失败"
+    },
+    "details": "详情",
+    "open-in-render": "载入到渲染页",
+    "output": "输出",
+    "remove-task": "移除任务",
+    "remove-task-confirm": "确认移除任务？",
+    "remove-task-running": "正在渲染的任务会先被取消。",
+    "remove-task-file-confirm": "输出文件也一并移除吗？",
+    "remove-task-only": "仅移除任务",
+    "remove-task-and-file": "任务和文件都移除",
+    "show-output": "查看输出",
+    "show-in-folder": "在文件夹中显示",
+    "open-file": "打开文件",
+    "pause-select": "暂停",
+    "cancel-render": "取消",
+    "cancel-render-file-confirm": "有正在渲染的任务，取消后要移除已经渲染出来的视频文件吗？",
+    "cancel-render-only": "仅取消",
+    "cancel-render-and-remove-file": "取消并移除文件",
+    "clear-select": "取消选择",
+    "drop-to-remove": "（松开移除此任务）",
+    "selected-count": "已选 { n } 项",
+    "open-tasks": "单击查看任务列表（拖动可换位置）",
+    "task-done": "「{ name }」渲染完成",
+    "task-failed": "「{ name }」渲染失败",
+    "duration": {
+        "hours": "时",
+        "minutes": "分",
+        "seconds": "秒"
+    }
+}

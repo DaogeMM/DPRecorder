@@ -1,0 +1,367 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch, type ComputedRef } from 'vue';
+
+import { useI18n } from 'vue-i18n';
+const { t } = useI18n();
+
+import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import * as dialog from '@tauri-apps/plugin-dialog';
+
+import { anyFilter, toast, toastError } from './common';
+import type { RPEChart } from './model';
+import router from './router';
+import { finishPageLoad } from './pageLoad';
+
+async function getRPECharts() {
+  return (await invoke('get_rpe_charts')) as RPEChart[] | null;
+}
+const charts = ref<RPEChart[] | null>(await getRPECharts());
+// 谱面列表到位了才揭开内容区那层转圈（见 `./pageLoad`）
+finishPageLoad();
+const searchQuery = ref('');
+const sortOptionList = t('sort-option-list').split(',');
+const sortOption = ref(sortOptionList[0]);
+const filteredCharts: ComputedRef<RPEChart[] | null | undefined> = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase();
+  if (!query) return charts.value;
+
+  return charts.value?.filter(chart =>
+    chart.name.toLowerCase().includes(query) ||
+    chart.charter.toLowerCase().includes(query) ||
+    chart.id.toString().includes(query)
+  );
+});
+
+async function sortCharts() {
+  charts.value = await getRPECharts();
+  if (sortOption.value === sortOptionList[1]) {
+    charts.value?.sort((a, b) => a.name.localeCompare(b.name));
+  } else if (sortOption.value === sortOptionList[2]) {
+    charts.value?.sort((a, b) => a.charter.localeCompare(b.charter));
+  } else if (sortOption.value === sortOptionList[3]) {
+    charts.value?.sort((a, b) => parseInt(a.id) - parseInt(b.id));
+  }
+}
+
+async function reverseCharts() {
+  charts.value?.reverse();
+}
+
+watch(sortOption, () => {
+  sortCharts();
+})
+
+
+async function bindRPE() {
+  let file = await dialog.open({
+    directory: true,
+    title: t('rpe-folder')
+  });
+  if (!file) return;
+  try {
+    await invoke('set_rpe_dir', { path: file });
+    toast(t('binded'), 'success');
+    charts.value = await getRPECharts();
+  } catch (e) {
+    toastError(e);
+  }
+}
+async function unbindRPE() {
+  try {
+    await invoke('unset_rpe_dir');
+    toast(t('unbinded'), 'success');
+    charts.value = null;
+  } catch (e) {
+    toastError(e);
+  }
+}
+
+async function openInFolder(path: string) {
+  try {
+    // 这里是**目录**：插件的 `openPath` 对目录走 COM（`SHOpenFolderAndSelectItems`），
+    // 实测在 DPR 的进程里没反应，交给后端的 `open_dir`（`cmd /c start` 主路 + 兜底）。
+    await invoke('open_dir', { path });
+  } catch (e) {
+    toastError(e);
+  }
+}
+
+const moreLoading = ref(false);
+async function exportPez(chartPath: string, chartName: string, minify: boolean = false) {
+  moreLoading.value = true;
+  try {
+    const outputName = chartName.replace(/[\\/:*?"<>|]/g, "_") + '.pez';
+    const outputPath = await dialog.save({
+      title: t('output-folder'),
+      filters: [
+        { name: 'RPE Chart File', extensions: ['pez', 'zip'] },
+        anyFilter(),
+      ],
+      defaultPath: outputName
+    });
+    if (!outputPath) return;
+    await invoke('export_pez', { chartPath, outputPath, minify });
+    dialog.message(t('export-success'), { title: t('export') })
+  } catch (e) {
+    toastError(e);
+  } finally {
+    moreLoading.value = false;
+  }
+}
+
+async function deleteChart(chartName: string, chartPath: string) {
+  dialog.confirm(`"${chartName}" ${t('delete-confirm-info')}`, { title: t('delete-confirm'), kind: 'warning' })
+    .then(async (result) => {
+      if (!result) return;
+      try {
+        moreLoading.value = true;
+        await invoke('delete_path', { path: chartPath });
+        dialog.message(t('delete-success'), { title: t('delete-chart') })
+      } catch (e) {
+        toastError(e);
+      } finally {
+        moreLoading.value = false;
+        charts.value = await getRPECharts();
+      }
+    })
+    .catch((e) => {
+      toast(`${t('delete-cancel')}: ${e}`, 'info');
+    })
+}
+
+async function deleteAutoSave(chartName: string, chartPath: string) {
+  dialog.confirm(`"${chartName}" ${t('delete-autosave-confirm')}`, { title: t('delete-autosave'), kind: 'warning' })
+    .then(async (result) => {
+      if (!result) return;
+      try {
+        moreLoading.value = true;
+        await invoke('delete_autosave', { path: chartPath });
+        dialog.message(t('delete-success'), { title: t('delete-chart') })
+      } catch (e) {
+        toastError(e);
+      } finally {
+        moreLoading.value = false;
+      }
+    })
+    .catch((e) => {
+      toast(`${t('delete-cancel')}: ${e}`, 'info');
+    })
+}
+</script>
+
+<template>
+  <div class="w-100 h-100 d-flex flex-column" style="max-width: 1280px; padding-bottom: 0 !important;">
+    <template v-if="!charts">
+      <h1 class="pa-8 text-center font-italic text-disabled unbinded-title text-gradient fade-in" v-t="'not-binded'"></h1>
+      <v-form class="text-center fade-in" ref="form" style="max-height: 48vh;">
+        <v-row>
+          <v-col cols="12" style="margin: -20px 0px;">
+            <v-btn size="large" color="btn-large" class="italic mt-2 v-btn hover-scale" @click="bindRPE" style="width: fit-content" v-t="'bind-rpe'"></v-btn>
+          </v-col>
+        </v-row>
+      </v-form>
+    </template>
+    <template v-if="charts">
+      <v-form
+        class="px-8 pt-4 text-center fade-in hover-display"
+        ref="form"
+        style="
+          height: 80px;
+          width: calc(100% - 64px);
+          max-width: 1270px;
+          position: absolute;
+          z-index: 1;">
+        <v-row class="hover-display">
+          <v-col cols="8">
+            <v-text-field clearable class="ml-2 justify-center hover-scale-text" prepend-inner-icon="mdi-magnify" :label="t('search')" v-model="searchQuery"></v-text-field>
+            <!-- <v-btn size="large" class="italic v-btn hover-scale" @click="unbindRPE" style="width: fit-content" v-t="'unbind'"></v-btn> -->
+          </v-col>
+          <v-col cols="4">
+            <v-select class="mr-2 hover-scale-text" :items="sortOptionList" v-model="sortOption" :label="t('sort')" append-icon="mdi-sort" @click:append="reverseCharts"></v-select>
+          </v-col>
+        </v-row>
+      </v-form>
+
+      <v-virtual-scroll class="scroll-mask px-8" style="scrollbar-width: none; padding-top: 30px" :items="filteredCharts ?? undefined" item-key="id" height="calc(100vh - 160px)" item-height="300"> <!--transition="fade-transition"-->
+        <template v-slot:default="{ item, index }">
+          <v-card class="chart-card mb-8">
+            <div class="d-flex flex-row align-stretch">
+              <div class="d-flex flex-row align-center chart-cover" style="width: 35%">
+                <div
+                  class="cover-image"
+                  style="width: 100%; height: 100%; max-height: 240px; background-position: center; background-repeat: no-repeat; background-size: cover"
+                  :style="{ 'background-image': 'url(' + convertFileSrc(item.illustration) + ')' }"
+                >
+                  <div 
+                    class="overlay"
+                    @click="router.push({ name: 'render', query: { chart: item.path } })"
+                  >
+                    <i class="mdi mdi-play icon"></i>
+                  </div>
+                </div>
+              </div>
+              <div class="d-flex flex-column w-100 chart-content">
+                <v-card-title class="chart-name select">{{ item.name }}</v-card-title>
+                <v-card-subtitle class="mt-n2 chart-id select" style="cursor: pointer;" @click="openInFolder(item.path)">{{ item.id }}</v-card-subtitle>
+                <v-card-subtitle class="chart-id select">{{ item.charter }}</v-card-subtitle>
+                <div class="w-100">
+                  <div class="pt-4 d-flex justify-end">
+                    <v-menu>
+                      <template v-slot:activator="{ props }">
+                        <v-btn class="open-btn hover-scale mx-2" v-bind="props" :loading="moreLoading" icon="mdi-menu"></v-btn>
+                      </template>
+                      <v-list>
+                        <v-list-item @click="exportPez(item.path, item.name, false)" v-t="'export'" />
+                        <v-list-item @click="exportPez(item.path, item.name, true)" v-t="'export-minify'" />
+                        <v-list-item @click="openInFolder(item.path)" v-t="'show-folder'" />
+                        <v-list-item @click="deleteChart(item.name, item.path)" v-t="'delete-chart'" />
+                        <v-list-item @click="deleteAutoSave(item.name, item.path)" v-t="'delete-autosave'" />
+                      </v-list>
+                    </v-menu>
+                    <v-btn class="render-btn hover-scale ml-2" @click="router.push({ name: 'render', query: { chart: item.path } })" :title="t('render')" icon="mdi-open-in-app" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </v-card>
+        </template>
+      </v-virtual-scroll>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.rpe-container {
+  padding: 2rem;
+  width: 100%;
+  height: 100%;
+  max-width: 1280px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.unbinded-title {
+  font-size: 2rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.v-btn {
+  background: var(--phi-interactive-hover);
+  font-weight: 600;
+  padding: 12px 24px;
+}
+
+.hover-display {
+  opacity: 0;
+  mask-image: linear-gradient(rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 1) 20%, rgba(0, 0, 0, 1) 90%, transparent 100%);
+}
+
+.hover-display:hover {
+  opacity: 1;
+}
+
+.chart-card {
+  border-radius: var(--phi-radius-md);
+  overflow: hidden;
+  background: var(--phi-bg-layer-1);
+  border: 0.5px solid var(--phi-border-l3);
+  margin: 5px;
+  box-shadow: var(--phi-elevation-soft);
+}
+
+.chart-card:hover {
+  background: var(--phi-bg-layer-2);
+}
+
+.chart-name {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.chart-id {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+.render-btn {
+  font-weight: 600;
+  padding: 8px 16px;
+  background: var(--phi-accent) !important;
+  color: var(--phi-label-inverted);
+}
+
+.open-btn {
+  font-weight: 600;
+  padding: 8px 16px;
+}
+
+.text-gradient {
+  background: linear-gradient(45deg, var(--phi-accent), var(--phi-static-red-400));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (max-width: 600px) {
+  .cover-image {
+    width: 100%;
+    height: 100%;
+  }
+
+  .chart-cover {
+    max-width: 0%;
+    min-height: 100px;
+    background: var(--phi-bg-layer-2);
+  }
+
+  .chart-content {
+    max-width: 100%;
+    width: 65%;
+    padding: 1rem;
+  }
+}
+
+@media (min-width: 601px) and (max-width: 1336px) {
+  .cover-image {
+    width: 100%;
+    height: 100%;
+  }
+
+  .chart-cover {
+    max-width: 35%;
+    min-height: 100px;
+    background: var(--phi-bg-layer-2);
+  }
+
+  .chart-content {
+    max-width: 69%;
+    width: 65%;
+    padding: 1rem;
+  }
+}
+
+@media (min-width: 1336px) {
+  .cover-image {
+    width: 100%;
+    height: 100%;
+  }
+
+  .chart-cover {
+    min-width: 310px;
+    max-width: 35%;
+    min-height: 100px;
+    background: var(--phi-bg-layer-2);
+  }
+
+  .chart-content {
+    max-width: 69%;
+    width: 65%;
+    padding: 1rem;
+  }
+}
+
+</style>

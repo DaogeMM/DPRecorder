@@ -1,0 +1,57 @@
+# DPRecorder —— 单一 Cargo 工作区。
+# 2026-10-11：DPS（原 Phire / DP-Simulator）与 DPR（原 Phi-Recorder / DP-Renderer）合并成一个项目，
+# 两边共用这一份 Cargo.lock 与根目录下的 target/。项目整体叫 DPRecorder。
+# 注意：DPR 的运行时工作目录（assets / config.toml / respack / output）
+# 跟着 exe 走（见 src-tauri/src/common.rs::exe_dir），所以 target/ 的位置不能随便挪。
+[workspace]
+resolver = "2"
+members = [
+	"DPS/dps",
+	"DPS/dps-ui",
+	"DPS/dps-main",
+	"DPS/prpr-avc",
+	"DPS/prpr-pbc",
+	"DPR/src-tauri",
+]
+
+# DPR 原来在 src-tauri/Cargo.toml 里的 release 配置（member 里的 profile 会被 cargo 忽略，必须放根上）
+[profile.release]
+lto = "thin"
+strip = true
+opt-level = 3
+
+# DPS 原来自己那份工作区用的是 opt-level = 2，这里按包保留
+[profile.release.package.dps]
+opt-level = 2
+[profile.release.package.dps-ui]
+opt-level = 2
+[profile.release.package.dps-main]
+opt-level = 2
+[profile.release.package.prpr-avc]
+opt-level = 2
+[profile.release.package.prpr-pbc]
+opt-level = 2
+
+# 两边原本都有这一条：依赖用 opt-level = 2，dev 构建快很多。
+# 注意 `"*"` 只匹配「依赖」，**不匹配 workspace 成员**（Cargo book「Profile overrides」：
+#   "To override the settings for all dependencies (but not any workspace member)"）。
+# 2026-10-11 合并成单一工作区之后，dps / prpr-* 从「依赖」变成了工作区成员，
+# 这一条就不再覆盖渲染引擎 ⇒ dev 构建里引擎掉回 opt-level 0（实测：
+# 只有通配时 dps / prpr-avc 的 rustc 命令行没有 -C opt-level，其余依赖都是 2）。
+# 症状（2026-10-12 报告告）：带噪域谱面离线渲染与预览都只剩 10 FPS（原 70~80 FPS），
+# GPU 基本没动静 —— 瓶颈是未优化的引擎 CPU 代码，不是显卡。
+# 下面把引擎侧的成员包显式补回来（dpr 自己是「应用」那侧，老项目里它也是
+# opt-level 0 且能跑满 70~80 FPS，所以这里不动它）。release 侧本来就有显式条目。
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.dps]
+opt-level = 2
+[profile.dev.package.prpr-avc]
+opt-level = 2
+[profile.dev.package.prpr-pbc]
+opt-level = 2
+[profile.dev.package.dps-ui]
+opt-level = 2
+[profile.dev.package.dps-main]
+opt-level = 2

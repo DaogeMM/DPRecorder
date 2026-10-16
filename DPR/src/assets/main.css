@@ -1,0 +1,69 @@
+
+@font-face {
+  font-family: 'HarmonyOSSansSC';
+  font-display: swap;
+  src: url('./HarmonyOS_Sans_SC_Regular.ttf');
+}
+
+@font-face {
+  font-family: 'SarasaUiSC';
+  src: url('./SarasaUiSC-Regular.ttf');
+}
+
+@font-face {
+  font-family: 'CascadiaMono';
+  src: url('./CascadiaMono.ttf');
+}
+
+@layer base {
+  html {
+    font-family: HarmonyOSSansSC, SarasaUiSC, system-ui !important;
+    transition: background-color 0.5s;
+  }
+}
+
+/* 2026-10 UI 重构：删掉了 .hover-scale / .hover-move / .hover-scale-text / .fade-in /
+   @keyframes fadeIn|fadeUp|hoverUp|blurFade / .v-stepper__content 系列。
+   理由是「去掉毛玻璃与悬停位移、渐入动画」。模板里可能还残留这些类名，
+   没有对应规则时它们是空操作，不影响显示。 */
+
+.select {
+  user-select: text;
+}
+
+.wrap {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.v-text-field.type-number {
+  --v-field-padding-start: 1rem;
+  --v-field-border-radius: 8px;
+}
+
+/* 数值输入框去掉浏览器自带的上下微调按钮（「去除部分文本框里的上下点击按钮」）。
+   数值照样能直接输入 —— 只是不再显示那对小箭头。WebView2 走下面两条 `::-webkit-*`，
+   Firefox 走 `-moz-appearance`。 */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+.v-progress-linear {
+  filter: drop-shadow(0 0 8px #ffffff50);
+}
+
+.v-progress-circular {
+  filter: drop-shadow(0 0 8px #ffffff50);
+}
+
+.glow-spinner {
+  filter: drop-shadow(0 0 8px #2196F3);
+}

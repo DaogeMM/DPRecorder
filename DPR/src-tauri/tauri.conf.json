@@ -1,0 +1,84 @@
+{
+  "productName": "DPRecorder",
+  "mainBinaryName": "dpr",
+  "identifier": "com.daogemm.dpr",
+  "build": {
+    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "copyright": "",
+    "targets": "all",
+    "externalBin": [],
+    "fileAssociations": [
+      {
+        "ext": ["pez"],
+        "name": "RPE Chart Bundle",
+        "description": "RPE Chart Bundle",
+        "role": "Viewer"
+      }
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "longDescription": "",
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "resources": {
+      "../../assets": "assets",
+      "config.toml": "config.toml"
+    },
+    "shortDescription": "",
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  },
+  "plugins": {},
+  "app": {
+    "windows": [
+      {
+        "fullscreen": false,
+        "width": 1920,
+        "height": 1080,
+        "resizable": true,
+        "title": "DPRecorder",
+        "dragDropEnabled": true,
+        "useHttpsScheme": true,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "assetProtocol": {
+        "scope": {
+          "allow": [
+            "**"
+          ],
+          "deny": [],
+          "requireLiteralLeadingDot": false
+        },
+        "enable": true
+      },
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
+    }
+  }
+}

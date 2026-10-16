@@ -1,0 +1,24 @@
+{
+    "rules": {
+        "not-empty": "Must not be empty",
+        "not-null": "Must not be empty",
+        "positive": "Must be a positive number",
+        "positive-int": "Must be a positive integer",
+        "alpha": "Must be between 0 and 1",
+        "resolution": "Must be like '1920x1080'",
+        "sample-count": "Must be a power of 2",
+        "hex-color": "Must be HEX format",
+        "int": "Must be a integer",
+        "crf": "Must be an integer between 0 and 51",
+        "bitrate": "Must be a valid bitrate",
+        "non-spaces": "Must not contain spaces",
+        "not-zero": "Must not be zero",
+        "not-combo": "Must not be COMBO",
+        "long": "Input is too long",
+        "big": "Input is too big",
+        "small": "Input is too small",
+        "invalid-path": "Invalid directory"
+    },
+    "has-error": "There are errors in the configuration",
+    "any-filter": "All files"
+}

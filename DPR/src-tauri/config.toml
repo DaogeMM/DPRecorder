@@ -1,0 +1,166 @@
+# 这份是「命令行直接渲染」(dpr --render ...) 用的配置；GUI 渲染不走这里 ——
+# GUI 的默认值在 src/model.ts 的 DEFAULT_RENDER_CONFIG，后端结构体在 src-tauri/src/render.rs。
+# 新增 / 修改参数的完整步骤写在 render.rs 的 RenderConfig 结构体上方，照那份走。
+# 键名一律 camelCase（结构体标了 #[serde(rename_all = "camelCase")]）；缺的键自动取 Rust 的 Default。
+# 注意: dev 运行时真正被读的是 exe 同目录那份 target/debug/config.toml（仓库根下），改完这里记得同步。
+# Output 输出
+resolution = [1920, 1080]
+fps = 60
+sampleCount = 8
+fxaa = false
+hardwareAccel = true
+hevc = false
+mpeg4 = false
+# customEncoder = ""
+fileNameFormat = "%date% %time% %info.name%_%level_prefix%"
+dynamicBitrateControl = true
+bitrate = "28"
+endingLength = 0.0
+playStartTime = 0.0
+# playEndTime = 
+renderLoading = true
+
+
+# Player 玩家
+# playerAvatar = ""
+playerName = "DaogeMM"
+playerRks = 17.0
+challengeColor = "rainbow" # white green blue red golden rainbow
+challengeRank = 52
+
+
+# Graphics 图像
+# res_pack_path = ""
+chartDebugLine = 0.0
+chartDebugNote = 0.0
+chartRatio = 1.0
+noteScale = 1.0
+
+renderLine = true
+renderLineExtra = true
+renderNote = true
+renderJudgeRange = false  # 判定范围：按键下方那条垂直于判定线的长条（默认关闭。已接好总开关：false 时完全不画）
+judgeRangeWidth = 1.9     # Tap / Hold 判定范围半宽 = 该值 × (屏幕高度 / 10)
+judgeRangeWidthFlick = 2.1  # Flick / Drag 判定范围半宽 = 该值 × (屏幕高度 / 10)，与 Tap / Hold 同一单位（默认略宽于 1.9）
+judgeRangeLength = 5.0    # 长度 = 该值 × 屏幕宽度（判定范围总高 = 该值 × 屏幕宽度）
+judgeRangeTime = 1.0      # 显现时间：判定前多少秒才开始画（配置项，生效）
+judgeRangeFadeTime = 0.3  # 判定前多少秒时淡入结束：1.0 → 0.3 之间透明度 100% → 90%（即界面上的「过渡时间」= 1.0 − 0.3 = 0.7）
+judgeRangeAlpha = 0.1     # 过渡结束后的不透明度 alpha（0~1）：0.1 = 透明度 90%，很淡很透
+judgeRangeColor = [1.0, 1.0, 1.0]  # 判定范围颜色 rgb（0~1）
+judgeRangeNoiseOcclusion = true  # 判定范围与噪域重合的部分是否让给噪域（官方行为 = 开；噪域没开时无效果）
+renderDoubleHint = true
+renderPendingNote = true  # 待判按键：把最近一个将要判定的按键染色再画一遍（画在噪域之上）
+pendingNoteColor = [1.0, 0.18, 0.18]  # 待判按键染色用的 rgb（0~1）
+renderUiPause = true
+renderUiName = true
+renderUiLevel = true
+renderUiDifficulty = true
+renderUiScore = true
+renderUiCombo = true
+renderUiBar = true
+renderBg = true
+preserveFramebuffer = false
+renderBgDim = true
+backgroundDim = 0.1        # 背景暗淡：黑色遮罩的不透明度 0~1（覆盖谱面信息里的同名值，默认 0.1）
+# ---------------------- 谱面侧渲染参数 ----------------------
+# 这些键与谱面信息（ChartInfo）同名：以前只存在于谱面信息里，现在也进配置（预设 / 本文件 / 渲染页工作配置）。
+# GUI 的 buildParams() 会把它们并进 info 且**配置值优先** ⇒ 导入谱面不再覆盖这些设置。
+forceAspectRatio = true    # 强制宽高比：按 aspectRatio 强制画面比例（关闭时只保证不超过该比例）
+foldAnimation = true       # 折叠式入场：按键的入场动画改成折叠式
+aspectRatio = 1.7777778    # 画面宽高比 = 宽 ÷ 高（默认 16:9）
+noteUniformScale = false   # 音符统一缩放
+holdPartialCover = false   # 长按部分遮挡
+negativeLengthHold = false # 长按反向遮挡（负长度长按）
+holdParticleIntervalRatio = 1.0  # 长按打击特效间隔倍率（默认 1）
+lineLength = 6.0           # 判定线长度（默认 6）
+scoreTotal = 1000000       # 总分（默认 1000000）
+previewStart = 0.0         # 预览开始时间（秒，默认 0）
+previewEnd = 0.0           # 预览结束时间（秒，默认 0 = 到谱面结尾）
+offset = 0.0               # 谱面偏移（秒；界面上按毫秒编辑，默认 0）
+particle = true
+particleSquare = true
+renderExtra = true
+renderBlockArea = true        # 噪域（Phigros 4.0 blockAreaList），Phira-Pro 原生实现
+simplifiedBlockArea = false   # 简化噪域：走同一份原生材质，覆写 uniform 降级成矩形纯色
+simplifiedBlockAreaText = false # 简化噪域文字：在简化噪域正中间印上噪域编号（disable 白字 / enable 粉红字）
+blockAreaReuse = false        # 噪域复用：噪域编号可复用（一条消失后号立刻交给下一条）；几何与相对动画相同的条目优先沿用同一个号（画面不变）
+blockAreaForcePosition = false # 强制定位：忽略谱面自带的噪域，整屏铺一块噪域，并在每个按键周围挖掉一个矩形
+blockAreaForceHeight = 0.2    # 强制定位：按键矩形的高度 = 该值 × 屏幕高度（默认 0.2 = 20% 屏高）
+blockAreaForceWidth = 1.9     # 强制定位：按键矩形的半宽 = 该值 × (屏幕高度 / 10)，基准与判定范围一致
+blockAreaForceShow = false    # 强制定位：把按键矩形本身也着色画出来（默认只挖洞）
+blockAreaForceTime = 3.0      # 强制定位：挖洞的时间窗（秒，默认 3）——只有判定时刻进入本值以内的按键才挖洞
+blockAreaForceDelay = 0.3     # 强制定位延后视窗（秒，默认 0.3）——判定完之后洞再停留这么久才被噪域盖回来（Hold 算到长条尾端）
+blockAreaForceInvert = false  # 反向强制定位：把强制定位的矩形本身当噪域画出来，其余地方不铺噪域（需先开强制定位）
+blockAreaLava = false         # 岩浆噪域：完整噪域的填充换成 MC 贴图——还没生效印下界岩、生效中及之后印岩浆（16 帧 160ms 循环、屏幕锚定 1/16 屏高；只在没开「简化噪域」时生效；开启时引擎直接忽略 噪声斑点/噪域扭曲/噪域火花（不改写存的配置））
+blockAreaColor = [0.9, 0.1, 0.1]     # 简化噪域颜色 rgb（0~1），简化噪域 enable 之后的填充色
+blockAreaNormalColor = [0.9, 0.1, 0.1] # 噪域颜色 rgb（0~1）：普通（完整）噪域的颜色，只取色相去整体旋转官方配色（默认红 = 不变）
+simplifiedBlockAreaTextColor = [1.0, 0.3765, 0.5804]  # 噪域文字颜色 rgb（0~1），简化噪域编号 enable 之后的颜色（默认 #FF6094）
+simplifiedBlockAreaTextPaleColor = [1.0, 1.0, 1.0] # 噪域文字淡色 rgb（0~1），简化噪域编号 enable 之前的颜色
+blockAreaAlpha = 0.25         # 简化噪域的不透明度（0~1，默认 0.25）
+blockAreaDensity = 2.5        # 噪域密度：边缘像素颗粒的疏密，默认 2.5（1 = 上游栅格）；越大越细越密
+blockAreaSpark = true         # 噪域火花：完整噪域里那层随噪声流动的火花点阵（关掉只去掉火花，填充/描边/辉光不受影响）
+# 噪声斑点：往填充色里混的那层噪声斑点（关掉填充变成纯净色）
+blockAreaNoiseBlotch = true
+# 扭曲强度：噪声把采样坐标推开的幅度（官方 0.15，0 = 完全不扭曲）
+blockAreaDisplaceStrength = 0.15
+# 颗粒大小：场景快照的像素颗粒尺度（官方 6.0，1 = 不像素化）
+blockAreaPixelScale = 6.0
+# 流动速度：噪声在噪域里流动的速度（官方 1.5，0 = 完全静止）
+blockAreaDisplaceSpeed = 1.5
+# 噪声半径：噪声纹理的采样半径（官方 0.48，越大团块越大）
+blockAreaNoiseRadius = 0.48
+# 噪声平滑度：噪声纹理的平滑程度（官方 1.0，越小颗粒越硬）
+blockAreaNoiseSmoothness = 1.0
+# 边缘破碎：噪域边缘那圈锯齿的强度（官方 1.0，0 = 干净的直边矩形）
+blockAreaEdgeNoise = 1.0
+directBlockHollow = false     # 直接镂空：旧简化模式的遗留开关，原生路径下不再有作用
+blockAreaDistort = true       # 噪域扭曲：关掉后噪域不扭曲（填充位移与边缘破碎归零），只剩纯色/场景快照 + 透明度
+
+waterScreen = false          # 屏幕进水：整屏盖一层 MC 水贴图（最上层，压在判定线/音符/UI 之上）+ 按键血量系统（高一栏「更多」）
+waterOpacity = 0.5           # 水的透明度（0~1）
+waterFlowSpeed = 0.15        # 水的流速（屏幕高/秒，0 = 静止），贴图从上往下流动
+waterCellScale = 16.0         # 贴图格子大小：一格高 = 屏幕高 / 此值（16 = 1/16 屏高）
+waterHp = 1.0                 # 按键血量：按键出现在屏幕里就按扣血间隔掉血
+waterDrownDelay = 1.0        # 入水后多久才溺水（秒）：泡够这么久才开始掉血
+waterDamage = 1.0             # 每次扣血的血量（点）
+waterDamageInterval = 1.0    # 两次扣血之间的间隔（秒）：每这么多秒扣一次 waterDamage
+waterDeathTime = 0.5         # 按键死亡动画时长（秒）：常红 + 倾斜 + 淡出
+waterDeathParticles = 8.0     # 死亡时喷出的白色粒子数量
+waterSfxVolume = 0.5          # 受伤/死亡音效音量（0~1），随机取 assets/Minecraft/hit 里的音效
+waterSfxMax = 500.0           # 受伤/死亡音效并发上限（1~512）：同一时刻最多同时响几个，默认 500 等于不限
+
+aggressiveChart = true
+aggressiveNote = false
+aggressiveParticle = false
+
+bgBlurriness = 80.0
+watermark = ""
+notecolor = ""
+hitcolor = ""
+linecolor = ""
+combo = "AUTOPLAY"
+maxParticles = 5000 # 5000 25000 200000
+
+# Audio 音频
+hires = false
+loudnessEqualization = false
+audioMixOptimization = true
+
+volumeMusic = 0.5
+volumeSfx = 0.4
+forceLimit = true
+limitThreshold = 0.5
+
+
+# Other 其他
+allGood = false
+allBad = false
+judgeOffset = 0.0
+lvl = 1.0
+diff = ""
+difficulty = ""
+fade = 0.0
+speed = 1.0
+alphaTint = false
+roman = false
+chinese = false

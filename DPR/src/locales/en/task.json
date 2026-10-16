@@ -1,0 +1,41 @@
+{
+    "empty": "(No tasks)",
+    "status": {
+        "pending": "Pending…",
+        "loading": "Loading…",
+        "mixing": "Mixing…",
+        "rendering": "Rendering ({ progress }%), { fps } FPS, estimated to end { estimate }",
+        "paused": "Paused ({ progress }%)",
+        "done": "Done, took { duration }",
+        "canceled": "Canceled",
+        "failed": "Failed"
+    },
+    "details": "Details",
+    "open-in-render": "Open in render page",
+    "output": "Output",
+    "remove-task": "Remove Task",
+    "remove-task-confirm": "Remove the selected task(s)?",
+    "remove-task-running": "Tasks that are still rendering will be cancelled first.",
+    "remove-task-file-confirm": "Remove the output files as well?",
+    "remove-task-only": "Remove only tasks",
+    "remove-task-and-file": "Remove tasks and files",
+    "show-output": "Show Output",
+    "show-in-folder": "Show in Folder",
+    "open-file": "Open File",
+    "pause-select": "Pause",
+    "cancel-render": "Cancel",
+    "cancel-render-file-confirm": "Some tasks are rendering. Remove the video files they have already produced?",
+    "cancel-render-only": "Cancel only",
+    "cancel-render-and-remove-file": "Cancel and remove file",
+    "clear-select": "Deselect",
+    "drop-to-remove": "(Release to remove this task)",
+    "selected-count": "{ n } selected",
+    "open-tasks": "Click to open the task list (drag to move)",
+    "task-done": "\"{ name }\" finished rendering",
+    "task-failed": "\"{ name }\" failed to render",
+    "duration": {
+        "hours": "h",
+        "minutes": "m",
+        "seconds": "s"
+    }
+}

@@ -1,0 +1,7 @@
+# nodeLinker: hoisted —— 本机 pnpm 生成的 junction 的 substitute name 带了一个
+# 无效的 `Global\` 前缀（`\??\Global\<drive>:\...`），Windows 能遍历但 Node 的
+# realpath 解析不了，导致 `node_modules/vite` 里找不到 rollup 等依赖而无法构建。
+# 改用 hoisted（扁平、真实目录、无 junction）绕开该问题。
+nodeLinker: hoisted
+allowBuilds:
+  esbuild: false

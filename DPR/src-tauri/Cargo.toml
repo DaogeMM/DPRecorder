@@ -1,0 +1,61 @@
+[package]
+name = "dpr"
+version = "1.6.1"
+description = "DPRecorder"
+authors = ["HLMC", "Mivik"]
+license = "GPL-3.0-or-later"
+default-run = "dpr"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "dpr_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# env_logger = "0.11.6"
+serde_json = "1.0.138"
+toml = "0.7.3"
+serde = { version = "1.0.217", features = ["derive"] }
+tauri = { version = "2.9.4", features = [ "protocol-asset", "tray-icon"] }
+
+anyhow = { version = "1.0.95", features = ["backtrace"] }
+macroquad = { git = "https://github.com/2278535805/prpr-macroquad", default-features = false }
+#dps = { git = "https://github.com/2278535805/DPS", package = "dps", default-features = false, features = ["log", "video"] }
+dps = { path = "../../DPS/dps", default-features = false, features = ["log", "video"] }
+
+sasa = { git = "https://github.com/2278535805/sasa" }
+tokio = { version = "1.45.0", features = ["process", "rt-multi-thread", "fs"] }
+tracing = "0.1.37"
+tempfile = "3.16.0"
+chrono = "0.4.28"
+open = "5.3.2"
+fs4 = { version = "0.6.6", features = ["tokio-async"] }
+winapi = { version = "0.3", features = ["wincon", "winuser", "shellapi", "winreg"] }
+tauri-plugin-shell = "2.3.3"
+# 关掉 cookies 特性：它在 plugin setup 阶段就要往 app_cache_dir() 写 .cookies，
+# 一旦该目录不可写（受限/沙箱环境）整个 app 会在 tauri::Builder::build() 阶段直接 panic。
+# 前端只用 plugin-http 查更新，不需要 cookie 持久化。
+tauri-plugin-http = { version = "2.5.4", default-features = false, features = ["rustls-tls", "http2", "charset", "macos-system-configuration"] }
+tauri-plugin-fs = "2.4.4"
+tauri-plugin-os = "2.3.2"
+regex = "1.9.6"
+tauri-plugin-cli = "2.4.1"
+tauri-plugin-dialog = "2.4.2"
+zip = "4.3.0"
+serde_yaml = "0.9.21"
+tauri-plugin-prevent-default = "2.0.0"
+ndarray = "0.16.1"
+humantime = "2.2.0"
+rand = "0.9.1"
+tauri-plugin-drag = "2.1.0"
+tauri-plugin-opener = "2"
+rustc-hash = "2.1.2"
+# sysinfo = "0.29.0"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+

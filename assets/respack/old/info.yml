@@ -1,0 +1,37 @@
+#该资源包向你如实介绍关于Phira资源包info文件的所有功能及格式
+#资源包名称
+name: Phigros 1.0版本初期
+#资源包作者
+author: PigeonGames
+#资源包介绍（可不填）
+description: 还原依据为phigros Glaciaxion异像
+#打击特效宽、高的帧数。打击特效是将多帧动画存储在一张图中的，因此需要指定这张图中横竖各有几帧，例如，在 https://mivik.moe/prpr-docs/respack/image/hit_fx.jpg（复制到浏览器打开） 中横、竖的帧数分别为 5 与 5（最后一行不太看得见，但是是存在的）（图片为了便于辨识使用了黑色背景，但在制作资源包时应当使用透明背景）该资源包的hit_fx.png为1x30（注：分辨率过大时会出现显示错误）
+hitFx: [5, 6]
+#Hold 贴图的尾、头高度。Hold 的皮肤是 一张图片，从上到下分别为 Hold 的尾部、中间和头部。（单押Hold）图片   https://mivik.moe/prpr-docs/respack/image/hold.png
+holdAtlas: [50, 50]
+#同上一条代码介绍（多押Hold）
+holdAtlasMH: [50, 95]
+#（小数，默认 1.0）：打击特效缩放比例
+hitFxScale: 1.8
+#（小数，默认 0.5）：打击特效的持续时间，以秒为单位
+hitFxDuration: 0.5
+#（布尔值，默认 false）：打击特效是否随 Note 旋转
+hitFxRotate: true
+#（布尔值，默认 true）：打击特效是否依照判定线颜色着色
+hitFxTinted: true
+#（布尔值，默认 false）：打击时是否隐藏方形粒子效果
+hideParticles: true
+#（布尔值，默认 false）：Hold 触线后是否还显示头部
+holdKeepHead: false
+#（布尔值，默认 false）：Hold 的中间部分是否采用重复式拉伸。图片  https://mivik.moe/prpr-docs/respack/image/hold_repeat.jpg
+holdRepeat: false
+#（布尔值，默认 false）：是否把 Hold 的头部和尾部与 Hold 中间重叠。图片   https://mivik.moe/prpr-docs/respack/image/hold_repeat.jpg
+holdCompact: false
+#colorPerfect（十六进制颜色代码，默认 0xe1ffec9f）：AP（全 Perfect）情况下的判定线颜色；
+colorPerfect: 0xFFEB9D
+#colorGood（十六进制颜色代码，默认 0xebb4e1ff）：FC（全连）情况下的判定线颜色。
+colorGood: 0xB9E2FF
+#关于十六进制颜色代码，可参考下列网站
+#  https://www.codeeeee.com/color/rgb.html
+#如果仍然有疑惑可观看网站介绍：https://mivik.moe/prpr-docs/respack/index.html
+#此模板中如果有“False/True”，意思分别为“否/是”，只有这两个选项，否则报错
