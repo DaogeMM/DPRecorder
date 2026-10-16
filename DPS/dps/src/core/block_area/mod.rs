@@ -6,8 +6,8 @@
 //! * `time` 单位是**秒**，直接使用，**不做** T(拍) 换算；
 //! * 事件只有 `time` 一个时间点，表示“在 `time` 时刻到达目标值”，缓动挂在**前一个**关键帧上
 //!   （与 `index/` 的 `eval_xy_track` / `eval_num_track` 一致；官方 phira-docs 说的是挂在
-//!   **后一个**关键帧上、且曲线是 `n = (type-1)/3 + 2` 的幂族 —— 那一版曾实现并验证过，
-//!   备份在 `临时目录\blockArea_mod_doc_semantics.rs`，本项目最终选择与 `index/` 保持一致）；
+//!   **后一个**关键帧上、且曲线是 `n = (type-1)/3 + 2` 的幂族，本项目最终选择与
+//!   `index/` 保持一致）；
 //!   `easeTypeX` / `easeTypeY` 分轴独立；`Zero`(13) / `One`(14) 表示“不插值”；
 //! * 生命周期 `appear -> enable -> disable -> disappear` 对应
 //!   `Ready` / `Active` / `Disabled` 三段材质；Ready 仍然是「`appear` 起线性渐显」，
@@ -17,8 +17,7 @@
 //!
 //! 渲染走 [`native`]：逐字搬自 `Phira-Pro-main/prpr` 的
 //! `block.rs` / `block_mask.rs` / `block_shader.rs` / `block_shader_full.{vert,frag}`。
-//! 早先那套按 `index/` 逆向的 WebGL 复刻管线（`gl.rs` + `core/shaders/block_*.glsl`）
-//! 已废弃并删除；`BlockAreaStyle::simplified` 的「简化噪域」也共用同一份官方材质，
+//! `BlockAreaStyle::simplified` 的「简化噪域」也共用同一份官方材质，
 //! 只是逐帧覆写 uniform 把它降级成纯色。细节见 [`native`] 与 `blockArea/NATIVE_PORT.md`。
 
 mod native;
@@ -48,8 +47,8 @@ pub const BLOCK_READY_DURATION: f64 = 0.5;
 /// 也就是方块由闪烁的 Ready 材质切成实心的 Active 材质。
 pub const BLOCK_READY_BLINKS: f64 = 3.0;
 
-/// 闪烁的亮度增益（按需求把最大闪烁亮度降到 75%）：窗口里「亮」= 该值、
-/// 「原来」= 上一版的渐显值 × 该值 —— 两个电平一起缩放，三下闪烁的对比度保持不变。
+/// 闪烁的亮度增益（最大闪烁亮度为 75%）：窗口里「亮」= 该值、
+/// 「原来」= 该时刻的渐显值 × 该值 —— 两个电平一起缩放，三下闪烁的对比度保持不变。
 pub const BLOCK_READY_BLINK_PEAK: f32 = 0.75;
 
 /// 求 `easeType` 在进度 `t ∈ [0, 1]` 上的缓动值。
@@ -344,8 +343,8 @@ impl BlockArea {
         if t < self.appear_time || t >= self.disappear_time {
             0.
         } else if t < self.enable_time {
-            // 上一版行为：`appear -> enable` 整段线性渐显。
-            // 唯一改动：最后 `BLOCK_READY_DURATION` 秒换成闪烁（不是「到这时才出现」）。
+            // `appear -> enable` 整段线性渐显，只有最后 `BLOCK_READY_DURATION` 秒换成
+            // 闪烁（不是「到这时才出现」）。
             if t >= self.enable_time - BLOCK_READY_DURATION {
                 self.ready_alpha(t)
             } else {
@@ -359,7 +358,7 @@ impl BlockArea {
     }
 
     /// `enable` 前 `BLOCK_READY_DURATION` 秒内的闪烁：**不消失**，而是在「亮」与
-    /// 「上一版在这时刻的原值（`appear -> enable` 的线性渐显值）」之间交替 ——
+    /// 「该时刻 `appear -> enable` 的线性渐显值」之间交替 ——
     /// 亮 → 原来 → 亮 → 原来 → 亮 → 原来 → `enable`，共三下亮，每一个「亮 + 原来」占 1/6 s。
     /// 两个电平都乘 `BLOCK_READY_BLINK_PEAK`（0.75）：最大亮度比全不透明低 25%，
     /// 同时三下闪烁的对比度与之前完全一致。
@@ -714,8 +713,8 @@ mod tests {
     use super::*;
 
     /// 示例谱面目录（`example/`）：**只在本机仓库根，不随仓库分发**。
-    /// 2026-10-16 工作区下移到 `repository/` 之后它就在 `CARGO_MANIFEST_DIR` 上面若干级，
-    /// 所以这里逐级向上找；也可以直接用环境变量 `DPS_EXAMPLE_DIR` 指过去。
+    /// 它可能在 `CARGO_MANIFEST_DIR` 上面若干级，所以这里逐级向上找；
+    /// 也可以直接用环境变量 `DPS_EXAMPLE_DIR` 指过去。
     /// 返回 `None` 表示这台机器上没有示例谱面，调用方按「skip」处理。
     fn example_dir() -> Option<std::path::PathBuf> {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
@@ -788,7 +787,7 @@ mod tests {
         let b = BlockArea::from_raw(raw, 0);
         let start = 4.0 - BLOCK_READY_DURATION;
         let period = BLOCK_READY_DURATION / BLOCK_READY_BLINKS;
-        // 闪烁前：与上一版一致（线性渐显）
+        // 闪烁前：整段线性渐显
         assert!((b.alpha(3.25) - 0.25).abs() < 1e-4);
         // 「亮」半个周期：alpha = 亮度增益
         for i in 0..3 {

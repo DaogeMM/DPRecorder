@@ -1,14 +1,12 @@
 <script setup lang="ts">
 // 渲染页顶部的谱面横幅（曲绘 + 曲名 + 难度徽章 + 曲师/画师/谱师）。
 //
-// 左侧版式（2026-10-11 调整）：
+// 左侧版式：
 //   第一行  曲名（`info.name`，空时显示控件标签）
 //   第二行  难度徽章（`IN Lv.13.6` —— 定数就拼在徽章里，灰底白字）
 //   第三行  曲师 <composer>
 //   第四行  画师 <illustrator>
 //   第五行  谱师 <charter>
-// 2026-10-11：难度标识放到曲名下面、改成灰底白字 ⇒ 徽章从曲名右边挪到曲名单独一行下面；
-// 上方曲师、谱师、画师改成一行一个 ⇒ 曲师/画师/谱师 各自独占一行（原来是 曲师 一行、画师+谱师 一行）。
 // 右侧是曲绘，`width: 300px` + `aspect-ratio: 2048 / 1080`。
 //
 // 它作为 `PhiSection`（variant="hero"）的 **head 插槽内容**，所以：
@@ -134,11 +132,10 @@ const diffBadge = computed(() => {
   return tier || formatLvlInText(String(props.info?.difficulty ?? '').trim());
 });
 
-/** 定数：0 或缺失时不显示；有值就强制一位小数（2026-10-13 起谱面信息的定数一律一位小数） */
+/** 定数：0 或缺失时不显示；有值就强制一位小数 */
 const lvlText = computed(() => formatLvl(props.info?.lvl));
 
-// 难度徽章不再按档位配色（EZ 绿 / IN 红 / AT 蓝 …），统一用强调蓝，
-// 底色直接写在 `<style>` 的 `.chart-hero__diff` 里，这里不需要额外计算。
+// 难度徽章不按档位配色（配色直接写在 `<style>` 的 `.chart-hero__diff` 里），这里不需要额外计算。
 </script>
 
 <template>
@@ -155,8 +152,7 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
             <span class="chart-hero__name">{{ name || t('info.name') }}</span>
           </div>
 
-          <!-- 第二行：难度徽章（「IN Lv.13.6」，定数就在徽章里）
-               2026-10-11：难度标识放到曲名下面、改成灰底白字 ⇒ 从曲名右边挪到曲名下面。 -->
+          <!-- 第二行：难度徽章（「IN Lv.13.6」，定数就在徽章里） -->
           <div v-if="diffBadge" class="chart-hero__diffrow">
             <span class="chart-hero__diff">
               <span class="chart-hero__diff-tier">{{ diffTier || diffBadge }}</span>
@@ -164,12 +160,12 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
             </span>
           </div>
 
-          <!-- 第三行：曲师（2026-10-11：曲师、谱师、画师改成一行一个） -->
+          <!-- 第三行：曲师（曲师、谱师、画师各自独占一行） -->
           <div v-if="info.composer" class="chart-hero__line">
             <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.composer') }}</span>{{ info.composer }}</span>
           </div>
 
-          <!-- 第四、五行：画师 / 谱师（原来两个挤在一行，现在各自独占一行） -->
+          <!-- 第四、五行：画师 / 谱师（各自独占一行） -->
           <div v-if="info.illustrator" class="chart-hero__line">
             <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.illustrator') }}</span>{{ info.illustrator }}</span>
           </div>
@@ -239,7 +235,7 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
   aspect-ratio: 2048 / 1080;
   overflow: hidden;
   border: 0.5px solid var(--phi-border-l3);
-  border-radius: 0; /* 2026-10-11：谱面信息的曲绘不带圆角 */
+  border-radius: 0; /* 谱面信息的曲绘不带圆角 */
   background: var(--phi-bg-layer-3);
   box-shadow: var(--phi-elevation-panel);
   color: var(--phi-label-caption);
@@ -281,7 +277,7 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
   margin-top: var(--phi-space-2);
 }
 
-/* 第三~五行：曲师 / 画师 / 谱师（2026-10-11 起一行一个） */
+/* 第三~五行：曲师 / 画师 / 谱师（一行一个） */
 .chart-hero__line {
   display: flex;
   flex-wrap: wrap;
@@ -304,13 +300,13 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
   gap: 5px;
   height: 20px;
   padding: 0 7px;
-  /* 2026-10-11 难度标识去掉圆角 ⇒ 原来是 var(--phi-radius-xs) */
+  /* 难度标识不带圆角 */
   border-radius: 0;
-  /* 2026-10-11 改成灰底白字 ⇒ 原来是强调蓝底 + 最深的墨色字 */
+  /* 灰底白字 */
   background: var(--phi-static-neutral-600);
   color: var(--phi-static-bluish-00);
   font-size: 0.72rem;
-  /* 2026-10-11 难度标识去掉加粗 ⇒ 原来是 700 */
+  /* 难度标识不加粗 */
   font-weight: 400;
   letter-spacing: 0.06em;
 }

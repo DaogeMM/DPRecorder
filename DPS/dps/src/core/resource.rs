@@ -822,7 +822,7 @@ impl Resource {
 
     /// 只发射「扩散散落粒子」（小方块），**不**发射中心标记粒子。
     ///
-    /// 「屏幕进水」的溺水死亡按需求只要散落的白色粒子、不要中心特效，
+    /// 「屏幕进水」的溺水死亡只要散落的白色粒子、不要中心特效，
     /// 所以这里刻意不调用 `self.emitter.emit_at(...)`（那一下正是中心那颗粒子）。
     pub fn emit_squares_at_origin(&mut self, color: Color) {
         if !self.config.particle {

@@ -1,15 +1,14 @@
 <script setup lang="ts">
-// 设置页（重排后的结构）。
+// 设置页。
 //
 // 页面结构照搬渲染页（ConfigView.vue）那套外壳：
 //   一级 = PhiGroup（`plain` 纯标题模式：不折叠、不画浅底/hover，只留放大的标题与左侧一条竖线）
-//   条目 = `cfg-grid`（三栏）+ CfgField / CfgSwitch（条目名只有文字 ——
-//   「去除文字前面的图标，只保留图标按钮」，所以条目名前面的小图标没留）
-// 两大块：**设置**（原来的那些项一个网格平铺，重置/保存两个图标按钮挂在「设置」标题右边）与
+//   条目 = `cfg-grid`（三栏）+ CfgField / CfgSwitch（条目名只有文字，前面的小图标没留）
+// 两大块：**设置**（各项一个网格平铺，重置图标按钮挂在「设置」标题右边）与
 // **关于**（开发方式 / 非官方声明 + 底部居中的「版本 | 作者」与 B 站入口）。
 //
-// 老的写法（`v-row` + `v-col` + 带 ⓘ 圆圈的 TipCheck）已全部换掉，
-// 所以 `components/TipCheck.vue` 现在没有任何界面在用（文件留着，要回退还有它在）。
+// 这套外壳不用 `v-row` + `v-col`，也不用带 ⓘ 圆圈的 TipCheck，
+// 所以 `components/TipCheck.vue` 现在没有任何界面在用（文件留着备用）。
 import { useI18n } from 'vue-i18n';
 useI18n();
 const { t } = useI18n();
@@ -42,7 +41,7 @@ function asFFmpegDir(path: string) {
   return path.trim().replace(/[\\/](ffmpeg(\.exe)?)$/i, '');
 }
 
-/** 「相对 exe 所在文件夹」的写法（2026-10-13 开始打包时需求）：
+/** 「相对 exe 所在文件夹」的写法：
  *  路径正好落在程序文件夹里就显示成 `.\output` / `.\config\presets.toml`，否则原样返回
  *  （用户自己填到别处的目录仍然是完整路径）。完整路径没丢 —— 那两格的 `:title` 挂的还是它。
  *  这样打包后整个文件夹随便挪位置，界面上也不会写着上一台机器的绝对路径。 */
@@ -74,8 +73,8 @@ function normalizeConfig() {
 }
 
 /* ---------------------- 改一下就自动保存 ----------------------
-   设置页原来靠标题右边那枚保存图标，现在改完立刻自己落盘、也不用再点一次，
-   所以那枚图标已经删了（`saveConfig()` 还留着：重置对话框那颗「确认」要它，
+   改完立刻自己落盘、也不用再点一次，所以标题右边那枚保存图标已经删了
+   （`saveConfig()` 还留着：重置对话框那颗「确认」要它，
    那条路径需要「校验 + 立刻落盘」）。
    两处刻意与 `saveConfig()` 不同：
      - **不弹**校验失败 / 保存成功的 toast（字段错误本来就显示在控件下面），
@@ -112,8 +111,7 @@ async function updateConfig() {
 updateConfig();
 
 /** 「配置文件」目录（`config/`）的绝对路径 —— 只读显示，图标按钮 / 右键都**打开这个目录**。
- *  2026-10-14 需求：原来是「预设配置文件路径」、定位 `config/presets.toml` 那个文件，
- *  现在改成显示并打开目录。目录由 `get_presets_path` 给的 `config/presets.toml` 取父目录
+ *  目录由 `get_presets_path` 给的 `config/presets.toml` 取父目录
  *  得来，没有新增后端命令（写入预设仍然由渲染页的预设按钮走后端命令）。 */
 const presetsPath = ref('');
 async function updatePresetsPath() {
@@ -127,7 +125,7 @@ async function updatePresetsPath() {
 updatePresetsPath();
 
 /** 「资源包」文件夹（`<程序目录>/respack`）的绝对路径 —— 跟预设配置文件一样是只读显示。
- *  资源包放在程序旁边（10-13 要求把这条路径也放进设置），文件选择器 / 右键都打开它。
+ *  资源包放在程序旁边，文件选择器 / 右键都打开它。
  *  这个目录没有「没设置」的概念（后端 `common::respack_dir()` 固定解析它），所以不需要 config 字段。 */
 const respackDir = ref('');
 async function updateRespackDir() {
@@ -147,7 +145,7 @@ async function updateOutputDirDefault() {
   try {
     outputDirDefault.value = (await invoke('get_output_dir_path')) as string;
   } catch (e) {
-    // 读不到（比如运行的程序还是没带这条命令的旧版本）就退回原来那句 `/output/` 提示
+    // 读不到（比如运行的程序还是没带这条命令的旧版本）就退回 `/output/` 那句提示
     outputDirDefault.value = '/output/';
   }
 }
@@ -180,8 +178,8 @@ async function updateFFmpegPathDefault() {
 }
 updateFFmpegPathDefault();
 
-/** 这两格「没设置」时把默认路径当**真值**显示（原来是当 `:placeholder` 占位提示）。
- *  改成真值是因为占位符看得见却选不中、复制不了（需求「让它们可以被复制」）。
+/** 这两格「没设置」时把默认路径当**真值**显示（不是当 `:placeholder` 占位提示）：
+ *  占位符看得见却选不中、复制不了。
  *  仍然只是显示：`get` 在空值时回落到默认路径，`set` 才真的写进 `config` ——
  *  所以「没设置 = 跟随程序目录 / 自动检测」的语义没变，不会凭空把绝对路径冻进 config.toml
  *  （把程序文件夹挪个地方也不会指到旧路径上去）。空值时的淡色交给 `.settings-path--default`。 */
@@ -194,7 +192,7 @@ const outputDirShown = computed({
   set: (value: string) => { config.value.outputDir = value || null; },
 });
 /** 配置文件目录：完整路径给 `:title`，框里写相对的 `.\config`。这格只读。
- *  `presets.toml` 就在里面，但显示与打开的**都是目录**（2026-10-14 需求）。 */
+ *  `presets.toml` 就在里面，但显示与打开的**都是目录**。 */
 const configDirFull = computed(() => presetsPath.value.replace(/[\\/][^\\/]+$/, ''));
 const configDirShown = computed(() => asAppRelative(configDirFull.value) || '.\\config');
 /** 资源包文件夹：同理，框里写 `.\respack`；后端没答上来（旧二进制）时也退回这个写法。 */
@@ -227,8 +225,8 @@ async function saveConfig() {
   }
 
   updateConfig();
-  // 这里以前还会弹一条绿色的「保存成功」：现在这条路只剩「重置 → 确认」在用，
-  // 重置成功不必再报一次（失败时的红字由上面两条 catch 负责）。
+  // 这条路只剩「重置 → 确认」在用，重置成功不必再弹一条绿色「保存成功」
+  // （失败时的红字由上面两条 catch 负责）。
 }
 
 const resetDialog = ref(false);
@@ -259,8 +257,8 @@ async function selectDir(title: string) {
   });
   if (!file) {
     // 用户在目录选择器里按了「取消」/Esc：不是错误，静默返回。
-    // （2026-10-13 用户问「为什么提示没有选择」——原来这里会弹一条红色「没有选择」，
-    //   点三个路径格末尾的文件夹图标后只要取消就会看到，看着像出了故障。）
+    // （这里不能弹红色「没有选择」：点三个路径格末尾的文件夹图标后只要取消就会看到，
+    //   看着像出了故障。）
     return null;
   } else {
     //toast(t('select'), 'success');
@@ -295,8 +293,8 @@ async function selectOutputDir() {
   }
 }
 
-/** 「FFmpeg 路径」选的是**目录**（exe 所在文件夹）。2026-10-13 需求：这格不写 exe，
- *  写 exe 所在的文件夹目录 —— 所以这里用目录选择器，选完让后端验一遍
+/** 「FFmpeg 路径」选的是**目录**（exe 所在文件夹），不写 exe 本身，
+ *  所以这里用目录选择器，选完让后端验一遍
  *  （目录会换算成里面的 ffmpeg.exe 跑 `-version` + 查滤镜），不合格就提示、不写进配置。 */
 async function selectFFmpegDir() {
   let path = await selectDir(t('ffmpeg-path'));
@@ -315,7 +313,6 @@ async function selectFFmpegDir() {
 
 /** 「FFmpeg 路径」那格的右键：**进到** exe 所在的那个文件夹里去。
  *
- *  2026-10-13 报告「FFmpeg 打开的是 bin 上一级文件夹后选中的 bin 文件，而不是进入 bin 文件夹」：
  *  `showInFolder` 走的是后端 `reveal_path`（`explorer.exe /select,"<路径>"`），对**文件**是对的
  *  （在文件夹中显示），对**目录**就成了「开上一级再选中它」—— 这格的语义是目录，所以这里换成
  *  `open_dir`（后端 `open_folder`）。
@@ -364,9 +361,9 @@ async function openInFolder(path: string | null, isOutput: boolean = false) {
 
 /** 「配置文件目录」那格的图标按钮 / 右键：**进到** `config/` 目录里（不是定位 `presets.toml`）。
  *
- *  2026-10-14 需求「改成打开 config 文件夹，而不是 presets 文件」：原来这格走 `reveal_in_dir`
- *  （`explorer.exe /select,...`：对文件是「在文件夹中显示」，对目录会变成「开上一级再选中它」——
- *  ffmpeg 那格踩过这个坑，见 `openFFmpegFolder`），所以改成跟「资源包」那格一样走 `open_dir`。
+ *  这格走 `open_dir`（跟「资源包」那格一样）。不能用 `reveal_in_dir`（`explorer.exe /select,...`：
+ *  对文件是「在文件夹中显示」，对目录会变成「开上一级再选中它」—— ffmpeg 那格踩过这个坑，
+ *  见 `openFFmpegFolder`）。
  *  目录一定存在（`config.toml` / `presets.toml` 都写在里面），不需要先建。 */
 function openConfigDir() {
   const path = configDirFull.value;
@@ -455,29 +452,50 @@ watch(listExpand, (val) => {
 });
 
 /**
- * 悬浮体宽度（百分比，15–100）：暴露到设置里，最小值 15，默认值也是 15（就是「最窄」那格）。
+ * 渲染弹窗宽度（百分比，15–100）：暴露到设置里，最小值 15，默认值也是 15（就是「最窄」那格）。
  * 与 `components/TaskStrip.vue` 共用同一个键 —— 那边也是 `useStorage('TaskStrip.width')`
  * （默认值必须和这里的 `STRIP_WIDTH_DEFAULT` 一致），同页多个实例之间会同步，
- * 所以这里一拉滑杆悬浮体立刻变宽/变窄，不用保存。
+ * 所以这里一拉滑杆渲染弹窗立刻变宽/变窄，不用保存。
  */
 const STRIP_WIDTH_DEFAULT = 15;
 const stripWidth = useStorage<number>('TaskStrip.width', STRIP_WIDTH_DEFAULT);
 
-// 主题只有一套（DeepDark）。「主题」下拉与「跟随系统主题」已一起删除。
+// 主题只有一套（DeepDark），设置里没有主题切换项。
 
 /* ===================== 关于（第二部分） ===================== */
 
-// 2026-10-14：「版本号去掉，只保留 DaogeMM(@咕的岛鸽) 字样」，紧接着又说「把@去掉」——
-// 关于页脚不再显示发布号（原来显示 `DISPLAY_VERSION`，值 26w42a），只留作者那一行。
+// 关于页脚不显示发布号（`DISPLAY_VERSION`），只留作者那一行。
 // 技术版本仍在 `DPR/src-tauri/Cargo.toml` 的 `package.version`（cargo / npm / tauri
 // 与安装包都要求 semver），只是界面上不再露出。
 
+// 仓库地址（与 `Cargo.toml` 的 `repository` 字段一致）。三个文件链接都走默认分支 main。
+const REPO_URL = 'https://github.com/DaogeMM/DPRecorder';
+const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
+const LICENSES_URL = `${REPO_URL}/blob/main/LICENSES/README.md`;
+const NOTICE_URL = `${REPO_URL}/blob/main/NOTICE`;
 // 作者 B 站空间（https://space.bilibili.com/521730845）
-// —— 「关于」页脚第二行那排入口里唯一的一个（2026-10-14 起）。
+// —— 贴在「关于」页脚那排入口的最后。
 const BILIBILI_URL = 'https://space.bilibili.com/521730845';
 
+/** 「引用项目」清单，逐条对照仓库根的 `NOTICE` 第 1 节（描述文字走 locale 的 `about-proj-*`） */
+const upstreamProjects = [
+  { repo: 'TeamFlos/phira', url: 'https://github.com/TeamFlos/phira', desc: 'about-proj-phira' },
+  { repo: '2278535805/phire', url: 'https://github.com/2278535805/phire', desc: 'about-proj-phire' },
+  { repo: 'Phira-Pro/Phira-Pro', url: 'https://github.com/Phira-Pro/Phira-Pro', desc: 'about-proj-phira-pro' },
+  { repo: 'TeamFlos/phira-render', url: 'https://github.com/TeamFlos/phira-render', desc: 'about-proj-phira-render' },
+  { repo: '2278535805/Phi-Recorder', url: 'https://github.com/2278535805/Phi-Recorder', desc: 'about-proj-phi-recorder' },
+];
+
+/** 上游依赖里的自定义 fork（`NOTICE` 第 1 节末尾那四个，都在 `github.com/2278535805/` 下） */
+const forkedDeps = [
+  '2278535805/prpr-macroquad',
+  '2278535805/prpr-miniquad',
+  '2278535805/sasa',
+  '2278535805/oboe-rs',
+];
+
 // 打开外部链接统一走 `common.ts` 的 `openExternal`（它内部转给 Rust 的 `open_external`，
-// 失败会 toast 出来）。以前这里是 `void openUrl(url)`：`@tauri-apps/plugin-opener` 在
+// 失败会 toast 出来）。不能用 `@tauri-apps/plugin-opener` 的 `openUrl`：它在
 // Windows 上从 Tauri 命令线程调 ShellExecuteExW 时缺 `SEE_MASK_NOASYNC`，请求被静默丢弃，
 // 点了没反应也不报错 —— 表现为点击链接无法唤醒浏览器。
 </script>
@@ -488,11 +506,10 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
       <div class="settings-view__inner">
         <div class="config-root">
           <!-- ========== 一、设置 ========== -->
-          <!-- 一行三个（原来是 `cfg-grid--two`）；
+          <!-- 一行三个；
                条目名一律定宽（见样式），所以三栏里的输入框起点是对齐的。
-               标题右边只剩「重置」一枚图标按钮
-               （「保存和重置的按钮放到设置右边」），先前是钉在网格第三列、也就是这一组的最右下角。
-               「保存」那枚已经删掉 —— 改完自己就落盘了（见上面的 `autoSaveConfig`）。 -->
+               标题右边只有「重置」一枚图标按钮（保存那枚已经删掉 —— 改完自己就落盘了，
+               见上面的 `autoSaveConfig`）。 -->
           <PhiGroup id="grp-setting" :title="t('setting')" plain>
             <template #actions>
               <div class="settings-actions">
@@ -500,13 +517,12 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
               </div>
             </template>
             <div class="cfg-grid">
-              <!-- 「RPE 目录」这一项**暂时隐藏**（需求）：RPE 谱面列表那条路先不放出来，
+              <!-- 「RPE 目录」这一项**暂时隐藏**：RPE 谱面列表那条路先不放出来，
                    代码原样留着，要恢复就把 v-if 去掉（下面 `selectRpeDir` 等也一起恢复使用）。 -->
               <CfgField v-if="false" :label="t('rpe-dir')" :tip="t('folder-tip')">
                 <v-text-field clearable density="compact" hide-details="auto" v-model="config.rpeDir" :title="t('folder-tip')" append-inner-icon="mdi-folder-open" @click:append-inner="selectRpeDir" @contextmenu="openInFolder(config.rpeDir)"></v-text-field>
               </CfgField>
-              <!-- 三个「路径」字段排在一行（需求「三个路径放到一行」）。
-                   2026-10-13（打包前）顺序调整成 **FFmpeg 路径排第一**：三项里只有它指向程序
+              <!-- 三个「路径」字段排在一行，**FFmpeg 路径排第一**：三项里只有它指向程序
                    文件夹之外的东西（装在哪台机器就得指哪台），另外两格都住在 exe 所在文件夹里，
                    所以框里写相对写法 `.\output` / `.\config\presets.toml`，完整路径留给悬停提示。 -->
               <CfgField :label="t('ffmpeg-path')">
@@ -521,7 +537,7 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
                 </v-text-field>
               </CfgField>
               <CfgField :label="t('output-dir')" :tip="t('folder-tip')">
-                <!-- 格式对齐「预设配置文件路径」那格（10-13 要求）：只读、没有 ✕ 清除按钮、
+                <!-- 格式对齐「预设配置文件路径」那格：只读、没有 ✕ 清除按钮、
                      悬停在文字上看完整路径。所以原来「一个 title 给整个框」的做法拆成两层：
                      title = `outputDirFull`（完整路径），框里写 `outputDirShown`（`.\output` 这种相对形态）。
                      ✕ 去掉后就没有「清空回默认」的入口了 —— 要改回来只走文件夹图标（或全局重置）。 -->
@@ -531,17 +547,16 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
                   </template>
                 </v-text-field>
               </CfgField>
-              <!-- 「资源包」文件夹（10-13 要求加进设置）：放资源包的地方就在程序旁边
+              <!-- 「资源包」文件夹：放资源包的地方就在程序旁边
                    （`<程序目录>/respack`，和 output / config 一个待遇），所以框里写 `.\respack`、
                    悬停提示给完整路径。这格不给改（目录固定），文字按常灰处理。 -->
               <CfgField :label="t('respack-path')" :tip="t('folder-tip')">
                 <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="respackDirShown" :title="respackDir" append-inner-icon="mdi-folder-open" @click:append-inner="openRespackDir" @contextmenu="openRespackDir"></v-text-field>
               </CfgField>
-              <!-- 配置文件目录（2026-10-14 需求）：这格原来是「预设配置文件路径」、定位
-                   `config/presets.toml`，现在显示与打开的**都是目录** `\config`。
-                   文字**始终**灰色：这格只读、位置也不给改，显示的就是程序旁边那份 config 目录。
-                   一开始按「还没有自建预设时才灰」写过一版，用户看到自己已经有预设时它还是白的，
-                   于是改成常灰。框里写相对写法（`configDirShown`）、`:title` 挂完整路径 ——
+              <!-- 配置文件目录：显示与打开的**都是目录** `\config`（不是 `config/presets.toml`）。
+                   文字**始终**灰色：这格只读、位置也不给改，显示的就是程序旁边那份 config 目录；
+                   不能按「还没有自建预设时才灰」来做 —— 已经有预设时它会是白的。
+                   框里写相对写法（`configDirShown`）、`:title` 挂完整路径 ——
                    打包后文件夹挪位置也不会显示上一台机器的绝对路径。 -->
               <CfgField :label="t('preset-file')" :tip="t('folder-tip')">
                 <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="configDirShown" :title="configDirFull" append-inner-icon="mdi-folder-open" @click:append-inner="openConfigDir" @contextmenu="openConfigDir"></v-text-field>
@@ -557,19 +572,22 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
                 <v-autocomplete density="compact" hide-details="auto" :items="SUPPORTED_LOCALES_NAME" item-title="name" item-value="code" v-model="locale"></v-autocomplete>
               </CfgField>
 
-              <CfgSwitch :label="t('print-stderr')" :tip="t('print-stderr-tip')" v-model="config.printStderr"></CfgSwitch>
-              <CfgSwitch :label="t('show-detailed-log')" :tip="t('show-detailed-log-tip')" v-model="config.showDetailedLog"></CfgSwitch>
-              <!-- 「开启『游玩』按钮」这一项**暂时隐藏**（10-13 要求）：那枚按钮先不放出来。
+              <!-- 「输出日志到主终端」与「显示详细日志」两条**入口隐藏**：
+                   开关本体、locale 里的两个键、以及后端读 `config.printStderr` /
+                   `config.showDetailedLog` 全都原样留着 —— 旧配置里存过 true 也不会被改写，
+                   想改直接编辑 `config.toml`。要恢复就把下面的 v-if="false" 去掉。 -->
+              <CfgSwitch v-if="false" :label="t('print-stderr')" :tip="t('print-stderr-tip')" v-model="config.printStderr"></CfgSwitch>
+              <CfgSwitch v-if="false" :label="t('show-detailed-log')" :tip="t('show-detailed-log-tip')" v-model="config.showDetailedLog"></CfgSwitch>
+              <!-- 「开启『游玩』按钮」这一项**暂时隐藏**：那枚按钮先不放出来。
                    代码与该配置项（`config.enablePlayButton`）原样留着 —— 旧配置里存过 true 也不会被改写，
                    要恢复就把 v-if 去掉（开关本身没有任何依赖）。 -->
               <CfgSwitch v-if="false" :label="t('enable-play-button')" :tip="t('enable-play-button-tip')" v-model="config.enablePlayButton"></CfgSwitch>
               <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
               <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
-              <!-- 「高性能模式」（2026-10-14 需求）：从渲染页搬到设置里，本来放在「默认展开侧边栏」
-                   右边。它跟上面那个「默认展开侧边栏」是两回事：那一个是纯界面偏好（存
+              <!-- 「高性能模式」：它跟上面那个「默认展开侧边栏」是两回事：那一个是纯界面偏好（存
                    localStorage），这个是 app 配置项（写进 `config.toml`），由后端在提交渲染 /
                    游玩时注入那个渲染进程 —— 值落在 `config.highPerformance`。
-                   2026-10-14：**入口按要求隐藏起来**（同上面「开启『游玩』按钮」的做法），
+                   **入口隐藏起来**（同上面「开启『游玩』按钮」的做法），
                    开关本体、`AppConfig.highPerformance` 字段、后端的注入、
                    locale 里的 `high-performance` / `high-performance-tip` 全都原样留着 ——
                    要恢复就把下面的 `v-if="false"` 去掉。隐藏期间想用这个模式，直接编辑
@@ -581,15 +599,41 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
           </PhiGroup>
 
           <!-- ========== 二、关于 ========== -->
-          <!-- 2026-10-14：许可 / 第三方素材 / 引用项目 / 致谢四条（连同文案与外链）整块删掉了 ——
-               它们本来是「上架 GitHub 时把出处写清楚」用的，现在项目不再上传，仓库里也不再放
-               `LICENSE` / `NOTICE` / `LICENSES/`。
-               条目名一律定宽（见样式），所以「开发方式 / 非官方声明 …」后面的正文都从同一个 x 开始；
-               「项目简介」整条也去掉了（locale 里的
-               `about-intro` / `about-intro-label` 两个键先留着，要放回来还有）。
-               版本 / 作者与相关链接整块居中、约占页宽 30%，放在这一组的最下面。 -->
+          <!-- 「致谢 / 引用项目 / 开源许可 / 第三方素材」四条（连同文案与外链）在页脚之上；
+               条目名一律定宽（见样式），所以各条后面的正文都从同一个 x 开始。
+               「项目简介」整条没有（locale 里的 `about-intro` / `about-intro-label` 两个键先留着，
+               要放回来还有）。
+               版本号不显示，页脚整块居中、宽度按内容自适应。 -->
           <PhiGroup id="grp-about" :title="t('about')" plain>
             <div class="cfg-grid">
+              <CfgField :label="t('about-thanks-label')" full>
+                <p class="about-text">{{ t('about-thanks') }}</p>
+              </CfgField>
+
+              <CfgField :label="t('about-projects-label')" full>
+                <div class="about-block">
+                  <p class="about-hint">{{ t('about-projects-tip') }}</p>
+                  <div class="about-links">
+                    <div class="about-link-row" v-for="p in upstreamProjects" :key="p.repo">
+                      <button type="button" class="about-link" @click="openExternal(p.url)"><v-icon size="14" class="about-link-icon">mdi-github</v-icon>{{ p.repo }}</button>
+                      <span class="about-link-desc">{{ t(p.desc) }}</span>
+                    </div>
+                  </div>
+                  <p class="about-hint about-hint--gap">{{ t('about-forks-tip') }}</p>
+                  <div class="about-links about-links--row">
+                    <button type="button" class="about-link" v-for="f in forkedDeps" :key="f" @click="openExternal(`https://github.com/${f}`)"><v-icon size="14" class="about-link-icon">mdi-github</v-icon>{{ f }}</button>
+                  </div>
+                </div>
+              </CfgField>
+            </div>
+
+            <div class="cfg-grid">
+              <CfgField :label="t('about-license-label')" full>
+                <p class="about-text">{{ t('about-license') }}</p>
+              </CfgField>
+              <CfgField :label="t('about-assets-label')" full>
+                <p class="about-text">{{ t('about-assets') }}</p>
+              </CfgField>
               <CfgField :label="t('about-ai-label')" full>
                 <p class="about-text">{{ t('about-ai') }}</p>
               </CfgField>
@@ -598,14 +642,18 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
               </CfgField>
             </div>
 
-            <!-- 页脚：第一行只有作者那一行（2026-10-14：「版本号去掉」→「把 @ 去掉」），
-                  第二行一个「图标 + 文字」入口，不写标题，整块居中 -->
+            <!-- 页脚：第一行只有作者那一行（不带版本号、不带 @），
+                  第二行五个「图标 + 文字」入口，不写标题，整块居中 -->
             <div class="about-footer">
               <div class="about-footer__facts">
                 <span class="about-value">{{ t('about-author') }}</span>
               </div>
 
               <div class="about-buttons about-buttons--center">
+                <v-btn prepend-icon="mdi-github" variant="text" size="small" @click="openExternal(REPO_URL)">{{ t('open-repo') }}</v-btn>
+                <v-btn prepend-icon="mdi-scale-balance" variant="text" size="small" @click="openExternal(LICENSE_URL)">{{ t('open-license') }}</v-btn>
+                <v-btn prepend-icon="mdi-license" variant="text" size="small" @click="openExternal(LICENSES_URL)">{{ t('open-licenses') }}</v-btn>
+                <v-btn prepend-icon="mdi-information-outline" variant="text" size="small" @click="openExternal(NOTICE_URL)">{{ t('open-notice') }}</v-btn>
                 <!-- B 站入口：MDI 没有 bilibili 图标，用内联的 simple-icons 小电视
                      （`components/BilibiliIcon.vue`：MDI 里没有 bilibili 图标） -->
                 <v-btn :prepend-icon="BilibiliIcon" variant="text" size="small" @click="openExternal(BILIBILI_URL)">{{ t('open-bilibili') }}</v-btn>
@@ -619,8 +667,7 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
 
   <!-- 重置确认弹窗：皮肤与标题行走 `design/config.css:400-445` 那套共用类（齿轮配置窗体、
        「文件名格式」弹窗、批量页两个配置弹窗都在用），`App.vue` 的全局弹窗基底现在也是同一套
-       （内容区底色 + 88% 不透明、直角、居中 1.5rem 标题、白字）。宽度仍是这个确认框原来的
-       `auto` / 最小 300px —— 共用类给卡片写的是 `width: 100%`，那是给带明确像素宽的弹窗用的。
+       （内容区底色 + 88% 不透明、直角、居中 1.5rem 标题、白字）。宽度仍是 `auto` / 最小 300px —— 共用类给卡片写的是 `width: 100%`，那是给带明确像素宽的弹窗用的。
        文案见 setting.json：`reset-confirm` / `reset-confirm-desc` / `reset-ok`。 -->
   <v-dialog v-model="resetDialog" width="auto" min-width="300px" class="log-card-bg">
     <v-card class="log-card-only-window phi-config-dialog reset-dialog">
@@ -651,17 +698,15 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
   padding: var(--phi-space-6);
 }
 
-/* 内容不再居中收窄（「左对齐，利用整个界面，去除界面限制」）：
-   原来这里是 `max-width: var(--phi-content-max-width)`（tokens.css 里的 1100px）+ `margin: 0 auto`，
-   只有设置页在用这个上限，渲染页（ConfigView）本来就是铺满内容区的 —— 现在设置页也一样，
+/* 内容铺满内容区、不居中收窄 —— 渲染页（ConfigView）本来就是铺满的，设置页也一样，
    条目从左边开始排、两栏各自摊开。 */
 .settings-view__inner {
   width: 100%;
 }
 
-/* 条目名一律定宽（「后面的具体文字从同一起点
-   开始写，这样视觉更整齐」）。定宽之后「设置」组三栏里的输入框起点也一致了；
-   160px 是量着最长的两个名字定的（「输出日志到主终端」8 字 / 「指定 HEVC 编码器」）。 */
+/* 条目名一律定宽，后面的具体文字从同一起点开始写、视觉更整齐。定宽之后「设置」组
+   三栏里的输入框起点也一致了；160px 是量着最长的两个名字定的
+   （「输出日志到主终端」8 字 / 「指定 HEVC 编码器」）。 */
 .settings-view :deep(#grp-setting .cfg-item__label),
 .settings-view :deep(#grp-about .cfg-item__label) {
   flex: 0 0 160px;
@@ -675,22 +720,20 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
 }
 
 /* 设置组第一行那三格「路径」：显示的是默认值（不是用户自己设的）时一律用这支淡色。
-   · 「预设配置文件路径」永远如此 —— 只读、位置也不给改（「如果是默认的预设配置，
-     那字体也改成灰色」）。
-   · 「自定义输出目录」「FFmpeg 路径」则是 `config.*` 为空的期间如此：它们的默认值改成
-     真值显示了（原来当占位提示，选不中、复制不了），见 `outputDirShown` / `ffmpegPathShown`。
+   · 「预设配置文件路径」永远如此 —— 只读、位置也不给改。
+   · 「自定义输出目录」「FFmpeg 路径」则是 `config.*` 为空的期间如此：它们的默认值按真值
+     显示（不是占位提示，选得中、复制得了），见 `outputDirShown` / `ffmpegPathShown`。
    `.config-root` 那几条纯白规则是 0,2,0，这里带 scoped 属性是 0,3,0，不用 `!important`；
    `input` 那一行不能少，Vuetify 把值画在 `<input>` 自己的 color 上。
    不透明度也要跟着降：Vuetify 的占位符是「color 再乘 `--v-disabled-opacity`」（深色主题 0.5），
-   真值不打折就还是比占位符亮一档（量用户的截图：占位符最亮 104，同一支灰的真值 177）。 */
+   真值不打折就还是比占位符亮一档（实测占位符最亮 104，同一支灰的真值 177）。 */
 .settings-path--default :deep(.v-field__input),
 .settings-path--default :deep(.v-field input) {
   color: var(--phi-label-tertiary);
   opacity: var(--v-disabled-opacity, 0.5);
 }
 
-/* 「重置 / 保存」那两个图标按钮：现在挂在「设置」标题右边（
-   「保存和重置的按钮放到设置右边」），所以不再需要摊满一格，只要一排跟着标题右端走。
+/* 「重置」图标按钮挂在「设置」标题右边，只要一排跟着标题右端走，
    靠右由 PhiGroup 标题行里的 `v-spacer` 负责。 */
 .settings-actions {
   display: flex;
@@ -699,13 +742,9 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
   flex: none;
 }
 
-/* 「关于」最下面的页脚：整块居中（
-   「版本和作者一行，相关链接一行，放到关于最下面，居中，占30%宽度左右」）。
-   后来改成「底部直接写 1.6.1 | DaogeMM，第二行是图标按钮，不写标题。居中对齐」，
-   按钮文字直接复用 locale 的 `open-*` 键。2026-10-14 起这一行只剩 B 站入口 ——
-   指向本仓库的那四个（GitHub 仓库 / GPL-3.0 全文 / 第三方许可证 / 出处与致谢）随
-   「不再上架 GitHub」一起去掉了，那几份文件（`LICENSE` / `NOTICE` / `LICENSES/`）也在同一轮里删了。
-   文字加上去之后这一行比 30% 宽，所以页脚宽度改成按内容自适应（`fit-content` + `auto` 外边距
+/* 「关于」最下面的页脚：整块居中。按钮文字直接复用 locale 的 `open-*` 键；
+   这一行是作者那一行 + 五个入口（GitHub 仓库 / GPL-3.0 全文 / 第三方许可证 / 出处与致谢 / B 站）。
+   这一行比固定 30% 宽，所以页脚宽度按内容自适应（`fit-content` + `auto` 外边距
    ⇒ 仍然居中），只有窄窗口时才回落到内容宽度。 */
 .about-footer {
   width: fit-content;
@@ -721,7 +760,7 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
   display: flex;
   align-items: center;
   gap: var(--phi-space-2);
-  /* 「DaogeMM 放大一点」——正文默认 1rem ⇒ 1.15rem。 */
+  /* 作者那一行放大一点：正文默认 1rem ⇒ 1.15rem。 */
   font-size: 1.15rem;
 }
 
@@ -746,11 +785,82 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
   color: var(--phi-label-secondary);
 }
 
-/* 页脚里出现的值（版本号 / 作者）：颜色跟 `.about-text` 一样
+/* 页脚里出现的值（作者那一行，不含版本号）：颜色跟 `.about-text` 一样
    （`.config-root` 里 `--phi-label-secondary` 已重定成纯白，见 design/config.css），
    字号由 `.about-footer__facts` 统一给（1.15rem）。 */
 .about-value {
   color: var(--phi-label-secondary);
+}
+
+/* 下面这组是「引用项目 / 上游 fork」两段清单用的。
+   `.about-block` 撑满 `CfgField` 的控件区，`flex-direction: column` 让说明行、清单、再一行说明
+   自上而下排。 */
+.about-block {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--phi-space-1);
+}
+
+/* 「关于」里的说明文字：也是正文，用白色
+   （tertiary 是给占位符 / 禁用项那种「淡」用的）。 */
+.about-hint {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--phi-static-bluish-00);
+}
+
+.about-hint--gap {
+  margin-top: var(--phi-space-2);
+}
+
+.about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.about-links--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px var(--phi-space-4);
+}
+
+.about-link-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--phi-space-2);
+  min-width: 0;
+}
+
+.about-link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--phi-accent);
+  cursor: pointer;
+}
+
+/* 链接前面那个 GitHub 小标 */
+.about-link-icon {
+  color: var(--phi-label-tertiary);
+}
+
+.about-link:hover {
+  text-decoration: underline;
+}
+
+.about-link-desc {
+  font-size: 0.9rem;
+  /* 同上：说明文字也是正文，改白 */
+  color: var(--phi-static-bluish-00);
 }
 
 .about-buttons {
@@ -761,8 +871,7 @@ const BILIBILI_URL = 'https://space.bilibili.com/521730845';
   gap: var(--phi-space-2);
 }
 
-/* 页脚那排入口要居中（`.about-buttons` 默认靠左；2026-10-14 起只剩 B 站一个）：
-   「下面四个图标和文字缩小一点，全部改成淡色」⇒ 文字 0.7rem（Vuetify `size="small"`
+/* 页脚那排入口要居中（`.about-buttons` 默认靠左）：文字 0.7rem（Vuetify `size="small"`
    自带 `.75rem`）、图标 15px、内边距与间距收紧，颜色统一成次要色 ——
    `.v-btn--variant-text` 本来就是 `color: inherit`，所以只给按钮写 color 就够了。 */
 .about-buttons--center {

@@ -2,7 +2,9 @@
 name = "dps-ui"
 version = "0.4.0"
 edition = "2021"
-license = "GPL-3.0-only"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 crate-type = ["lib", "cdylib"]
@@ -24,13 +26,13 @@ cacache = { version = "*", default-features = false, features = ["tokio-runtime"
 chrono = { version = "0.4.23", features = ["serde"] }
 futures-util = "0.3.25"
 hex = "0.4.3"
-# 2026-10-11：原来是 `image = "*"`。合并成单一工作区后重新解析依赖时，这条 `*`
-# 被解析成 image 0.25.10，而同一个工作区里的 `dps`（../dps/Cargo.toml）用的是
+# 这里必须是 0.24，不能写成 `*`：单一工作区里解析依赖时，`*`
+# 会被解析成 image 0.25.10，而同一个工作区里的 `dps`（../dps/Cargo.toml）用的是
 # `image = "0.24"`，于是依赖图里同时存在两个 image：`SafeTexture: From<DynamicImage>`
 # （在 dps 侧基于 0.24 实现）和 ui 侧传进来的 `DynamicImage`（0.25）对不上，报
 #   error[E0308]: mismatched types … expected `image::dynimage::DynamicImage`, found `DynamicImage`
 #   error[E0277]: the trait bound `SafeTexture: From<DynamicImage>` is not satisfied
-# 钉成 0.24 与 `dps` 对齐（旧 lock 里本来也是统一到 0.24.9 的）。
+# 钉成 0.24 与 `dps` 对齐。
 image = "0.24"
 lru = "0.16.0"
 lyon = "*"

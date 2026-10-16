@@ -62,7 +62,7 @@ const AFTER_TIME: f64 = 0.7;
 /// 整块的右边缘 / 宽度 / 左边缘 / 内边距。
 /// 最下沿保持在 y ≈ 0.47 以内：再往下会压到谱面的 `IN Lv.14` 难度字样（它在 y ≈ 0.50 一带）。
 const UI_RIGHT: f32 = 0.97;
-/// 原来是 1.06，按需求把整体宽度缩窄 30%。
+/// 整体宽度比原始实现缩窄 30%。
 const UI_PANEL_W: f32 = 0.742;
 const UI_LEFT: f32 = UI_RIGHT - UI_PANEL_W;
 const UI_PAD: f32 = 0.018;
@@ -602,7 +602,7 @@ impl GameScene {
         let pause_w = 0.011 * scale_ratio;
         let pause_h = pause_w * 3.5;
         // 常驻的暂停小按钮：保持 Phira 原来的位置（左上角、分数下面）。
-        // 需求里点名这个不能动，右下角那套是「暂停界面」的菜单按钮，和它无关。
+        // 这个不能动：右下角那套是「暂停界面」的菜单按钮，和它无关。
         let pause_center = Point::new(-aspect_ratio + 0.0525 * scale_ratio, top + eps * 3.6454 - (1. - p) * 0.4 + pause_h / 2.);
         if res.config.interactive
             && !tm.paused()
@@ -1717,7 +1717,7 @@ impl Scene for GameScene {
             self.ui(ui, tm)?;
         }
 
-        // 方块图层：按需求放在最高层 —— 压在分数 / 连击 / 暂停键（`renderUiPause` 等）以及
+        // 方块图层：放在最高层 —— 压在分数 / 连击 / 暂停键（`renderUiPause` 等）以及
         // 判定线、音符之上。必须在上面那次 MSAA `blit()` 之后，所以直接写已解析的
         // `chart_target.output()`（见 `Chart::render_block_area`）。
         //
@@ -1754,7 +1754,7 @@ impl Scene for GameScene {
             }
         }
 
-        // 暂停时不再给画面压一层半透明黑（`PAUSE_BACKGROUND_ALPHA` 已随需求 1 移除）。
+        // 暂停时不给画面压一层半透明黑（`PAUSE_BACKGROUND_ALPHA` 已移除）。
 
         {
             set_camera(&Camera2D {
@@ -1786,7 +1786,7 @@ impl Scene for GameScene {
         // 「待判按键」染色：噪域之后单独走一小趟，相机与**谱面那一趟**完全一致
         //（同一台 `chart_zoom` + `chart_viewport`、同一张 `chart_target.output()`），
         // 而且这一趟是让按键用**自己的**绘制代码再画一遍（旋转 / 移动时间 / 长条头尾 /
-        // 双押贴图全都天然一致），所以不会被噪域糊住（需求：「优先级比噪域高」）。
+        // 双押贴图全都天然一致），所以不会被噪域糊住。
         {
             set_camera(&Camera2D {
                 zoom: chart_zoom,

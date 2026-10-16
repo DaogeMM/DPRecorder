@@ -1,7 +1,7 @@
 /**
- * 全局任务列表（底部悬浮体在应用里全局显示）。
+ * 全局任务列表（渲染弹窗在应用里全局显示）。
  *
- * 任务页、底部的悬浮条（`components/TaskStrip.vue`）、以及窗口任务栏进度都要看同一份
+ * 任务页、底部的渲染弹窗（`components/TaskStrip.vue`）、以及窗口任务栏进度都要看同一份
  * 数据，所以 `get_tasks` 的 700ms 轮询收在这里：每个 `useTasks()` 是一个订阅者，
  * 第一个订阅者启动轮询，最后一个退订时停。
  */
@@ -25,7 +25,7 @@ export async function refreshTasks() {
 }
 
 /**
- * 悬浮条盯的那一条任务 —— 底部悬浮体显示当前渲染谱面的曲绘、曲名、难度与进度条。
+ * 渲染弹窗盯的那一条任务 —— 它显示当前渲染谱面的曲绘、曲名、难度与进度条。
  *
  * 一轮里可能同时有好几条在跑，这里取列表里第一条还活着的：
  * 有正在渲染的就优先它，否则按列表顺序取第一条（加载 / 混音 / 暂停）。
@@ -65,7 +65,7 @@ export function useTasks() {
  * 难度徽章的三段拆解，和 `components/ChartHero.vue` 里那枚 `IN Lv.13.6` 同一个算法：
  * `diff` 是纯档位（`IN`），`difficulty` 往往是带定数的整串（`IN Lv.13.6`），
  * 两者拼起来时要把 `difficulty` 结尾的 `Lv.x.y` 削掉。
- * 任务列表的折叠行与底部悬浮条共用。
+ * 任务列表的折叠行与渲染弹窗共用。
  */
 export function diffTier(info?: ChartInfo): string {
   const tier = String(info?.diff ?? '').trim();

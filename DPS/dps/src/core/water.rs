@@ -5,7 +5,7 @@
 //! 直接用这套坐标按格平铺整屏；y 轴朝上会让 macroquad 的贴图上下颠倒，因此绘制时带
 //! `flip_y: true`。
 //!
-//! 为什么不复用噪域那条「全屏四边形 + 官方材质 + 掩码纹理」的通路：需求只要「一层会流动的
+//! 为什么不复用噪域那条「全屏四边形 + 官方材质 + 掩码纹理」的通路：这里只要「一层会流动的
 //! 贴图」，而噪域管线要靠掩码决定形状，还得把位移 / 火花 / 描边 / 辉光 / 场景快照一层层关掉，
 //! 顺带会牵扯「简化噪域」「噪域文字」等开关的语义。自己按格平铺虽然 quad 多（16:9、1/16 格
 //! 约 29×18 = 522 个），但语义干净、也不碰噪域的任何状态。
@@ -292,13 +292,13 @@ fn play_hit_sound(res: &mut Resource, tag: &str) {
 
 
 // ---------------------------------------------------------------------------
-// 「屏幕进水」的按键水下状态（原来散在 `core/note.rs` 的 `Note` 上）
+// 「屏幕进水」的按键水下状态
 // ---------------------------------------------------------------------------
 
 /// 每个按键一份：血量、泡水时长、受伤闪红 / 死亡动画的剩余与总时长、待判 MISS 标记。
 ///
-/// 原来这 8 个字段直接挂在 `Note` 上，更新逻辑也写在 `Note::update_water` 里；现在整块挪到
-/// 本模块，`Note` 只留一个 `pub water: WaterState` 字段，更新由 [`update`] 负责。
+/// 这些字段由本模块持有，`Note` 只留一个 `pub water: WaterState` 字段，
+/// 更新由 [`update`] 负责。
 #[derive(Clone, Copy, Debug)]
 pub struct WaterState {
     /// 剩余血量；`< 0` 表示本局还没初始化
@@ -320,9 +320,9 @@ pub struct WaterState {
 }
 
 /// **注意**：默认值不是 0，而是两个哨兵 —— `hp = -1.`（本局还没初始化，首次进屏幕时取
-/// `water_hp`）与 `last = -1.`（还没记过时间，第一帧只对表不扣血）。抽离成 `WaterState` 时
-/// 若直接用 `#[derive(Default)]`，两个哨兵都变成 `0.`：`hp` 一上来就 `<= 0.`，`update` 会在
-/// 第 279 行直接 `return`，于是**永远不会溺水**（水层还在画，按键却永不扣血）。
+/// `water_hp`）与 `last = -1.`（还没记过时间，第一帧只对表不扣血）。若直接用
+/// `#[derive(Default)]`，两个哨兵都变成 `0.`：`hp` 一上来就 `<= 0.`，`update` 会在
+/// `hp <= 0.` 处直接 `return`，于是**永远不会溺水**（水层还在画，按键却永不扣血）。
 impl Default for WaterState {
     fn default() -> Self {
         Self {
@@ -386,8 +386,8 @@ pub fn update(note: &mut Note, res: &mut Resource, parent_tr: &Matrix, ctrl_obj:
     // 是否「画在屏幕里」必须与渲染用同一套坐标：`render` 的 `draw` 闭包里是
     // `res.world_to_screen(Point::default())`（吃相机缩放 `chart_ratio`、进入动画与视口）
     // 再比 `|x| ≤ 1.15 × chart_ratio`、`|y| × chart_ratio × aspect ≤ 1.01`。
-    // 以前这里直接拿**模型空间**的原点比 1.15 / 1.01 —— 坐标系不同（谱面缩放
-    // `chart_ratio` ≠ 1 时差很多），于是「明明画在水里」的按键会被判成不在水里，
+    // 直接拿**模型空间**的原点比 1.15 / 1.01 就会错：坐标系不同（谱面缩放
+    // `chart_ratio` ≠ 1 时差很多），「明明画在水里」的按键会被判成不在水里，
     // 表现就是长时间不扣血（表演用 Drag 尤其明显）。
     let mut on_screen = false;
     res.with_model(transform, |res: &mut Resource| {
@@ -414,7 +414,7 @@ pub fn update(note: &mut Note, res: &mut Resource, parent_tr: &Matrix, ctrl_obj:
         //   回来，一出去就把泡过的时间清零的话，它长期在水里也永远攒不够
         //   `water_drown_delay`，表现就是「长时间未扣血」。
         // * Hold：清零。长条会长时间贴在判定线附近进进出出，累计口径会让它一进水就
-        //   立刻淹死（否则「扣血一次就直接死了」），维持原来的「出屏重新计时」。
+        //   立刻淹死（否则「扣血一次就直接死了」）；清零即「出屏重新计时」。
         if matches!(note.kind, NoteKind::Hold { .. }) {
             note.water.in_water = 0.;
         }
@@ -452,14 +452,13 @@ pub fn update(note: &mut Note, res: &mut Resource, parent_tr: &Matrix, ctrl_obj:
         note.water.pending_miss = !matches!(note.judge, JudgeStatus::Judged);
         // 记下这个按键溺水死了：渲染器据此在视频音轨里去掉它自己的打击音效
         log_drowned_note(note);
-        // 记下这个按键溺水死了：渲染器据此在视频音轨里去掉它自己的打击音效
-                // 死亡时也播一次受击音效（与受伤共用素材、音量与并发上限）
+        // 死亡时也播一次受击音效（与受伤共用素材、音量与并发上限）
         play_death(res);
         let count = res.config.water_death_particles.max(0.) as usize;
         if count > 0 && res.config.particle {
             let old = res.emitter.particle_count;
             res.emitter.particle_count = count;
-            // 按需求：溺水死亡后**只有散落的白色粒子**，没有中心特效
+            // 溺水死亡后**只有散落的白色粒子**，没有中心特效
             // （`emit_squares_at_origin` 只发扩散散落粒子，不发中心标记粒子）。
             res.with_model(transform, |res| res.emit_squares_at_origin(WHITE));
             res.emitter.particle_count = old;

@@ -4,9 +4,7 @@
  * 左右两格中间一条分界线、只有**选中的那格**填 `--phi-interactive-active` 灰底；
  * 区别只是两格里写的是选项文字，而不是 ✅ / ❌。
  *
- * 2026-10-11：把「罗马模式 / 中文模式」改成一个二选一框，外壳沿用勾选框的样式 ——
- * 原来「其他语言」弹窗里是「罗马模式」「中文模式」两个独立开关，现在合成一个二选一。
- * 外观依旧全在全局 `design/config.css` 的 `.cfg-radio*` 里（挨着 `.cfg-switch*`），
+ * 外观全在全局 `design/config.css` 的 `.cfg-radio*` 里（挨着 `.cfg-switch*`），
  * 与 `CfgSwitch.vue` 的做法一致：组件自己不带样式。
  *
  * 用法：`options` 是 `{ value, label }`，`modelValue` 是当前选中的 value。
@@ -14,9 +12,8 @@
  * 「其他语言」这一行的两个选项都属于「可选开启的语言模式」，需要一个「都不开」的默认态，
  * 否则用户一旦点过就再也回不到默认显示。
  *
- * ⚠️ 2026-10-11 同一天又拆成「罗马模式」「中文模式」两个配置，
- * 「其他语言」那一行随即改回两条独立 `CfgSwitch` —— **当前没有任何地方引用本组件**
- * （留在仓库里备用，样式仍在下面说的全局 `design/config.css` 的 `.cfg-radio*` 里）。
+ * ⚠️ **当前没有任何地方引用本组件**（「其他语言」那一行用的是「罗马模式」「中文模式」
+ * 两条独立 `CfgSwitch`；本组件留在仓库里备用，样式仍在全局 `design/config.css` 的 `.cfg-radio*` 里）。
  * 要用回来只需在 `ConfigView.vue` 里 `import CfgRadio from './CfgRadio.vue';`。
  */
 const props = defineProps<{

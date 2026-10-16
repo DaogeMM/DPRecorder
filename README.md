@@ -1,16 +1,46 @@
 # DPRecorder
 
+> [!WARNING]
+> **本项目大量使用 AI 生成代码。** 源码、文档、重构与整合有相当一部分由 **DeepSeek** 模型（DeepSeek 官方 API，模型 id `deepseek-flash`）生成，人类作者负责提出需求、做决定与验收。**AI 输出可能包含错误、过时或不安全的内容**，一切以仓库里的代码与你在本机的实测结果为准；构建、再分发之前请自行审查与测试。完整声明见 [`NOTICE`](NOTICE) 第 1 节。
+
 把 **Phigros 谱面离线渲染成视频**的 Windows 桌面程序：**Tauri 2** 外壳 + **Vue 3** 前端 + 内嵌的 Rust 节奏游戏引擎 **DPS**（解析谱面、跑判定、把每一帧画出来）。
 
 > 这个项目 = **DPRecorder**（桌面渲染器）+ **DPS**（它内嵌的引擎）。
-> 本页是**上手页**：先讲清这是什么、怎么跑起来，再告诉你想改什么该去读哪一篇。面向使用者的简短说明见 [`DPR/README.md`](DPR/README.md)。
+> **命名**：两侧子系统在正式使用前就定了名——引擎 **DPS**、桌面渲染器 **DPR**；早期工作名 `DP-Simulator`（引擎侧）、`DP-Recorder` / `DP-Renderer`（渲染器侧）**从未发布、也从未正式使用过**，只存在于项目早期的改名过程里。整个项目名是 **DPRecorder**。
+> 本页面向**开发者 / 二次开发**：谱系与出处、怎么跑起来、想改什么该去读哪里。面向使用者的简短说明见 [`DPR/README.md`](DPR/README.md)。
+
+## 谱系：fork 网络
+
+DPRecorder 不是从零写的：它是**两个上游项目被并进同一个 Cargo 工作区**，再**逐字移植**了第三个项目的一段实现。谁从谁那儿来、各自什么许可证：
+
+```text
+Phigros（Pigeon Games，闭源游戏）—— 谱面格式与素材被非官方引用
+└─ Phira（TeamFlos，GPL-3.0，prpr 引擎）
+   ├─ phira-render（TeamFlos，Apache-2.0，官方渲染器）
+   │  └─ Phi-Recorder（2278535805，GPL-3.0）
+   │     └─ DPR/  ← 本仓库的桌面渲染器（整个目录是它的 fork）
+   ├─ phire（2278535805，GPL-3.0；crate 原名 phire / phire-ui）
+   │  └─ DPS/  ← 本仓库的引擎（整个目录是它的 fork）
+   └─ Phira-Pro（Phira-Pro，GPL-3.0，自述「基于 Phira v0.8.2 的改版」）
+      └─ DPS/dps/src/core/block_area/  ← 噪域（blockArea）实现，逐字移植
+```
+
+| 本仓库 | 直接上游（点击打开） | 再往上 | 许可证 |
+| --- | --- | --- | --- |
+| `DPR/`（渲染器，crate `dpr`，exe `dpr.exe`） | [2278535805/Phi-Recorder](https://github.com/2278535805/Phi-Recorder)（旧名 `phigros-recorder`、`Not-Phira-render`，旧地址会重定向） | [TeamFlos/phira-render](https://github.com/TeamFlos/phira-render) —— 官方渲染器，Phi-Recorder 是它的 fork | GPL-3.0（含按 Apache-2.0 提供的上游代码，单向兼容） |
+| `DPS/`（引擎，crate `dps` / `dps-ui` / `dps-main` / `prpr-avc` / `prpr-pbc`） | [2278535805/phire](https://github.com/2278535805/phire)（上游 crate 原名 `phire` / `phire-ui`；`DP-Simulator` 是本项目这一侧的早期工作名，从未正式使用） | [TeamFlos/phira](https://github.com/TeamFlos/phira) 的 `prpr` 引擎 | GPL-3.0 |
+| `DPS/dps/src/core/block_area/`（噪域 / blockArea） | [Phira-Pro/Phira-Pro](https://github.com/Phira-Pro/Phira-Pro)，逐字移植 | [TeamFlos/phira](https://github.com/TeamFlos/phira) | GPL-3.0 |
+
+上游依赖里还有几个**自定义 fork**，都在 `github.com/2278535805/` 下：[`prpr-macroquad`](https://github.com/2278535805/prpr-macroquad)、[`prpr-miniquad`](https://github.com/2278535805/prpr-miniquad)、[`sasa`](https://github.com/2278535805/sasa)、[`oboe-rs`](https://github.com/2278535805/oboe-rs)（对应的上游项目 macroquad / miniquad / sasa / oboe-rs 的版权归各自作者）。
+
+逐项出处、版权与致谢见 [`NOTICE`](NOTICE)；第三方组件与素材的许可证索引见 [`LICENSES/README.md`](LICENSES/README.md)；GPL-3.0 全文见 [`LICENSE`](LICENSE)。
 
 ## 怎么跑起来
 
 先看下面的 [环境要求](#环境要求)：Windows 10/11 (x64)、Rust（MSVC target）、Microsoft C++ Build Tools、WebView2 Runtime、Node.js + pnpm；**要渲染出片**还需要 `ffmpeg`（在设置里指定它的目录，或放进 `PATH` / exe 同目录）。
 
 ```powershell
-cd E:\path\to\DPRecorder          # 仓库根 = Cargo 工作区根，所有命令都在仓库根或其子目录里跑
+cd <仓库根——你 clone / 解压出来的那个目录>
 
 # 1) 前端依赖（只需一次）
 cd DPR
@@ -27,23 +57,23 @@ cd ..
 - 只要引擎 / 谱面转换：`cargo build -p dps-main` → `target\debug\dps-main.exe`；`cargo run -p prpr-pbc -- <输入> <输出.pbc>`。
 - 出安装包：`cd DPR` 后 `cargo tauri build`，产物在仓库根 `target\release\bundle\`。
 - 完整命令、dev 形态与 `custom-protocol` 的区别、输出与临时目录，见下面的 [构建与运行](#构建与运行)。
+- **`target/` 生成在哪**：**别人 clone 本仓库后，`cargo build` / `cargo tauri dev` 生成的 `target/` 就在仓库根**——也就是 `<仓库根>/target`（Windows 写法 `<仓库根>\target`），与 `Cargo.toml` 同级，已被 [`.gitignore`](.gitignore) 排除，不会进 git。只有在本机开发时它才可能被 `[build] target-dir` 指到仓库之外（那样产物就跟着那个目录走）。想知道实际位置，在仓库根跑 `cargo metadata` 看 `target_directory`。
 
-## 想改什么，去读哪一篇
+## 想改什么，去读哪里
+
+本仓库不带单独的开发者文档目录，**入口就是代码本身**：
 
 | 你的目标 | 先读 |
 | --- | --- |
-| **在本机干活的智能体**：工作区约定、快照流程、沙箱坑 | [`AGENTS.md`](AGENTS.md)（先读这一页）；动工前再看一眼 `backsupVersion/README.md` 最上面一行，确认进度 |
-| 项目全貌：目录地图、环境、常用命令、打快照 | [`README.dev.md`](README.dev.md) |
-| 想知道软件**怎么用**：界面、渲染流程、文件名格式、批量、任务队列、命令行 | [`docs/quick-start.md`](docs/quick-start.md) |
-| 改**记录器**：界面、配置接线、IPC、任务队列、打包 | [`docs/dpr/overview.md`](docs/dpr/overview.md) |
-| 改**画面本身**：音符、判定线、判定范围、粒子、场景、谱面解析、资源 | [`docs/dps/overview.md`](docs/dps/overview.md) |
-| 不知道改哪里 / 撞上报错 | [`docs/workflows/04-common-changes.md`](docs/workflows/04-common-changes.md) |
-| 新增或改一个渲染配置项（要动哪六处 + 自检） | [`docs/workflows/01-add-render-option.md`](docs/workflows/01-add-render-option.md) |
-| 无界面渲染、时间窗口、抽帧与像素差分验证 | [`docs/workflows/02-render-and-verify.md`](docs/workflows/02-render-and-verify.md) |
-| 打快照、前端 / 后端构建、打包 | [`docs/workflows/03-backup-and-release.md`](docs/workflows/03-backup-and-release.md) |
-| 文档索引 | [`docs/README.md`](docs/README.md) |
+| 渲染器怎么用、怎么打包、注意事项、出处 | [`DPR/README.md`](DPR/README.md) |
+| 前端界面（Vue 3 + Vuetify）：设置页、任务队列、日志视图 | `DPR/src/`（入口 `DPR/src/main.ts`，设置页 `DPR/src/SettingsView.vue`，任务 `DPR/src/tasks.ts`） |
+| Tauri 外壳与 Rust 后端：命令行参数、ffmpeg 调用、IPC、任务队列 | `DPR/src-tauri/src/`（入口 `DPR/src-tauri/src/main.rs`，接线 `lib.rs` / `ipc.rs`，渲染 `render.rs`） |
+| 引擎：谱面解析、判定、判定线、音符、粒子、场景、资源 | `DPS/dps/src/`（`core/`、`parse/`、`scene/`、`ui/`） |
+| 无界面播放器 / 谱面格式转换 CLI | `DPS/dps-main/src/main.rs`、`DPS/prpr-pbc/src/main.rs` |
+| 工作区成员划分与编译 profile | 仓库根的 [`Cargo.toml`](Cargo.toml) |
+| 许可、逐项出处、第三方许可证 | [`LICENSE`](LICENSE) · [`NOTICE`](NOTICE) · [`LICENSES/README.md`](LICENSES/README.md) |
 
-> `docs/`、`AGENTS*.md`、`README.dev.md`、`backup_code.py`、`backsupVersion/` 这些**物理上在仓库根里，但只属于本机、不随仓库分发**：本项目不使用 git，留痕靠 `backup_code.py` 打快照。文档只负责带你找到入口，**细节一律以代码为准**。
+> 本页只负责带你找到入口，**细节一律以代码为准**（界面与配置项仍在变动）。
 
 ## 项目状态与来源
 
@@ -64,7 +94,7 @@ cd ..
 | `assets/` | **唯一一份运行时资源**（材质 / 字体 / 音效 / 资源包），DPS 与 DPR 共用 |
 | `Cargo.toml` / `Cargo.lock` | **整个工作区唯一的一份**，6 个成员：`DPS/` 的 5 个 + `DPR/src-tauri` |
 | `run.bat` | 一键开发启动：切到 `DPR/` 后执行 `cargo tauri dev` |
-| `target/` | 构建产物与运行期工作目录（本机专用，不随仓库分发）。**位置不能挪**：DPR 运行时的工作目录跟着 exe 走，`assets/`、`config.toml`、`respack/`、`output/`、`tmp/` 都在 `target\debug\` 里 |
+| `target/` | 构建产物与运行期工作目录（**不进 git 仓库**；默认就在仓库根，也可以用 `[build] target-dir` 指到仓库之外）。**位置不能挪**：DPR 运行时的工作目录跟着 exe 走，`assets/`、`config.toml`、`respack/`、`output/`、`tmp/` 都在 `target\debug\` 里 |
 
 **仓库根就是 Cargo 工作区根**：下面所有命令都在仓库根或它的子目录里跑。
 
@@ -79,13 +109,13 @@ cd ..
 | Node.js | 配 **pnpm**（本项目用 pnpm 8）；前端与 Tauri CLI 都在 `DPR/` |
 | ffmpeg | **运行期**需要：渲染时由程序调用 ffmpeg 编码。查找顺序是「设置里指定的目录 → `PATH` 里的 `ffmpeg` → exe 同目录的 `ffmpeg.exe`」 |
 
-原生静态库不用另外下载：`prpr-avc` 需要的 FFmpeg 静态库已随仓库分发（`DPS/prpr-avc/static-lib/`）。
+`prpr-avc` 需要的 FFmpeg **静态库不在 git 仓库里**（`DPS/prpr-avc/static-lib/<TARGET>/` 被 `.gitignore` 排除，体积太大）：缺了它 `prpr-avc` 会编不过。目录位置可以用 `PRPR_AVC_LIBS` 环境变量覆盖（见 `DPS/prpr-avc/build.rs`）。
 
 ## 构建与运行
 
 ```powershell
 # 所有 cargo 命令都在仓库根（= Cargo 工作区根）里跑，例如：
-cd E:\path\to\DPRecorder
+cd <仓库根>
 
 # —— 引擎（DPS）——
 cargo build -p dps-main                     # 引擎 + 播放器 → target\debug\dps-main.exe
@@ -113,20 +143,15 @@ cargo tauri build                           # 产物在仓库根 target\release\
 - 渲染相关命令行参数还有 `--preview` / `--play` / `--tweakoffset`，以及 `-c <配置.toml>` 指定一份一次性配置。
 - 渲染输出默认落在 exe 旁的 `output\`，临时文件在 `tmp\`，配置与资源包分别是 `config\`、`respack\` —— 都在 `target\debug\` 里。
 
-## 出处与致谢
+## 许可证与出处
 
-- **代码出处**：
-
-  | 本仓库 | 直接上游 | 许可证 |
-  | --- | --- | --- |
-  | `DPR/`（渲染器，exe `dpr.exe`） | [2278535805/Phi-Recorder](https://github.com/2278535805/Phi-Recorder) | GPL-3.0 |
-  | ↑ 谱系源头 | [TeamFlos/phira-render](https://github.com/TeamFlos/phira-render)（官方渲染器，Phi-Recorder 是它的 fork） | Apache-2.0（与 GPL-3.0 单向兼容，并入后按 GPL-3.0 分发） |
-  | `DPS/`（引擎） | [2278535805/phire](https://github.com/2278535805/phire) | GPL-3.0 |
-  | ↑ 谱系源头 | [TeamFlos/phira](https://github.com/TeamFlos/phira) 的 `prpr` 引擎 | GPL-3.0 |
-  | `DPS/dps/src/core/block_area/`（噪域 / blockArea） | [Phira-Pro/Phira-Pro](https://github.com/Phira-Pro/Phira-Pro)，逐字移植 | GPL-3.0 |
-
-- **第三方素材的版权归各自权利人**：`assets/Minecraft/` 的贴图与打击音效 © Mojang AB；`assets/respack/`、`assets/rank/`、字体等来自 Phira 及其社区资源包。它们随仓库分发只是为了让程序开箱可用，权利人如要求会立即移除。
+- **本仓库整体以 [GNU GPL-3.0](LICENSE) 发布**；其中 `DPR/` 谱系包含按 **Apache-2.0** 提供的上游代码（`phira-render`）。两者**单向兼容**：这部分代码并入本仓库后，整体按 GPL-3.0 分发。再分发本程序或其源码时，请一并满足 GPL-3.0 的**源码提供**与**许可证保留**要求。
+- **代码谱系**（谁从谁那儿来、各自的许可证）：见上面的「谱系：fork 网络」一节。
+- **逐项出处、版权与致谢**：[`NOTICE`](NOTICE)。
+- **第三方组件与依赖的许可证**：[`LICENSES/README.md`](LICENSES/README.md)；Rust 依赖见 [`Cargo.lock`](Cargo.lock)，前端依赖见 [`DPR/pnpm-lock.yaml`](DPR/pnpm-lock.yaml)。
+- **第三方素材的版权归各自权利人**：`assets/Minecraft/` 的贴图与打击音效 © Mojang AB；`assets/respack/`、`assets/rank/`、字体等来自 Phira 及其社区资源包。它们随仓库分发只是为了让程序开箱可用，权利人如要求会立即移除；这些素材**不在 GPL-3.0 覆盖范围内**。
 - **致谢**：Phi-Recorder 的作者 HLMC、Mivik；Phira 与 phira-render 的 TeamFlos 及其贡献者；Phira-Pro 的维护者；以及所有被直接或间接引用的开源项目作者。
+- **非官方声明**：与 Pigeon Games（Phigros）、TeamFlos（Phira）、Mojang AB / Microsoft 均无任何隶属、授权或赞助关系；相关游戏名与商标归各自权利人。
 
 ## 反馈
 

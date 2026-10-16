@@ -30,8 +30,8 @@ import { finishPageLoad } from './pageLoad';
 
 const router = useRouter();
 
-// 流程顺序: 只有一步「渲染参数」(谱面信息就在这一页最下面); 提交后只弹绿色提示, 不再有「渲染视频」完成页
-// 谱面只支持拖动导入, 所以不再有"选择谱面 / 谱面信息"两个独立步骤
+// 流程顺序: 只有一步「渲染参数」(谱面信息就在这一页最下面); 提交后只弹绿色提示, 没有「渲染视频」完成页
+// 谱面只支持拖动导入, 没有"选择谱面 / 谱面信息"两个独立步骤
 //
 // 渲染参数(分辨率 / 编码器 / 音频 / 高级开关…)的控件都在 ./components/ConfigView.vue，
 // 新增参数的完整步骤见那个文件顶部的注释（以及 ../model.ts、src-tauri/src/render.rs 里同样的说明）。
@@ -45,7 +45,7 @@ const router = useRouter();
 // buildParams() 里用 chartSideOf(config) 把它们覆盖进 info（配置值优先，导入谱面不再回填）。
 // 整页只有渲染参数一页(谱面信息就在这一页最下面)。提交渲染后不再切到「渲染视频」完成页,
 // 只弹一个绿色提示(见 moveNext), 进度与结果都在「任务」页里看。
-// 原来外面套了一层 v-stepper 卡片，去掉后整页直接铺满内容区。
+// 整页直接铺满内容区（外面没有 v-stepper 卡片）。
 
 // 只有"选择谱面"之后才知道谱面宽高比, 由此决定是否允许自动调整分辨率
 const aspectRatioApplied = ref(false);
@@ -97,11 +97,10 @@ async function loadChart(file: string, info?: ChartInfo, config?: RenderConfig) 
     } else {
       chartInfo.value = (await invoke('parse_chart', { path: file })) as ChartInfo;
     }
-    // 以前这里会把谱面里带的那批值（宽高比 / 偏移 / 判定线长度 / 总分 / 预览起止 / 各开关）
-    // 盖进本地的 `chartRow`。2026-10-11 起它们是**配置项**（见 model.ts 的「谱面侧渲染参数」
-    // 与 config/chartSide.ts）⇒ 导入谱面不再覆盖它们：配置里存的是什么就用什么，
-    // 否则「把预设存下来」就没有意义了。
-    // 不再强制跳转: 不切页签、不改当前步骤, 用户就停在自己正在看的地方
+    // 谱面里带的那批值（宽高比 / 偏移 / 判定线长度 / 总分 / 预览起止 / 各开关）不能覆盖配置：
+    // 它们是**配置项**（见 model.ts 的「谱面侧渲染参数」与 config/chartSide.ts）——
+    // 配置里存的是什么就用什么，否则「把预设存下来」就没有意义了。
+    // 不强制跳转: 不切页签、不改当前步骤, 用户就停在自己正在看的地方
     await nextTick();
     if (config) {
       await nextTick();
@@ -119,10 +118,10 @@ async function loadChart(file: string, info?: ChartInfo, config?: RenderConfig) 
    （`chartPath` + `chartInfo`，也就是谱面信息里那些文字框和标签）常驻本地，照工作配置存一份：
    切页/重启回来还在。
 
-   2026-10-11 之前这里还存着 `chartRow`（宽高比 / 偏移 / 判定线长度 / 总分 / 预览起止 /
-   Note 等比缩放等开关）与 `aspectWidth / aspectHeight / offsetText`。那些键现在全部是
+    宽高比 / 偏移 / 判定线长度 / 总分 / 预览起止 /
+    Note 等比缩放等开关，以及 `aspectWidth / aspectHeight / offsetText` 全部是
    **配置项**（`RenderConfig`，见 ../model.ts 的「谱面侧渲染参数」），控件与换算都在
-   `components/ConfigView.vue`，所以这里不再保存它们。 */
+   `components/ConfigView.vue`，所以这里不保存它们。 */
 type ChartRowState = {
   /** 「谱面信息」的 Tip（唯一还留在这边的谱面侧文本） */
   tip?: string;
@@ -272,9 +271,9 @@ const renderMsg = ref(''),
 event.listen('render-msg', (msg) => (renderMsg.value = msg.payload as string));
 event.listen('render-progress', (msg) => {
   let payload = msg.payload as { progress: number; fps: number; estimate: number };
-  // 这里以前写的是 `t('render-status', …)`，但语言包里根本没有这个键
-  //（i18n 的 missing 处理器会把键名原样返回），于是渲染中就显示字面量「render-status」。
-  // 同一个模板（progress / fps / estimate 三个占位符）现成的键是 `task.status.rendering`，改用它。
+  // 不能写 `t('render-status', …)`：语言包里没有这个键（i18n 的 missing 处理器会把键名原样返回），
+  // 渲染中会显示字面量「render-status」。同一套占位符（progress / fps / estimate）现成的键是
+  // `task.status.rendering`，用它。
   renderMsg.value = t('task.status.rendering', {
     progress: (payload.progress * 100).toFixed(2),
     fps: payload.fps,
@@ -321,7 +320,7 @@ if (isString(chartInQuery)) {
    以传进来的那份为准，不拿本地这份去覆盖它。 */
 const workingConfig = useStorage<WorkingState | null>('RenderView.Config', null, localStorage, { serializer: StorageSerializers.object });
 
-/** 这个键以前存的就是一份裸 `RenderConfig`（没有预设名字）：读到旧值也能用 */
+/** 兼容老值：可能是一份没有预设名字的裸 `RenderConfig`，读到也要能用 */
 function readWorking(): WorkingState | null {
   const saved = workingConfig.value as WorkingState | RenderConfig | null;
   if (!saved) return null;
@@ -371,10 +370,10 @@ async function checkInfo() {
   if (!(await form.value!.validate()).valid) {
     return false;
   }
-  // 「偏移」与「预览开始 / 结束」现在是配置项（`RenderConfig`，见 ../model.ts）：
+  // 「偏移」与「预览开始 / 结束」是配置项（`RenderConfig`，见 ../model.ts）：
   // 它们由 ConfigView 的控件负责，并在 buildParams() 里覆盖进 info（config/chartSide.ts），
-  // 所以这里不再从谱面信息这边取值 —— 以前那几行会把谱面信息里的同名值改写成界面上的值。
-  // 这个函数现在只剩谱面信息自己的收尾：Tip 是空串就写 null（存 info.yml 时才是干净的 yml）。
+  // 所以这里不能从谱面信息这边取值（那会把谱面信息里的同名值改写成界面上的值）。
+  // 这个函数只剩谱面信息自己的收尾：Tip 是空串就写 null（存 info.yml 时才是干净的 yml）。
   if (!chartInfo.value!.tip?.trim().length) chartInfo.value!.tip = null;
 
   return true;
@@ -411,7 +410,7 @@ async function readInfo() {
   if (!inputPath) return;
   try {
     chartInfo.value = await invoke('read_info', { path: inputPath }) as ChartInfo;
-    // 宽高比现在是配置项，导入谱面不再回填；这里只按谱面画幅比调一下分辨率（见 applyChartAspectRatio）
+    // 宽高比是配置项，导入谱面不回填；这里只按谱面画幅比调一下分辨率（见 applyChartAspectRatio）
     applyChartAspectRatio();
     dialog.message(t('read-success'), { title: t('read-info') })
 } catch (e) {
@@ -452,7 +451,7 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
 
 <template>
   <div class="render-view">
-    <!-- 整页滚动交给这一层；ConfigView 自己不再滚动（--config-scroll-max-height: none） -->
+    <!-- 整页滚动交给这一层；ConfigView 自己不滚动（--config-scroll-max-height: none） -->
     <div class="render-view__scroll">
       <!-- 谱面信息固定在整页最上面(ConfigView 的 chart-head 横幅 + chart-info 表单两个插槽)
            横幅 = 曲绘背景 + 曲名/难度/定数/谱师; 未导入谱面时横幅自己显示拖放提示 -->
@@ -462,17 +461,15 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
           </template>
           <template #chart-info>
             <v-form ref="form" validateOn="eager" v-if="chartInfo">
-          <!-- 下方的格式改成和配置页一样的，而曲名、曲师、谱师、画师、简介和 Tip
-               一样一行一个。谱面文件、音乐文件、曲绘文件、难度、定数一行三个」⇒ 从原来的
-               v-row / v-col 改成配置页那套 `.cfg-grid` + `CfgField`（名称在左控件在右、条目之间有栏间竖线）。
-               紧跟的第二条要求「曲名 曲师 谱师 画师改成一行两个」⇒ 这四个改用 `cfg-grid--two`
-               （两栏、栏间只留中间那一条竖线），简介仍是 `full` 独占整行。
-               「图二放到一个组里」⇒ 原来分成两个 `cfg-grid--two` 的九个条目
-               **合成一个网格**（曲名│曲师 / 谱师│画师 / 谱面文件│音乐文件 / 曲绘文件│难度 / 定数），
-               所以现在只剩 简介 那个 `full` 网格单独一块。
+          <!-- 格式与配置页一致：曲名、曲师、谱师、画师一行两个，谱面文件、音乐文件、
+               曲绘文件、难度、定数一行三个，简介与 Tip 各自一行一个。用配置页那套
+               `.cfg-grid` + `CfgField`（名称在左、控件在右，条目之间有栏间竖线）而不是 v-row / v-col。
+               曲名 / 曲师 / 谱师 / 画师用 `cfg-grid--two`（两栏、栏间只留中间那一条竖线），
+               简介仍是 `full` 独占整行。
+               九个条目同属**一个网格**（曲名│曲师 / 谱师│画师 / 谱面文件│音乐文件 / 曲绘文件│难度 / 定数），
+               只剩 简介 那个 `full` 网格单独一块。
                分网格的理由：`design/config.css:55-60` 的 `:has()` 规则只给「里面全是 full 条目」的网格
-               去掉栏间竖线，full 与普通条目混在一个网格里时竖线会横穿整行的长输入框（Tip / 文件名格式那次踩过）。
-               「偏移」搬到「渲染-参数-总分」原来的位置（见下面 #params-offset）。 -->
+               去掉栏间竖线，full 与普通条目混在一个网格里时竖线会横穿整行的长输入框（Tip / 文件名格式踩过）。 -->
           <div class="cfg-grid cfg-grid--two">
             <CfgField :label="t('info.name')">
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.name"></v-textarea>
@@ -487,8 +484,7 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.illustrator"></v-textarea>
             </CfgField>
             <!-- 谱面文件 / 音乐文件 / 曲绘文件 + 难度 / 定数：紧接在上面那四个后面，同属**一个**网格
-                 （「图二放到一个组里」把原来两块合成了一块；
-                 判定线长度在「谱面-判定线」，总分在「渲染-参数」） -->
+                 （判定线长度在「谱面-判定线」，总分在「渲染-参数」） -->
             <CfgField :label="t('info.chart')">
               <v-text-field type="text" density="compact" hide-details="auto" v-model="chartInfo.chart"></v-text-field>
             </CfgField>
@@ -506,10 +502,9 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
             </CfgField>
           </div>
 
-          <!-- 简介 / Tip: 各独占一行（「简介和 Tip 一样一行一个」）—— 单独一个网格：
+          <!-- 简介 / Tip: 各独占一行 —— 单独一个网格：
                它们要是和上面那九项混在一个网格里，栏间那条竖线会从这一整行里穿过去。
-               「另外预览的Tip也放到谱面信息里，在简介后面」⇒ Tip 原来在
-               「渲染参数」的最后一行（`#params-tip`），现在搬到简介正下方。
+               Tip 排在简介正下方。
                这个网格里全是 `full` 条目，`design/config.css:55-60` 的 `:has()` 规则会给它去掉栏间竖线。 -->
           <div class="cfg-grid">
             <CfgField :label="t('info.intro')" full>
@@ -527,15 +522,15 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
           </div>
             </v-form>
           </template>
-          <!-- 以前这里还提供 7 个插槽（#chart-extra / #line-extra / #params-switches /
-               #params-fields / #params-preview / #params-offset / #params-score）来托管「谱面侧
-               渲染参数」的那些控件。2026-10-11 起它们是**配置项**（`RenderConfig`，见 model.ts 的
-               「谱面侧渲染参数」）：控件与换算搬进了 `ConfigView.vue`，所以这边不再提供任何插槽。
+          <!-- 「谱面侧渲染参数」的控件不在这一页：它们是**配置项**（`RenderConfig`，见 model.ts 的
+               「谱面侧渲染参数」），控件与换算都在 `ConfigView.vue`，所以这里没有任何插槽
+               （`#chart-extra` / `#line-extra` / `#params-switches` / `#params-fields` /
+               `#params-preview` / `#params-offset` / `#params-score` 这 7 个都已移除）。
                这些值在 `buildParams()` 里通过 `chartSideOf(config)` 覆盖进发给后端的 info。 -->
       </ConfigView>
     </div>
 
-    <!-- 原来这排按钮在「渲染参数」卡片底部；卡片去掉后改成内容区底部的固定操作条 -->
+    <!-- 内容区底部的固定操作条：这排按钮贴底、不随页面滚动 -->
     <div class="render-view__actions">
       <v-btn :loading="loadingTweakoffset" :disabled="!chartInfo" variant="text" @click="previewTweakoffset">{{ t('tweakoffset') }}</v-btn>
       <v-spacer />
@@ -580,7 +575,7 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
         <h1 v-t="'choose.drop'"></h1>
       </div>
     </v-overlay>
-    <!-- 拖入谱面后的解析遮罩(原来挂在"选择谱面"步骤上, 该步骤已删除) -->
+    <!-- 拖入谱面后的解析遮罩 -->
     <v-overlay v-model="loadingParsingChart" contained class="align-center justify-center" persistent :close-on-content-click="false">
       <v-progress-circular indeterminate> </v-progress-circular>
     </v-overlay>
@@ -600,7 +595,7 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
   color: var(--phi-label-inverted) !important;
 }
 
-/* 整页铺满内容区（原来外面套了一层 v-stepper 卡片 + pa-8 内边距） */
+/* 整页铺满内容区（外面没有卡片、也没有 pa-8 内边距） */
 .render-view {
   position: relative;
   display: flex;
@@ -618,7 +613,7 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
   padding: var(--phi-space-6) var(--phi-space-6) 0;
 }
 
-/* 原来这排按钮在「渲染参数」卡片底部，现在改成贴底的固定操作条 */
+/* 贴底的固定操作条 */
 .render-view__actions {
   display: flex;
   flex: none;

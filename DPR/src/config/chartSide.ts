@@ -1,7 +1,7 @@
 /**
  * 配置 → 谱面信息（`ChartInfo`）的桥。
  *
- * 这里列的键在 dps 里是**谱面信息**的字段，但 2026-10-11 起它们在界面上是配置项
+ * 这里列的键在 dps 里是**谱面信息**的字段，但在界面上是配置项
  * （`RenderConfig`，见 ../model.ts 的「谱面侧渲染参数」）：
  *   - 存得下来：预设（`config/presets.toml`）、`config.toml`、渲染页的工作配置；
  *   - 出片时**配置值优先** ⇒ 导入谱面不再覆盖它们（「可以被保存」的前提）。
@@ -21,8 +21,8 @@ import type { RenderConfig } from '../model';
 /**
  * 需要从配置覆盖进 `ChartInfo` 的键 —— 名字与 `dps::info::ChartInfo` 的 camelCase 字段同名。
  *
- * `backgroundDim` 也在里面：它是老配置项，但 stdin 分支以前没有 `render.rs` 那条覆盖，
- * 于是 GUI 里「背景压暗」的数值可能被谱面信息里的同名值顶掉；顺路一起按配置值走。
+ * `backgroundDim` 也在里面：它是老配置项，stdin 分支没有 `render.rs` 那条覆盖，
+ * 于是 GUI 里「背景压暗」的数值可能被谱面信息里的同名值顶掉；一起按配置值走。
  */
 export const CHART_SIDE_KEYS = [
   'forceAspectRatio',

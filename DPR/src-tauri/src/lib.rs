@@ -48,7 +48,7 @@ static ASSET_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// 找 `assets/` 目录：从 exe 目录开始逐级向上，取第一个存在 `assets/` 的那一层。
 ///
-/// 2026-10-11 起 assets 只有一份，放在仓库根（`<repo>/assets`，DPS 与 DPR 共用，见 README §2）：
+/// assets 只有一份，放在仓库根（`<repo>/assets`，DPS 与 DPR 共用，见 README §2）：
 /// - dev 与打包后：tauri 按 `bundle.resources` 把资源复制到 exe 同目录（`target\debug\assets`），第一轮就命中；
 /// - 从别处启动 exe、或资源没被复制时：沿祖先目录找到 `<repo>\assets`；
 /// - 都没有时退回 `<exe 目录>/assets`，与旧行为一致。
@@ -338,7 +338,7 @@ pub fn run() -> Result<()> {
     let exe = std::env::current_exe()?;
     let exe_dir = exe.parent().unwrap();
 
-    // 便携优先（2026-10-11 起改）：**用户会直接看到的目录一律先放在程序所在文件夹**
+    // 便携优先：**用户会直接看到的目录一律先放在程序所在文件夹**
     // ——`config/`（设置与预设）、`respack/`（资源包）、`output/`（渲染输出）、`tmp/`（临时
     // 文件）都在 exe 旁边，整份文件夹拷到别的机器（或打包成绿色版）就能直接用，用户也看得见、
     // 好清理。只有那里写不进去时（装在 `Program Files`、只读介质、受限沙箱）才退回系统标准
@@ -500,24 +500,24 @@ fn exit_program(code: i32) {
 ///
 /// 为什么不用 `open` crate 的 `that_detached`：目录那条路它先试 `shell_open_folder`
 /// （`CoInitialize` + `ILCreateFromPathW` + `SHOpenFolderAndSelectItems`）——在 DPR 的
-/// 进程里这条 COM 路线实测是**没反应**的（同一个环境下「打开文件」好用、「在文件夹中
+/// 进程里这条 COM 路线是**没反应**的（同一个环境下「打开文件」好用、「在文件夹中
 /// 显示」不好用，差别就在这儿），`CoInitialize` 的返回值它也从不检查；那一步失败之后它
 /// 退到 `ShellExecuteExW`，而那个调用的 `fMask` 是 0（缺 MSDN 要求的 `SEE_MASK_FLAG_NO_UI`），
 /// 于是失败时由 **Windows 自己弹**一个「Windows 无法访问指定设备、路径或文件」的错误框
-/// —— 报告的「右键打不开文件夹」就是它（目录明明在、权限也够，只是这一串调用没走通）。
+/// —— 「右键打不开文件夹」就是它（目录明明在、权限也够，只是这一串调用没走通）。
 ///
-/// 实际排下来的顺序（2026-10-13 22:47 的实测日志决定，别改动）：
-///   1. 自己调 `ShellExecuteExW`，**动词留空**（系统对目录的默认动词就是打开）。实测这条
+/// 实际排下来的顺序（别改动）：
+///   1. 自己调 `ShellExecuteExW`，**动词留空**（系统对目录的默认动词就是打开）。这条
 ///      能开（「打开文件」一直好用也是同一个调用），而且是 **shell 去起进程**，不牵扯我们
 ///      自己的标准句柄。
 ///   2. `ShellExecuteExW` 的文件位换成 `explorer.exe`、参数位给目录：再给 shell 一次机会，
 ///      只是换个入口（万一默认动词被劫持）。
 ///   3. `cmd /c start "" <目录>`：**只在前两条都失败时才用，而且它可能假成功** ——
-///      2026-10-13 22:47:22 的日志正是 `cmd /c start ok (still running after 1.5s,
+///      日志正是 `cmd /c start ok (still running after 1.5s,
 ///      assumed ok pid=2064)` 而文件夹根本没开，所以它绝不能排在最前面。
 ///
 /// 不再有「自己 spawn 一个 explorer.exe」那条路：GUI 父进程的标准句柄是无效的，子进程继承
-/// 过去会直接起不来（用户看到过「explorer.exe - 应用程序无法正常启动(0xc0000142)」）。
+/// 过去会直接起不来（会报「explorer.exe - 应用程序无法正常启动(0xc0000142)」）。
 /// 要起 explorer 就让 shell 去起（第 2 条）。
 fn open_folder(path: &Path) -> Result<()> {
     if !path.is_dir() {
@@ -630,9 +630,9 @@ fn open_dir(path: String) -> Result<(), InvokeError> {
 /// 在资源管理器里**选中**一个文件。
 ///
 /// 前端原本用 `@tauri-apps/plugin-opener` 的 `revealItemInDir`：它走 COM 的
-/// `ILCreateFromPathW` + `SHOpenFolderAndSelectItems`，实测在 DPR 的进程里失败
+/// `ILCreateFromPathW` + `SHOpenFolderAndSelectItems`，在 DPR 的进程里失败
 ///（「打开文件」好用、「在文件夹中显示」没反应，差别就在这条 COM 路线上）。
-/// 这里改成把 `explorer.exe /select,...` **交给 shell 去起**（`ShellExecuteExW` 的文件位是
+/// 这里把 `explorer.exe /select,...` **交给 shell 去起**（`ShellExecuteExW` 的文件位是
 /// `explorer.exe`）：进程由资源管理器创建，一点也不继承我们这边的标准句柄，也就没有
 /// 0xc0000142 那一类毛病。失败（或没能选中）就退到「至少把所在目录打开」。
 fn reveal_path(path: &Path) -> Result<()> {
@@ -705,14 +705,14 @@ fn open_output_folder() -> Result<(), InvokeError> {
 /// 对照：同一个 crate 打开**目录**走的是 `shell_open_folder`（`CoInitialize` +
 /// `SHOpenFolderAndSelectItems`），所以「打开输出文件夹」一直是好的。
 ///
-/// 直接打开失败后，改成几条路依次试、每条都记日志：
-///   1. `cmd /c start "" <url>`（**主路**，12:50 那次弹窗证明它确实把请求送到了 Edge）；
+/// 直接打开失败后，几条路依次试、每条都记日志：
+///   1. `cmd /c start "" <url>`（**主路**，它确实能把请求送到 Edge）；
 ///   2. 自己调 `ShellExecuteExW` 并显式带上 `SEE_MASK_NOASYNC`（见下）；
 ///   3. `rundll32 url.dll,FileProtocolHandler <url>`。
 /// 三条都起不来才把错误回给前端（红色 toast）。日志写在
 /// `<exe 目录>/tmp/dpr-open-external.log`，排查「点了打不开」时先看这个文件。
 ///
-/// **坑（2026-10-12 实测）**：从 `dpr.exe` 里调 `ShellExecuteExW` 会**返回 TRUE 却什么都
+/// **坑**：从 `dpr.exe` 里调 `ShellExecuteExW` 会**返回 TRUE 却什么都
 /// 不发生**（日志里连着十来次 `ShellExecuteExW: ok`，而 Edge 的 User Data 一个字节都没动、
 /// `msedge.exe` 进程数始终是 0）。所以它只能当兜底，绝不能放在 `cmd /c start` 前面 —— 放前面
 /// 时它那句「成功」会直接把后面的路全部吃掉，用户看到的就是「点了没反应」。
@@ -784,7 +784,7 @@ fn open_external(url: String) -> Result<(), InvokeError> {
 /// 能一路冒到前端的 toast 上。
 ///
 /// `verb` / `params` 都可以留空（空动词 = 系统默认动词，打开目录就是它）。调用方
-/// （`open_folder` / `reveal_path` / `open_external`）都把它当**兜底**：2026-10-12 实测它
+/// （`open_folder` / `reveal_path` / `open_external`）都把它当**兜底**：它
 /// 从 `dpr.exe` 调可能返回 TRUE 却什么都不发生（原因未查明，可能是这个进程/线程没有 shell
 /// 需要的 COM 环境），所以每条路里它都排在 `cmd /c start` 后面。
 #[cfg(target_os = "windows")]
@@ -822,8 +822,8 @@ fn shell_execute(
 }
 
 /// `cmd /c start "" <url>`：**主路**。cmd 有自己的消息泵，`start` 按系统关联唤起默认浏览器。
-/// 命令行照平时那样传参数即可（Rust 会把那个空串转义成 `""`，2026-10-12 12:50 那次弹窗证明
-/// 这条命令确实把请求送到了 Edge，别改成 `raw_arg` 手拼——那是没验证过的写法）。
+/// 命令行照平时那样传参数即可（Rust 会把那个空串转义成 `""`，这条命令确实把请求送到了
+/// Edge，别改成 `raw_arg` 手拼——那是没验证过的写法）。
 fn start_via_cmd(url: &str) -> anyhow::Result<String> {
     use std::os::windows::process::CommandExt;
     let mut cmd = std::process::Command::new("cmd");
@@ -1068,8 +1068,8 @@ async fn clear_tasks(queue: State<'_, TaskQueue>) -> Result<(), InvokeError> {
     Ok(())
 }
 
-/// 删除一条任务。参数从「下标」改成 `id`（任务列表显示成「最旧在最上面」之后，
-/// 下标就同时取决于显示顺序，索性全线按 id 走；`id` 现在也只增不减，见 `task.rs` 的 `TaskQueue`）。
+/// 删除一条任务。参数用 `id` 而不是显示下标（任务列表可以拖动，下标会同时取决于显示顺序，
+/// 所以全线按 id 走；`id` 只增不减，见 `task.rs` 的 `TaskQueue`）。
 #[tauri::command]
 async fn remove_task(
     queue: State<'_, TaskQueue>,
@@ -1202,7 +1202,7 @@ fn get_output_dir_path() -> Result<String, InvokeError> {
 }
 
 /// 程序（exe）所在文件夹的绝对路径 —— 设置页把「自定义输出目录 / 预设配置文件路径」显示成
-/// 相对写法（`.\output`、`.\config\presets.toml`）时拿它当基准（2026-10-13 打包前需求）。
+/// 相对写法（`.\output`、`.\config\presets.toml`）时拿它当基准。
 /// 悬停提示里给的仍是完整路径，所以这个基准只影响显示，不影响任何读写。
 /// 开发时它是 `target\debug`，打包后就是安装目录 —— `output/` 与 `config/` 都住在那里。
 #[tauri::command]
@@ -1219,8 +1219,8 @@ fn get_app_dir() -> Result<String, InvokeError> {
     Ok(dir.to_string_lossy().to_string())
 }
 
-/// 「资源包」目录（`<程序目录>/respack`）的绝对路径 —— 设置页那一格显示成相对写法 `.\respack` 用
-/// （10-13 要求把资源包路径也放进设置）。目录本身由 `common::respack_dir()` 解析并保证
+/// 「资源包」目录（`<程序目录>/respack`）的绝对路径 —— 设置页那一格拿它显示成相对写法 `.\respack`。
+/// 目录本身由 `common::respack_dir()` 解析并保证
 /// 存在（启动时的便携布局也会在 exe 旁边建出 `respack/`，见 `setup`），这里只读不写。
 #[tauri::command]
 fn get_respack_dir_path() -> Result<String, InvokeError> {

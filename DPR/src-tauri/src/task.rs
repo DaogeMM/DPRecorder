@@ -65,7 +65,7 @@ pub enum TaskStatus {
 /// `Task` 本身没法序列化（`Mutex` / `AtomicBool` / `NamedTempFile` 都没实现），
 /// 但它能**完全从 `RenderParams` 重建**（`Task::new` 里读谱面、解出曲绘、算输出路径），
 /// 所以只要把参数存下来就能复活。另外把当时的输出路径与耗时一起存：重启后按当前配置
-/// 重算文件名可能得到别的路径（用户可能改过「文件名格式」），历史记录不该因此指错文件。
+/// 重算文件名可能得到别的路径（「文件名格式」可能已经改过），历史记录不该因此指错文件。
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedTask {
@@ -660,7 +660,7 @@ pub struct TaskQueue {
     /// 私有的 `VecDeque` 里，见 `move_task`。
     tasks: Arc<Mutex<Vec<Arc<Task>>>>,
 
-    /// 任务 id 只增不减。以前直接拿 `tasks.len()` 当 id，删过任务后新任务会和现有任务
+    /// 任务 id 只增不减。拿 `tasks.len()` 这类会变的值当 id 的话，删过任务后新任务会和现有任务
     /// **撞 id**（前端 `item-key="id"`、展开态、按 id 取消/暂停都会指错任务）。
     /// 放在 `Arc` 里是为了让「读回 `tasks.json`」那个后台任务也能抬高它（见 `restore_queue`）。
     next_id: Arc<AtomicU32>,
@@ -808,7 +808,7 @@ impl TaskQueue {
         info!("Task #{}(id: {}) deleted", task.id, id);
         // 还在跑的任务被移除时要先让它停下来：`remove` 只是把它从列表里摘出去，
         // worker 手里那个 `Arc<Task>` 照样继续渲染 —— 不置取消位的话它会变成一条
-        // 「看不见的任务」，继续写文件、继续占着那一格并发额度（报告的「批量移除后还在渲染」就是它）。
+        // 「看不见的任务」，继续写文件、继续占着那一格并发额度（「批量移除后还在渲染」就是它）。
         task.cancel();
         if remove_file && task.output.exists() && task.output.is_file() {
             // 刚取消的任务：ffmpeg 那头的文件锁可能还在，退避重试几秒（见 `remove_file_retry`）

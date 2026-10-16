@@ -1,23 +1,21 @@
 //! Phira / Phigros 官方「噪域」（BlockArea）渲染 —— 原生实现移植版。
 //!
 //! 这一份是**直接从 `Phira-Pro-main`（`prpr/src/core/{block.rs, block_shader.rs,
-//! block_mask.rs}` 与 `block_shader_full.{vert,frag}`）搬过来的**，替换掉本模块早先
-//! 那套「按 Unity 材质逆向的 WebGL 复刻」（`../gl.rs` + `../shaders/block_*.glsl`）。
+//! block_mask.rs}` 与 `block_shader_full.{vert,frag}`）搬过来的**。
 //!
-//! 与复刻版的关键差异（原生为准）：
+//! 原生实现要点：
 //!
 //! * **几何**：`scale` / `rotate` 事件绕**自己的 anchor** 发生，已完成段的 anchor 偏移会
 //!   逐段累积回中心（`scale_center` / `rotate_center`），move 事件给的是绝对中心、只取相对
-//!   原中心的位移。复刻版是「绕自身中心旋转、完全不用 anchor」。
+//!   原中心的位移。
 //! * **缓动**：原生用 101 点采样表 + 线性插值（`eased_progress`），指数族是
 //!   `power = (ease-1)/3 + 2`；`13 = HoldStart` 恒 0、`14 = JumpToEnd` 恒 1、无 `15` 档。
 //! * **掩码**：CPU 在 1/8 分辨率像素中心栅格化，再按 `EdgeMask` / `GlowMask` 做九宫格膨胀，
-//!   打包成一张 `effect` 纹理 + 一张 `aux` 纹理，**不需要任何离屏 FBO**。复刻版是 GPU 多趟 RT。
+//!   打包成一张 `effect` 纹理 + 一张 `aux` 纹理，**不需要任何离屏 FBO**。
 //! * **着色**：原版 Unity 反编译片元着色器整份照搬（`assets/blockarea/block_shader_full.frag`），
 //!   材质常量用原版值（`_ShineColor` 白、`_ShineSpeed 37.9`、`_ShineBrightness 0.12`）。
 //! * **相位**：`Zone.ready = !active && enable-0.5 <= t < enable`，`opacity` 只在
-//!   「块本身在 appear 时还没 active」的情况下按 `(t - appear)/0.5` 渐显；复刻版额外加的
-//!   Ready 闪烁在这里不存在。
+//!   「块本身在 appear 时还没 active」的情况下按 `(t - appear)/0.5` 渐显；这里没有 Ready 闪烁。
 //!
 //! 触屏光影（hover SDF）与判定吞触摸**不在移植范围**：需要的 `TouchHover.png` 与
 //! `FD_Noise_00000.png` 两个素材在本仓库里没有，已按「缺失即退化」处理，见
@@ -94,7 +92,7 @@ fn pct_to_chart(p: Vector, aspect: f32) -> Vector {
     Vector::new(2. * p.x - 1., (2. * p.y - 1.) / aspect)
 }
 
-/// `mod.rs` 里那份复刻版的数据模型用 macroquad 的 `Vec2` 存归一化坐标，
+/// `mod.rs` 的数据模型用 macroquad 的 `Vec2` 存归一化坐标，
 /// 原生几何解算用继承自 Phira 的 `nalgebra::Vector2`。这里是两种表示之间的唯一桥梁。
 #[inline]
 fn vec2_to_vector(v: Vec2) -> Vector {
@@ -136,7 +134,7 @@ fn matrix_of(tr: &BlockTransform) -> Matrix {
         * Matrix::identity().append_nonuniform_scaling(&tr.size)
 }
 
-/// 给 [`BlockArea`] 挂上原生几何解算（用 trait 是为了不改动 `mod.rs` 里那份复刻版的状态机）。
+/// 给 [`BlockArea`] 挂上原生几何解算（用 trait 是为了不改动 `mod.rs` 里的状态机）。
 pub trait NativeBlocks: Sized {
     fn scale_at(&self, t: f64) -> Vector;
     fn rotation_at(&self, t: f64) -> f32;
@@ -328,7 +326,7 @@ pub use shader::{judge_paint_view, reset_block_effects, Zone};
 /// 一次把整帧的噪域画出来。
 ///
 /// **层序上的有意偏离**：官方把 Disabled 层画在背景趟（判定线与音符之下）、Active 层画在
-/// 精灵/HUD 之后；本仓库的产品需求是「方块整个压在最高层」（见 `Chart::render_block_area`
+/// 精灵/HUD 之后；本仓库把方块整个压在最高层（见 `Chart::render_block_area`
 /// 的注释），所以这里像官方 `draw_zones_at` 那样把两层**背靠背画在同一个最高层**：
 /// 先 Disabled（`uLayer = 0`，加算），再 Active（`uLayer = 3`，source-alpha 混合）。
 /// 着色器、材质、掩码、几何都与官方逐字一致，只有这一处场景层序不同。
@@ -492,9 +490,9 @@ fn draw_zone_numbers(aspect: f32, zones: &[Zone], active_color: [f32; 3], pale_c
         // 字号跟着方块高度走（`height` 里已经乘过 `k`），但上下限也得跟着 `k` 缩 ——
         // 否则谱面缩到 0.53 时所有编号都被 `0.006` 这条下限顶住、不再变小。
         let kk = cell_y_k.abs().clamp(0.05, 1.);
-        // 下限是「小方块也必须有编号」的保证：这里从前还跟着一条 `if cell < 0.006 * kk { continue }`，
-        // 于是高度不到屏幕 5% 上下的小噪域**一个数字都不印**（2026-10-06 修的 bug），
-        // 玩家根本看不出它是几号。现在只把字号压到下限，照样画出来：字可能比方块本身还大，
+        // 下限是「小方块也必须有编号」的保证：**不要**在这里加小方块跳过分支 ——
+        // 高度不到屏幕 5% 上下的小噪域会**一个数字都不印**，玩家根本看不出它是几号。
+        // 这里只把字号压到下限，照样画出来：字可能比方块本身还大，
         // 但编号看得见，比「什么都不印」有用。
         let cell = (height * 0.115).clamp(0.004 * kk, 0.02 * kk);
         let cell_x = cell * cell_x_k / cell_y_k;

@@ -40,10 +40,8 @@ import WaterScreenSettings from './WaterScreenSettings.vue';
 // 每个参数的知识（默认值、界面 ↔ 配置的换算、联动、校验）都在 ../config/fields.ts 的规格表里，
 // 界面状态与 buildConfig() / applyConfig() 由 ../config/useRenderConfig.ts 从那份表生成。
 //
-// 2026-10 的结构变化：
-//   1. 去掉「普通 / 高级」两个页签 —— 一页到底；
-//   2. 去掉「基础 / 进阶 / 专家」界面等级 —— 所有窗口与选项一直可见（窗口本身仍可折叠）；
-//   3. 参数状态与两个转换函数搬去 ../config/（原来本文件有约 100 个 ref 和 660 行手写换算）。
+// 页面结构：一页到底，没有「普通 / 高级」页签，也没有「基础 / 进阶 / 专家」界面等级 ——
+// 所有窗口与选项一直可见（窗口本身仍可折叠）。
 //
 // ---------- 新增 / 修改一个渲染参数时要动的地方 ----------
 // 1. ../model 的 RenderConfig 与 DEFAULT_RENDER_CONFIG（必须和 src-tauri/src/render.rs 的
@@ -80,7 +78,7 @@ function openFileNameFormatDialog() {
 /**
  * 「新建预设」弹窗的宽度 —— 同一套算法（打开时量一次内容区 `.phi-center` 的宽度，
  * 弹窗被 teleport 到 body，写百分比会按视口算、把左侧导航也算进去），
- * 只是比例换成 **40%**（需求）；下限 360px 免得窄窗口挤成一条。
+ * 只是比例换成 **40%**；下限 360px 免得窄窗口挤成一条。
  */
 const createDialogWidth = ref(480);
 function openCreateDialog() {
@@ -147,13 +145,7 @@ const {
   hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
 } = toRefs(ui);
 
-/** 「其他语言」那一行现在是**行内二选一框**（2026-10-11 起直接在此处显示
- *  中文/罗马 的单选框」）：它不再是一个三级菜单行 —— 原来那种形态要先勾 ✅（存 localStorage 的纯界面
- *  开关 `phi.gate.sec3-multi-lang`）、再点齿轮才看得到选项，太绕；现在直接把 `CfgRadio` 摆在行上。
- *  于是那个纯界面开关、`gear-always` 与它的弹窗一并去掉，`useStorage` 在本文件里也不再使用。 */
-
-/** 「背景压暗」开关已删除（2026-10-11：0 就是不压暗）。
- *  配置里的 `render_bg_dim` 不再由界面勾选，而是**跟着数值派生**：`background_dim > 0` 才压暗，
+/** 配置里的 `render_bg_dim` 不由界面勾选，而是**跟着数值派生**：`background_dim > 0` 才压暗，
  *  0 就是不压暗。`immediate: true` 让初次挂载与载入预设时也同步一次（老预设里那个勾选框的值会被覆盖）。 */
 watch(
   () => (backgroundDim ? Number(backgroundDim.value) : 0),
@@ -217,8 +209,7 @@ refreshRespacks();
 // 保存前先把几个「界面独有」的东西换算掉：
 //   - 表单校验（不通过就 toast + 中止）
 //   - 最大粒子数的自定义输入（不合法同样中止）
-//   - 预览片段窗口不超过 15 秒（2026-10-11 从 RenderView 的 `checkInfo()` 搬来：
-//     预览开始 / 结束时间现在是配置项，校验自然也该跟着走）
+//   - 预览片段窗口不超过 15 秒（预览开始 / 结束时间现在是配置项，校验自然也该跟着走）
 // 其余全部交给规格表生成的 buildConfigFromFields。
 async function buildConfig(): Promise<RenderConfig | null> {
   if (!(await form.value!.validate()).valid) {
@@ -405,8 +396,8 @@ async function updatePresets() {
 updatePresets();
 
 // 「新建预设」的弹窗状态。
-// 2026-10-11：这里原来是浏览器原生 `prompt(t('preset-create-title'))` —— 在 Tauri 里会弹一个
-// 与应用完全两个样子的系统输入框，现在改成普通 `v-dialog`：皮肤与「文件名格式」说明弹窗、
+// 不用浏览器原生 `prompt(t('preset-create-title'))` —— 在 Tauri 里会弹一个与应用完全两个样子的
+// 系统输入框；这里用普通 `v-dialog`：皮肤与「文件名格式」说明弹窗、
 // 设置页的重置确认弹窗一致（`.log-card-only-window.phi-config-dialog`），
 // 内容 = 标题 + 一个名字输入框 + 取消 / 确定两个按钮。
 // 点「创建」时先把配置构建出来（校验不过就不开弹窗），确认时才真正落盘。
@@ -496,7 +487,7 @@ async function replacePreset() {
  * 对外暴露的接口 —— `RenderView.vue` / `BatchView.vue` 用模板 ref 拿到的组件实例上只有这里的成员。
  *
  * ⚠️ `<script setup>` 的组件默认是**封闭**的：**没有 `defineExpose` 就一个成员都拿不到**。
- * 2026-10-11 界面重做期间这段暴露被弄丢了，症状是预览直接报错、应用预设静默失效：
+ * 一旦这段暴露丢了，症状是预览直接报错、应用预设静默失效：
  *   - `configView.value!.buildConfig()` → `configView.value.buildConfig is not a function`（预览）
  *   - `configView.value?.applyConfig(config)` → 可选链不报错，于是预设读进界面时什么都没发生
  * 以后从父组件调用 ConfigView 的方法，记得同时在这里登记。
@@ -539,18 +530,17 @@ defineExpose({
     <!-- ===== 渲染页现在是两级结构 =====
          一级 = PhiGroup（渲染 / 谱面 / 更多），二级 = 组里的 PhiSection。
          App.vue 的左栏导航（renderGroups）与这里的层级一一对应，改一边要同步另一边。
-         2026-10-11：「预设配置」不再是一级分组，收进「渲染」组、放在该组最上面。 -->
+         「预设配置」不是一级分组，而是收在「渲染」组里、放在该组最上面。 -->
 
     <!-- ===== 渲染 ===== -->
     <PhiGroup id="grp-render" :title="t('title.render-group')">
-      <!-- 预设配置：组内第一条。收进渲染组之前它是一级分组 PhiGroup，这里按组内规矩换成 PhiSection
-           （DOM id 也从 grp-preset 改成 sec-preset，App.vue 的 renderGroups 已同步）。 -->
+      <!-- 预设配置：组内第一条，按组内规矩用 PhiSection（DOM id 是 sec-preset，
+           App.vue 的 renderGroups 与之同步）。 -->
       <PhiSection id="sec-preset" :title="t('presets')">
         <!-- 按钮改成贴着输入框右边的一排小图标按钮（原来每个都占 1/5 宽的深色大按钮，太重）。
              图标含义写在 title 属性里，鼠标悬停能看到；下拉框自己不带 label，标题已在分区上。 -->
         <div class="preset-row">
-          <!-- 内置的「默认」预设（`key === 'default'`）里那个名字显示成灰色
-               （需求「如果是默认的预设配置，那字体也改成灰色」）：
+          <!-- 内置的「默认」预设（`key === 'default'`）里那个名字显示成灰色：
                自己建的预设纯白，内置那份退一档，跟占位符、禁用项一个灰。
                别删按钮上那两条 `:disabled="preset.key === 'default'"` 也是同一个判断。 -->
           <v-combobox density="compact" hide-details="auto" @update:model-value="(val: Preset) => applyPreset(val.config)" :items="presets"
@@ -573,29 +563,26 @@ defineExpose({
         </div>
       </PhiSection>
 
-      <!-- ===== 参数（2026-10-11：「画面参数」与「渲染参数」整合为参数）=====
-           原来的「画面参数」`sec-output` 与「渲染参数」`sec-performance` 两个二级分区合并成这一个
-           （DOM id = `sec-params`，两个旧 id 都不再存在，`App.vue` 左栏里的两条也并成一条）。
+      <!-- ===== 参数 =====
+           本分区对应 DOM id `sec-params`。
            同一个分区内按以下次序重排：勾选框在前，文本框在后，
            最后是「文件名格式」与 Tip（Tip 是 RenderView
            插进来的 `#params-tip`）—— 这两项都是整行宽的长文本框，按惯例**单独放第二个
            `.cfg-grid`**（只有 full 条目的网格才不画栏间竖线，见下面那段注释）。
            谱面侧那几项（强制宽高比 / 折叠式入场 / 宽:高 / 总分 / 预览开始时间 / 预览结束时间 /
-           偏移）2026-10-11 起也是**配置项**，所以由本文件直接渲染、不再走插槽
-           （原来的 `#params-switches` / `#params-fields` / `#params-preview` / `#params-offset` /
-           `#params-score` 五个插槽已全部删除）。
+           偏移）也是**配置项**，所以由本文件直接渲染、不走插槽。
            这里只剩一个 `.cfg-grid`（同一分区里多个并列网格早已合并成一个）。 -->
       <PhiSection id="sec-params" :title="t('title.params')">
         <div class="cfg-grid">
           <!-- ===== 勾选框在前 ===== -->
           <CfgSwitch :label="t('hw-accel')" v-model="hwAccel" :tip="t('hw-accel-tips')" />
-          <!-- 「高性能模式」的勾选框 2026-10-14 搬到设置页了（挨着「默认展开侧边栏」），
-               它现在是 app 配置项、由后端在提交渲染时注入，不再是每份渲染配置的开关；
-               所以这一页不再出现第二个「性能」开关。 -->
+          <!-- 「高性能模式」在设置页（挨着「默认展开侧边栏」）：
+               它是 app 配置项、由后端在提交渲染时注入，不是每份渲染配置的开关；
+               所以本页不出现第二个「性能」开关。 -->
           <CfgSwitch :label="t('dynamic-bitrate-control')" v-model="dynamicBitrateControl" />
           <CfgSwitch :label="t('render-loading')" v-model="renderLoading" />
           <CfgSwitch :label="t('preserve-framebuffer')" v-model="preserveFramebuffer" :tip="t('preserve-framebuffer-tips')" />
-          <!-- 三级菜单（2026-10-11）：激进优化（原「谱面激进优化」，2026-10-11 改名）紧跟渲染管线开关；
+          <!-- 三级菜单：激进优化紧跟渲染管线开关；
                子项收进齿轮弹窗，勾选框只管开关。
                子项里不用再判 `aggressiveChart` —— `useRenderConfig.ts:317-328` 的 watch 会在
                关闸门时把 note / particle 一起置 false。 -->
@@ -606,19 +593,14 @@ defineExpose({
             </div>
           </PhiSubMenu>
           <CfgSwitch :label="t('render-extra')" v-model="renderExtra" :tip="t('render-extra-tips')" />
-          <!-- 谱面侧渲染参数（2026-10-11 从 RenderView 的 `#params-switches` 插槽搬进来）：
-               以前它们是 RenderView 里的本地状态、改完只随谱面走；现在是配置项，会进预设、
+          <!-- 谱面侧渲染参数：它们是配置项，会进预设、
                进 config.toml，也出现在批量页的预设弹窗里。 -->
           <CfgSwitch :label="t('info.force-aspect-ratio')" v-model="forceAspectRatio"></CfgSwitch>
           <CfgSwitch :label="t('info.fold-animation')" v-model="foldAnimation"></CfgSwitch>
           <!-- ===== 文本框在后 ===== -->
-          <!-- 2026-10-11：总分从字段区最后
-               挪到最前面（分辨率原来那一格）。
-               随后「偏移」占用最前面这一格，总分挪到「渲染结束时间」之后 ⇒
-               这一格现在给谱面信息里的「偏移」，总分挪到主网格最后一格
-               （「渲染结束时间」之后，见下面）。 -->
+          <!-- 这一格是谱面信息里的「偏移」；总分在主网格最后一格（「渲染结束时间」之后，见下面）。 -->
           <CfgField :label="t('info.offset')">
-            <!-- 回归这里之后不再需要 `:disabled="loadingTweakoffset"`（那是 RenderView 的本地状态）；
+            <!-- 这里不需要 `:disabled="loadingTweakoffset"`（那是 RenderView 的本地状态）；
                  点「调整偏移」时后端算回的值由 ConfigView 暴露的 setOffsetSeconds() 写回本格 -->
             <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.notEmpty]" v-model="offset"></v-text-field>
           </CfgField>
@@ -645,10 +627,7 @@ defineExpose({
             <span class="cfg-colon">:</span>
             <v-text-field type="number" density="compact" hide-details="auto" style="max-width: 96px" :rules="[RULES.positive]" v-model="aspectHeight" @update:modelValue="commitAspect()"></v-text-field>
           </CfgField>
-          <!-- 2026-10-11：最大粒子数挪到「宽:高」后面
-               （原来总分的位置）；总分随后挪回字段区最前面 ⇒
-               总分最终落在字段区最前面（就是下面 `t('info.score-total')` 那一格），
-               这里只留下最大粒子数。 -->
+          <!-- 这一格是最大粒子数；总分在下面 `t('info.score-total')` 那一格。 -->
           <CfgField :label="t('max-particles')"><v-combobox density="compact" hide-details="auto" :disabled="!particle && !particleSquare" :rules="[RULES.notEmpty]" :title="t('max-particles-tip')" :items="maxParticlesTextList" v-model="maxParticlesText"></v-combobox></CfgField>
           <CfgField :label="t('info.previewStart')">
             <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" v-model="previewStart"></v-text-field>
@@ -659,7 +638,7 @@ defineExpose({
           <CfgField :label="t('ending-length')"><v-text-field density="compact" hide-details="auto" v-model="endingLength" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
           <CfgField :label="t('render-start-time')"><v-text-field density="compact" hide-details="auto" v-model="playStartTime" type="number" :rules="[RULES.positiveOrZero]"></v-text-field></CfgField>
           <CfgField :label="t('render-end-time')"><v-text-field density="compact" hide-details="auto" v-model="playEndTime" type="number" :rules="[RULES.positiveOrNull]"></v-text-field></CfgField>
-          <!-- 总分：2026-10-11 起放在「渲染结束时间」后面（原来那一格让给了「偏移」） -->
+          <!-- 总分这一格排在「渲染结束时间」之后 -->
           <CfgField :label="t('info.score-total')">
             <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.less4000000000, RULES.positive]" v-model="scoreTotal"></v-text-field>
           </CfgField>
@@ -667,15 +646,14 @@ defineExpose({
         <!-- ===== 文件名格式 + Tip（放在「参数」的最后）=====
              这两项都是整行宽的长文本框，**单独放一个「只有 full 条目」的网格**：
              `design/config.css:55-60` 那条 `:has()` 规则会给这种网格去掉栏间竖线；
-             要是跟上面的三栏条目挤在同一个网格里，那两条竖线会横穿这两个长输入框
-             （2026-10-11 修过 Tip 与文件名格式之间的分栏线错误）。 -->
+             要是跟上面的三栏条目挤在同一个网格里，那两条竖线会横穿这两个长输入框。 -->
         <div class="cfg-grid">
           <CfgField :label="t('file-name-format')" full><v-text-field density="compact" hide-details="auto" v-model="fileNameFormat" type="text" :rules="[RULES.notEmpty, RULES.notNull]" append-inner-icon="mdi-help-circle-outline" @click:append-inner="openFileNameFormatDialog"></v-text-field></CfgField>
           <slot name="params-tip"></slot>
         </div>
       </PhiSection>
       <PhiSection id="sec-audio" :title="t('title.audio')">
-        <!-- 全部挤成一行：音乐音量 / 音效音量 / 音效限幅（这三个从滑条改成文本框）
+        <!-- 全部挤成一行：音乐音量 / 音效音量 / 音效限幅（文本框）
              + 无损音频 / 响度均衡 / 混音优化 / 强制限幅（勾选框，格式与「渲染项目」一致） -->
         <div class="cfg-grid"><CfgField :label="t('volume-music')" v-if="!loudnessEqualization"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeMusic"></v-text-field></CfgField><CfgField :label="t('volume-music-ratio')" v-if="loudnessEqualization"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeMusic"></v-text-field></CfgField><CfgField :label="t('volume-sfx')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeSfx"></v-text-field></CfgField><CfgField :label="t('limit-threshold')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" :disabled="!forceLimit" v-model="limitThreshold"></v-text-field></CfgField><CfgSwitch :label="t('hires')" v-model="hires" /><CfgSwitch :label="t('loudness-equalization')" v-model="loudnessEqualization" /><CfgSwitch :label="t('audio-mix-optimization')" v-model="audioMixOptimization" /><CfgSwitch :label="t('force-limit')" v-model="forceLimit" /></div>
       </PhiSection>
@@ -684,15 +662,12 @@ defineExpose({
         <div class="cfg-grid"><CfgField :label="t('player-avatar')"><v-text-field density="compact" hide-details="auto" readonly accept="image/*" @click="chooseAvatar" @click.clear="playerAvatar = undefined" clearable :model-value="playerAvatar ? playerAvatar.split('\\').pop()!.split('/').pop() : ''"></v-text-field></CfgField><CfgField :label="t('player-rks')"><v-text-field density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" type="number" v-model="playerRks"></v-text-field></CfgField><CfgField :label="t('challenge-color')"><v-autocomplete density="compact" hide-details="auto" :rules="[RULES.notEmpty]" :items="t('challenge-colors').split(',')" v-model="challengeColor"></v-autocomplete></CfgField><CfgField :label="t('challenge-rank')"><v-text-field density="compact" hide-details="auto" :rules="[RULES.int, RULES.positiveOrZero]" type="number" v-model="challengeRank"></v-text-field></CfgField><CfgField :label="t('player-name')"><v-text-field density="compact" hide-details="auto" v-model="playerName"></v-text-field></CfgField></div>
       </PhiSection>
       <!-- ===== 更多（渲染组的尾巴）=====
-           2026-10-11：「多语言」挪到渲染-更多里、做成三级菜单：原来「更多」是一个独立的一级组
-           （`grp-more`），现在解散 —— 「其他语言」搬进本组末尾这个新的二级分区「更多」。
-           形态改过两次：先是三级菜单行（✅/❌ + 齿轮 + 弹窗），再是行内的「罗马模式/中文模式」二选一框
-           （`CfgRadio`），最后拆成「罗马模式」「中文模式」**两条独立开关**（现状）。 -->
+           「其他语言」在本组末尾这个二级分区「更多」里，
+           形态是「罗马模式」「中文模式」**两条独立开关**（各一个 ✅/❌）。 -->
       <PhiSection id="sec-more-render" :title="t('more')">
         <div class="cfg-grid">
-          <!-- 2026-10-11：先做成「罗马模式/中文模式」二选一框，随后又
-               拆回两条各自独立的条目（各一个 ✅/❌）。
-               后端本来就是 `roman` / `chinese` 两个独立布尔键，两条互不影响。
+          <!-- 两条各自独立的条目（各一个 ✅/❌）：后端是 `roman` / `chinese`
+               两个独立布尔键，两条互不影响。
                `CfgRadio.vue` 因此暂时没有人引用（留在仓库里备用，样式在 `design/config.css` 的 `.cfg-radio*`）。 -->
           <CfgSwitch :label="t('roman')" v-model="roman" />
           <CfgSwitch :label="t('chinese')" v-model="chinese" />
@@ -718,16 +693,15 @@ defineExpose({
                             强制定位 →( 强制定位范围着色 / 矩形高度·宽度·时间窗 )
              判定范围     → 显现时间 / 不透明度 / 过渡时间 / 宽度 / 长度 / 颜色
              激进优化     → 按键激进优化 / 粒子激进优化 -->
-      <!-- 2026-10-11：显示名由「谱面元素」/ "Chart Elements"
-           改成「元素」/ "Elements"；locale 键 `render-item`、DOM id `sec-render-item`、
-           `fields.ts` 里的分组键都没动（与「渲染项目 → 谱面元素」那次一样只改值）。
+      <!-- 显示名是「元素」/ "Elements"，但 locale 键 `render-item`、DOM id `sec-render-item`、
+           `fields.ts` 里的分组键都还是旧的 `render-item`（只改了显示值）。
            下面两处注释里出现的「谱面元素」是旧显示名的引用，保留。 -->
       <PhiSection id="sec-render-item" :title="t('render-item')">
                   <div class="cfg-grid">
-                    <!-- 2026-10-11 按下述次序重排：按键 双押提示 打击特效 特效粒子 判定线 噪域
-                         背景 暂停按钮 曲目名称 分数 难度 定数 连击数 进度条：
-                         （前半是元素开关，后半是界面叠加项），并把「判定线」那一格从「判定线」分区
-                         搬回这里（它排第 5）—— 「判定线」分区表头那个 ⏻ 仍是同一个
+                    <!-- 本网格的次序：按键 双押提示 打击特效 特效粒子 判定线 噪域
+                         背景 暂停按钮 曲目名称 分数 难度 定数 连击数 进度条
+                         （前半是元素开关，后半是界面叠加项）。
+                         「判定线」这一格排第 5，与「判定线」分区表头那个 ⏻ 是同一个
                          `renderLine`，所以那边照样能开关、子项照样跟着变灰。 -->
                     <CfgSwitch :label="t('render-note')" v-model="renderNote" />
                     <CfgSwitch :label="t('render-double-hint')" v-model="renderDoubleHint" :disabled="!renderNote" />
@@ -743,23 +717,18 @@ defineExpose({
                     <CfgSwitch :label="t('render-ui-level')" v-model="renderUiLevel" :disabled="!renderUiDifficulty" />
                     <CfgSwitch :label="t('render-ui-combo')" v-model="renderUiCombo" />
                     <CfgSwitch :label="t('render-ui-bar')" v-model="renderUiBar" />
-          <!-- 2026-10-11 三处搬走（谱面缩放 → 界面；速度与上/下隐 → 更多）：
-               `chart-ratio`（谱面缩放）→ 下面的「界面」分区；`speed`（速度）与
-               `fade`（上隐/下隐）→ 谱面组的「更多」分区。这个分区剩下的都是开关，网格里不再混数值项。
-               （`speed` 的显示名一度改成「流速」，现已改回「速度」。） -->
+          <!-- `chart-ratio`（谱面缩放）在下面的「界面」分区；`speed`（速度）与
+               `fade`（上隐/下隐）在谱面组的「更多」分区。
+               这个分区剩下的都是开关，网格里不混数值项。 -->
         </div>
       </PhiSection>
-      <!-- ===== 界面（原来叫「背景与文字」）=====
-           2026-10-11：分区标题改成「界面」
-           （locale 键没动，还是 `title.background`），并把「谱面缩放」（`chart-ratio`）从「谱面要素」搬进来。 -->
+      <!-- ===== 界面 =====
+           分区显示名是「界面」，locale 键仍是 `title.background`。 -->
       <PhiSection id="sec-chart-bg" :title="t('title.background')">
         <div class="cfg-grid">
-          <!-- 2026-10-11：「背景压暗」选项去掉，0 就是不压暗：原来这里那个 `renderBgDim`
-               勾选框已删除，配置里的 `render_bg_dim` 改由下面这个数值派生（见 script 里的 watch）。 -->
+          <!-- 配置里的 `render_bg_dim` 由下面这个数值派生（见 script 里的 watch），0 就是不压暗。 -->
           <CfgField :label="t('chart-ratio')"><v-text-field density="compact" hide-details="auto" type="number" :title="t('chart-ratio-tip')" :rules="[RULES.notEmpty, RULES.positive]" :model-value="String(chartRatio)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartRatio = n; }"></v-text-field></CfgField>
-          <!-- 2026-10-11：0~1 范围的项曾一度改成拉动条，随后又
-               全部改回文本框 ⇒ 复原成数值输入框（`CfgSlider` 全项目已不再被引用），
-               0 仍然等于不压暗（见上面的 watch）。 -->
+          <!-- 0~1 范围的项用数值输入框（`CfgSlider` 全项目已不再被引用），0 等于不压暗（见上面的 watch）。 -->
           <CfgField :label="t('background-dim')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderBg" :title="t('background-dim-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(backgroundDim)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) backgroundDim = n; }"></v-text-field></CfgField>
           <CfgField :label="t('bg-blurriness')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBg" v-model="bgBlurriness" type="number" :rules="[RULES.positiveOrZero, RULES.less10000]"></v-text-field></CfgField>
           <CfgField :label="t('watermark')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow v-model="watermark"></v-textarea></CfgField>
@@ -767,12 +736,11 @@ defineExpose({
           <CfgField :label="t('difficulty')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiDifficulty" v-model="difficulty"></v-textarea></CfgField>
         </div>
       </PhiSection>
-      <!-- 2026-10-11 二级总开关：「按键」标题行上那个开关就是「渲染项目」里的「按键」开关
+      <!-- 二级总开关：「按键」标题行上那个开关就是「渲染项目」里的「按键」开关
            （`renderNote`），两处是同一个值，关掉时整块收起。 -->
       <PhiSection id="sec-chart-key" :title="t('title.keys')" v-model:gate="renderNote">
         <!-- Note 等比缩放 / Hold 尾部遮罩 / 允许负长度 Hold / Hold 打击特效间隔倍率
-             （2026-10-11 从 RenderView 的 `chart-extra` 插槽搬进来：它们与谱面信息同名，
-             现在也是配置项，会进预设与 config.toml） -->
+             （它们与谱面信息同名，也是配置项，会进预设与 config.toml） -->
         <div class="cfg-grid">
           <CfgSwitch :label="t('info.note-uniform-scale')" v-model="noteUniformScale" :disabled="!renderNote" :tip="t('info.note-uniform-scale-tip')" />
           <CfgSwitch :label="t('info.hold-partial-cover')" v-model="holdPartialCover" :disabled="!renderNote" :tip="t('info.hold-partial-cover-tip')" />
@@ -783,26 +751,24 @@ defineExpose({
           </CfgField>
           <CfgField :label="t('note-scale')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('note-scale-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(noteScale)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) noteScale = n; }"></v-text-field></CfgField>
           <CfgField :label="t('chart-debug-note')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('chart-debug-note-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugNote)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugNote = n; }"></v-text-field></CfgField>
-          <!-- 染色拆分（2026-10-11）：按键染色 / 打击特效染色 从「染色」分区搬到这里 -->
+          <!-- 按键染色 / 打击特效染色都在本分区 -->
           <CfgField :label="t('notecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderNote" v-model="notecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('hitcolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!particle" v-model="hitcolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
         </div>
       </PhiSection>
-      <!-- ===== 判定线（2026-10-11：新增本二级分区，收纳与判定线有关的项）=====
-           原来的「染色」分区被拆散（四项各归其位），这个新分区接替「染色」原来的内容，位置放在「按键」下面（按键 之后、噪域 之前）。
-           四项都是判定线的：开关「判定线」（原在 谱面-谱面要素）、「其他判定线」（原在 渲染-渲染参数）、
-           「判定线染色」（原在 谱面-染色）、「谱面调试 - 判定线」（原在 谱面-判定）。
-           三项的 `:disabled="!renderLine"` 保持不变 —— 关掉时它们一起变灰（闸门在表头上）。
-            2026-10-11：「判定线」这一格列进了「元素排序」的清单（排在「特效粒子」之后、
-            「噪域」之前），于是那个 `<CfgSwitch :label="t('render-line')" v-model="renderLine" />`
-            搬去上面的「谱面元素」网格；这里只留表头的 ⏻/❌ 闸门（`v-model:gate="renderLine"`），
-            两者本来就是同一个值。 -->
+      <!-- ===== 判定线 =====
+           本二级分区收纳与判定线有关的项，位置在「按键」之后、「噪域」之前。
+           下面的「其他判定线」/「判定线染色」/「谱面调试 - 判定线」三项都带 `:disabled="!renderLine"`
+           —— 关掉时它们一起变灰（闸门在表头上）。
+           「判定线」那个 `<CfgSwitch :label="t('render-line')" v-model="renderLine" />`
+           在上面「元素」的网格里（排在「特效粒子」之后、「噪域」之前）；
+           这里只留表头的 ⏻/❌ 闸门（`v-model:gate="renderLine"`），两者本来就是同一个值。 -->
       <PhiSection id="sec-chart-line" :title="t('title.judge-line')" v-model:gate="renderLine">
         <div class="cfg-grid">
           <CfgSwitch :label="t('render-line-extra')" v-model="renderLineExtra" :disabled="!renderLine" :tip="t('render-line-extra-tips')" />
           <CfgField :label="t('linecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderLine" v-model="linecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('chart-debug-line')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderLine" :title="t('chart-debug-line-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugLine)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugLine = n; }"></v-text-field></CfgField>
-          <!-- 「判定线长度」（2026-10-11 从 RenderView 的 `line-extra` 插槽搬进来：与谱面信息同名，也是配置项） -->
+          <!-- 「判定线长度」与谱面信息同名，也是配置项 -->
           <CfgField :label="t('info.lineLength')">
             <v-text-field type="number" density="compact" hide-details="auto" :disabled="!renderLine" :rules="[RULES.less10000]" v-model="lineLength"></v-text-field>
           </CfgField>
@@ -843,20 +809,17 @@ defineExpose({
         </div>
       </PhiSection>
       <!-- ===== 更多（谱面组的尾巴）=====
-           2026-10-11：「谱面进水」挪到谱面-更多里、做成三级菜单：原来「更多」是
-           独立的一级组（`grp-more`），现在解散 —— 「谱面进水」搬进本组末尾这个新的二级分区「更多」，
-           形态从二级分区改成**三级菜单行**：✅/❌ 就是原来的 `waterScreen`（配置值，与预设一起存），
-           11 个参数（`WaterScreenSettings`）收进齿轮弹窗。这一行同样只占**一格**（一行三个里的第一个）。
-           2026-10-11：又把「判定」的内容并入二级菜单更多 ⇒「判定」整个
-           二级分区并进本分区（判定范围三级菜单行 / 判定模式 / 判定偏移）。
-           本分区里还收着从「噪域」搬来的两项：岩浆噪域（`blockAreaLava`）与
-           强制定位（`blockAreaForcePosition` 三级菜单行），排在「判定模式」之前 ——
+           本二级分区收着：
+           - 「谱面进水」三级菜单行：✅/❌ 就是 `waterScreen`（配置值，与预设一起存），
+             11 个参数（`WaterScreenSettings`）收进齿轮弹窗。这一行只占**一格**（一行三个里的第一个）；
+           - 判定范围三级菜单行 / 判定模式 / 判定偏移；
+           - 从「噪域」搬来的两项：岩浆噪域（`blockAreaLava`）与
+             强制定位（`blockAreaForcePosition` 三级菜单行），排在「判定模式」之前。
            本分区按全项目惯例排：勾选框与三级菜单行在前，文本框（判定模式 / 判定偏移 /
            速度 / 上隐）在后。 -->
       <PhiSection id="sec-more-chart" :title="t('more')">
         <div class="cfg-grid">
-          <!-- 染色拆分（2026-10-11）：透明度染色放进已有的「更多」分区，
-               普通条目（不是三级菜单行），与下面的「谱面进水」同处一个网格。 -->
+          <!-- 透明度染色：普通条目（不是三级菜单行），与下面的「谱面进水」同处一个网格。 -->
           <CfgSwitch :label="t('alpha-tint')" v-model="alphaTint" :tip="t('alpha-tint-tip')" />
           <PhiSubMenu id="sec3-chart-water" :label="t('title.chart-water')" :tip="t('water-screen-tip')" v-model="waterScreen">
             <WaterScreenSettings
@@ -874,11 +837,13 @@ defineExpose({
                     v-model:water-sfx-max="waterSfxMax"
                   ></WaterScreenSettings>
           </PhiSubMenu>
-          <!-- 2026-10-11：「判定」二级分区的内容并入二级菜单更多：
-               下面这一整块（判定范围三级菜单 + 判定模式 + 判定偏移，连它原来的说明注释）
-               是从已删除的「判定」分区搬过来的，原来的 `:disabled` / 依赖关系一字未改。 -->
+          <!-- 下面这一整块（判定范围三级菜单 + 判定模式 + 判定偏移）都在本分区，
+               `:disabled` / 依赖关系见各条自己的说明。 -->
           <PhiSubMenu id="sec3-judge-range" :label="t('render-judge-range')" :tip="t('render-judge-range-tips')" v-model="renderJudgeRange">
             <div class="cfg-grid">
+              <!-- 噪域遮蔽：只在噪域本身开着的时候才有意义（判定范围要在噪域那块矩形处淡出），
+                   所以跟着「噪域」分区总开关一起禁用。按一行两个的排布排在最前。 -->
+              <CfgSwitch :label="t('judge-range-noise-occlusion')" v-model="judgeRangeNoiseOcclusion" :disabled="!renderBlockArea && !simplifiedBlockArea" :tip="t('judge-range-noise-occlusion-tip')" />
               <CfgField :label="t('judge-range-time')"><v-text-field density="compact" hide-details="auto" :title="t('judge-range-time-tip')" :model-value="String(judgeRangeTime)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) judgeRangeTime = n; }" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('judge-range-alpha')"><v-text-field density="compact" hide-details="auto" :title="t('judge-range-alpha-tip')" v-model="judgeRangeAlpha" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
               <CfgField :label="t('judge-range-transition')"><v-text-field density="compact" hide-details="auto" :title="t('judge-range-transition-tip')" v-model="judgeRangeTransition" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
@@ -887,9 +852,6 @@ defineExpose({
               <CfgField :label="t('judge-range-length')"><v-text-field density="compact" hide-details="auto" :title="t('judge-range-length-tip')" :model-value="String(judgeRangeLength)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) judgeRangeLength = n; }" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('judge-range-color')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :title="t('judge-range-color-tip')" v-model="judgeRangeColor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
             </div>
-            <!-- 噪域遮蔽：只在噪域本身开着的时候才有意义（判定范围要在噪域那块矩形处淡出），
-                 所以跟着「噪域」分区总开关一起禁用。 -->
-            <CfgSwitch :label="t('judge-range-noise-occlusion')" v-model="judgeRangeNoiseOcclusion" :disabled="!renderBlockArea && !simplifiedBlockArea" :tip="t('judge-range-noise-occlusion-tip')" />
           </PhiSubMenu>
           <!-- 待判按键：把最近一个将要判定的按键染色再画一遍。它画在噪域那一趟之后，
                所以压得住噪域（不受「判定范围是否让位给噪域」影响）；没有音符可画时自然不显示。
@@ -899,12 +861,12 @@ defineExpose({
               <CfgField :label="t('pending-note-color')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :title="t('pending-note-color-tip')" v-model="pendingNoteColor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
             </div>
           </PhiSubMenu>
-          <!-- 岩浆噪域 / 强制定位：这两项原来在「噪域」分区（岩浆噪域还收在「简化噪域」的
-                齿轮弹窗里），现整块搬到谱面组的「更多」，并放在本分区「勾选框 / 三级菜单行在前、
-                文本框在后」那条惯例的位置上（紧跟「判定范围」、排在「判定模式」之前）。
-                取值、互斥关系（岩浆噪域 ⇔ 简化噪域）以及 :disabled（仍受「噪域」分区总开关
-                renderBlockArea 管）没改；但原来「岩浆噪域开启 ⇒ 界面禁用并清零上面那三项」那套
-                联动已删（`:disabled` 里的 `|| blockAreaLava` 与 useRenderConfig.ts 的 watch 都不在了），
+          <!-- 岩浆噪域 / 强制定位：紧跟「判定范围」、排在「判定模式」之前
+                （本分区惯例是勾选框 / 三级菜单行在前，文本框在后）。
+                互斥关系（岩浆噪域 ⇔ 简化噪域）与 :disabled 如下：
+                受「噪域」分区总开关 renderBlockArea 管。
+                「岩浆噪域开启 ⇒ 界面禁用并清零上面那三项」那套联动不存在
+                （`:disabled` 里没有 `|| blockAreaLava`，useRenderConfig.ts 也没有对应 watch），
                 改由引擎在代码层面直接忽略这三项。 -->
           <CfgSwitch :label="t('block-area-lava')" v-model="blockAreaLava" :disabled="!renderBlockArea || simplifiedBlockArea" :tip="t('block-area-lava-tip')" />
           <PhiSubMenu id="sec3-force-position" :label="t('block-area-force-position')" :tip="t('block-area-force-position-tip')" :disabled="!renderBlockArea" v-model="blockAreaForcePosition">
@@ -919,9 +881,7 @@ defineExpose({
           </PhiSubMenu>
           <CfgField :label="t('judge-mode')"><v-autocomplete density="compact" hide-details="auto" :rules="[RULES.notEmpty]" :items="t('judge-modes').split(',')" v-model="judgeMode"></v-autocomplete></CfgField>
           <CfgField :label="t('judgeOffset')"><v-text-field density="compact" hide-details="auto" v-model="judgeOffset" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
-          <!-- 2026-10-11：速度与上/下隐一起放进更多：这两项原来都在「谱面要素」的网格里，
-               现在搬到谱面组的「更多」。取值与校验规则一字未改。
-               （`speed` 的显示名一度改成「流速」/ "Scroll Speed"，后续又改回「速度」/ "Speed"。） -->
+          <!-- 速度与上/下隐在本分区（谱面组的「更多」），取值与校验规则见下。 -->
           <CfgField :label="t('speed')"><v-combobox density="compact" hide-details="auto" v-model="speed" type="number" :items="speedList" :rules="[RULES.notEmpty, RULES.positive, RULES.less100, RULES.greater0_01]"></v-combobox></CfgField>
           <CfgField :label="t('fade')"><v-text-field density="compact" hide-details="auto" :title="t('fade-tip')" v-model="fade" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
         </div>
@@ -939,9 +899,9 @@ defineExpose({
          `openFileNameFormatDialog`）。标题不再是 `v-card-title`，改成和齿轮弹窗一样的
          `div.phi-config-dialog__head > span.phi-config-dialog__title`；正文换成配置页那套
          `.config-root` + `.cfg-grid` + `CfgField`（所以输入框外框 / 条目名纯白都和配置页一致）。
-         背景仍交给 .log-card-only-window；原来这里内联了
-         `background: rgba(var(--v-theme-dialog), 0.4) !important`，而 --v-theme-dialog 全项目
-         从未定义 ⇒ var() 失效让整条声明变成 unset，卡片变透明，下面的设置项直接透出来（2026-10-11 修）。 -->
+         背景交给 .log-card-only-window，**不要**在这里内联
+         `background: rgba(var(--v-theme-dialog), 0.4) !important`：`--v-theme-dialog` 全项目
+         从未定义 ⇒ var() 失效让整条声明变成 unset，卡片变透明，下面的设置项直接透出来。 -->
     <v-card class="log-card-only-window phi-config-dialog">
       <div class="phi-config-dialog__head">
         <span class="phi-config-dialog__title" v-t="'file-name-format'"></span>
@@ -955,7 +915,7 @@ defineExpose({
     </v-card>
   </v-dialog>
 
-  <!-- 「新建预设」的名字输入弹窗（2026-10-11：原来是浏览器原生 prompt()，见上面 createPreset
+  <!-- 「新建预设」的名字输入弹窗（不用浏览器原生 prompt()，见上面 createPreset
        的注释）。皮肤与「文件名格式」弹窗一致；宽度也照它的算法（内容区的 40%，
        打开时量一次，见上面的 openCreateDialog）；按钮排照设置页那个重置确认弹窗
        （`v-card-actions.justify-end` + `variant="text"` 两个按钮）。 -->
@@ -967,7 +927,7 @@ defineExpose({
       <v-card-text class="config-root phi-config-dialog__body">
         <div class="cfg-grid">
           <CfgField :label="t('preset-create-title')" full>
-            <!-- autofocus：原来的 prompt() 一弹出光标就在输入框里，这里保持一致 -->
+            <!-- autofocus：弹出时光标要直接落在输入框里（与原生 prompt() 的行为一致） -->
             <v-text-field autofocus density="compact" hide-details="auto" v-model="createName" type="text"
               :rules="[RULES.notEmpty, RULES.notNull]" @keyup.enter="confirmCreatePreset"></v-text-field>
           </CfgField>
@@ -1007,12 +967,11 @@ defineExpose({
   flex: 0 0 12.5%;
   max-width: 12.5%;
 }
-/* 输出第二行: 文件名格式独占一整行(8 格) —— 那三个勾选框已搬到「谱面」区，剩下的 8 个字段正好铺满下面一行 */
+/* 输出第二行: 文件名格式独占一整行(8 格) —— 剩下的 8 个字段正好铺满下面一行 */
 .scroll-mask :deep(.v-col.v-col-3.output-file-name) {
   flex: 0 0 100%;
   max-width: 100%;
 }
-/* 音频那行的 `.audio-switch`（四个开关各占 1/4）已随「全部改成勾选框 + 挤成一行」删除 */
 
 /* 预设配置 / 资源包那一行：下拉框占满剩余宽度，右边跟一组小图标按钮。
    按钮之间用 12px，输入框与第一个按钮之间再额外留 8px —— 否则按钮会贴着输入框的下划线。 */
@@ -1026,8 +985,7 @@ defineExpose({
   margin-right: var(--phi-space-2);
 }
 
-/* 选中内置的「默认」预设时，下拉框里的名字用灰色（需求「如果是默认的预设配置，
-   那字体也改成灰色」）—— 自己建的预设仍是纯白。
+/* 选中内置的「默认」预设时，下拉框里的名字用灰色 —— 自己建的预设仍是纯白。
    `.config-root` 那几条纯白规则的选择器权重更低（0,2,0），这里带 scoped 属性就是 0,3,0，
    所以不用 `!important`。`input` 那一行也要写：Vuetify 把名字画在 `<input>` 自己的 color 上。 */
 .preset-default :deep(.v-field__input),

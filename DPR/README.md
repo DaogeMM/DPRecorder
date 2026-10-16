@@ -3,6 +3,9 @@
 快 简 轻 便  
 Fast Simple Lightweight Convenient
 
+> [!WARNING]
+> 本项目的代码**大量由 AI 生成**（DeepSeek，模型 id `deepseek-flash`），可能存在错误或过时内容，请以实测为准。完整声明见 [`NOTICE`](../NOTICE) 第 1 节。
+
 把 **Phigros 谱面离线渲染成视频**的 Windows 桌面程序。本目录 `DPR/` 是它的桌面端：**Vue 3** 前端 + **Tauri 2** 外壳 + Rust 后端，内嵌引擎 **DPS**（解析谱面、跑判定、逐帧渲染）。
 
 - 仓库全貌、目录结构、环境要求：看根目录的 [`README.md`](../README.md)
@@ -35,3 +38,5 @@ cargo tauri build
 ## 出处 / Provenance
 
 本目录的代码谱系：[TeamFlos/phira-render](https://github.com/TeamFlos/phira-render)（Apache-2.0，官方渲染器）→ [2278535805/Phi-Recorder](https://github.com/2278535805/Phi-Recorder)（GPL-3.0，本目录的直接上游）。
+
+本仓库整体以 **GNU GPL-3.0** 发布，全文见根 [`LICENSE`](../LICENSE)；逐项出处、版权与致谢见 [`NOTICE`](../NOTICE)，第三方组件与依赖的许可证索引见 [`LICENSES/README.md`](../LICENSES/README.md)。`DPS/` 那一侧的谱系（phire ← TeamFlos/phira，以及 `DPS/dps/src/core/block_area/` 从 Phira-Pro 的逐字移植）见根 [`README.md`](../README.md) 的「谱系：fork 网络」一节。

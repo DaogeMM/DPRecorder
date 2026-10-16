@@ -24,17 +24,17 @@ import ChartHero from './components/ChartHero.vue';
 import { diffBadge, diffLvl, diffTier, pickActiveTask, refreshTasks, useTasks } from './tasks';
 import { finishPageLoad } from './pageLoad';
 
-// 任务列表与 700ms 轮询都在 `./tasks` 里，和全局悬浮条、窗口任务栏进度共用同一份数据
+// 任务列表与 700ms 轮询都在 `./tasks` 里，和全局渲染弹窗、窗口任务栏进度共用同一份数据
 const tasks = useTasks();
 
-// 首屏等第一次拉取完再渲染（原来是 `await updateList()`）
+// 首屏等第一次拉取完再渲染
 await refreshTasks();
 // 列表到位了才揭开内容区那层转圈（见 `./pageLoad`）
 finishPageLoad();
 
 /**
  * 显示顺序：最旧的在上、最新的在下。
- * 后端 `get_tasks` 给的是「最新在前」（`task.rs` 的 `tasks()` 末尾 `result.reverse()`；批量页与悬浮条
+ * 后端 `get_tasks` 给的是「最新在前」（`task.rs` 的 `tasks()` 末尾 `result.reverse()`；批量页与渲染弹窗
  * 都按「第 0 个＝刚提交的」用），所以这里只翻显示顺序，不动后端。
  */
 const orderedTasks = computed(() => [...(tasks.value ?? [])].reverse());
@@ -42,9 +42,9 @@ const orderedTasks = computed(() => [...(tasks.value ?? [])].reverse());
 /* ---------- 折叠行右侧的状态图标 ----------
    箭头左边放四枚状态图标（已渲染 / 正在渲染 / 暂停渲染 / 等待渲染），**每行只显示
    当前状态那一个** —— 加载与混音准备共用「正在渲染」那枚，失败与取消各自一个告警图标。
-   不配色，跟着行文字颜色走；曾经换成 `mdi-timer-*` 那一支，后来**收回原来的圆形系**。
-   「正在渲染」与「暂停渲染」这两枚后来又**互换**过一次：现在渲染中显示暂停图标、暂停中显示播放图标，
-   图标表示的是这一行还能做的动作，与展开区里那两个按钮的图标对得上。 */
+   不配色，跟着行文字颜色走，一律用圆形系。
+   「正在渲染」显示暂停图标、「暂停渲染」显示播放图标：图标表示的是这一行还能做的动作，
+   与展开区里那两个按钮的图标对得上。 */
 function statusIcon(type: TaskStatus['type']): string {
   switch (type) {
     case 'pending':
@@ -68,8 +68,8 @@ function statusIcon(type: TaskStatus['type']): string {
 }
 
 /* ============================ 批量选取 ============================
-   仿照批量页的底部栏给任务页做批量选取：勾选、批量暂停 / 取消 / 移除
-   （**框选做过又去掉了**）。勾选态不能像批量页那样挂在任务对象上：
+   仿照批量页的底部栏给任务页做批量选取：勾选、批量暂停 / 取消 / 移除。
+   勾选态不能像批量页那样挂在任务对象上：
    `tasks` 是后端直出、每 700ms 整体替换的（`./tasks`），挂上去会被下一轮轮询抹掉，所以另存一份 id 集合。 */
 const selectedIds = ref<Set<number>>(new Set());
 /** Shift 范围选择用的锚点：上一次点勾选框的那一行 */
@@ -233,9 +233,8 @@ watch(tasks, (list) => {
 }, { immediate: true });
 
 /* --------------------------- 长按拖动任务条调整渲染顺序 ---------------------------
-   渲染顺序就是从列表第一行往下走，所以拖动任务条就能调整顺序。先做成「左侧把手拖动」，
-   之后两次改口（「长按就能拖动」「去掉左侧拖动位点」）落到现在的交互：
-   ⇒ 现在的交互是：**按住任意一行约 350ms 就把它拿起来**，之后上下移动改顺序，松手落位。
+   渲染顺序就是从列表第一行往下走，所以拖动任务条就能调整顺序。
+   交互：**按住任意一行约 350ms 就把它拿起来**，之后上下移动改顺序，松手落位。
    只允许「等待渲染」（`pending`）的任务被拖；后端 `move_task` 改的就是渲染顺序
    （worker 取列表里第一个 Pending，见 `src-tauri/src/task.rs`）。
 
@@ -243,7 +242,7 @@ watch(tasks, (list) => {
    `src-tauri/tauri.conf.json:65` 是 `"dragDropEnabled": true`（谱面拖入导入靠它，见
    `RenderView.vue:157` / `BatchView.vue:203` 的 `listen('tauri://drag-drop', …)`），Windows 上
    WebView2 的 HTML5 拖放会被这套原生拖放接管，页面内的 `dragstart`/`drop` 压根不触发 ——
-   HTML5 拖放在这里就是不管用（换成 pointer 手势后即正常）。
+   HTML5 拖放在这里就是不管用。
    ------------------------------------------------------------------------------ */
 /** 按住多久算「拿起来」（毫秒） */
 const LONG_PRESS_MS = 350;
@@ -623,7 +622,7 @@ async function showOutputFolder() {
 
 /**
  * 把这个任务重新载入渲染页（沿用它的谱面与配置）。
- * 原来是横幅曲绘图上那层悬停图标的点击行为，现在挂在 Hero 的悬停层上。
+ * 入口是 Hero（曲绘图）上的悬停层。
  */
 function openInRender(task: Task) {
   router.push({
@@ -640,11 +639,11 @@ function openInRender(task: Task) {
    「移除」= 把任务从列表里摘掉（任务条上那个垃圾桶按钮与底部栏的「移除」共用这个弹窗）。
    规律与「取消」一致，但多了一层：
    1. 还在渲染的任务**先取消再移除** —— 只从列表里摘掉的话，worker 手里那个任务会继续渲染，
-      变成一条看不见、也停不掉的任务（报告的「批量移除后还在渲染」）；
+      变成一条看不见、也停不掉的任务；
    2. 磁盘上可能已经有渲染出来的文件，所以先问一句要不要连文件一起移除。
    中间那句提示只在选中的任务里真有在跑的（`RUNNING_STATES`）时才出现。 */
 const removeDialog = ref(false);
-/** 这次要移除的任务 id（单条时只有一个；原来是单个 `removeTaskId`，批量移除也要问，就改成列表了） */
+/** 这次要移除的任务 id（单条时只有一个，批量移除是多个） */
 const removeIds = ref<number[]>([]);
 /** 选中的任务里有没有还在跑的（决定弹窗里那句中不出现） */
 const removeRunning = computed(() =>
@@ -703,7 +702,7 @@ function coverUrl(task: Task) {
     <div v-if="!tasks || !tasks.length" class="tasks-empty">
       <p class="tasks-empty__title" v-t="'empty'"></p>
     </div>
-    <!-- 普通滚动列表（**放弃 `v-virtual-scroll`，换成普通滚动列表**）：
+    <!-- 普通滚动列表（**不用 `v-virtual-scroll`**）：
          拖动排序要按每行的真实位置算落点，`ref="listEl"` 就是给它用的。 -->
     <div
       v-else
@@ -886,9 +885,8 @@ function coverUrl(task: Task) {
       </template>
     </div>
 
-    <!-- 拖到窗口外松手＝移除这条任务。提示效果是「类似于打开了一个窗口，
-         然后中间显示『松开移除此任务』」，且不需要矩形，只要一个暗淡效果和文字，文字加括号
-         ⇒ 只有全屏压暗 + 正中间一行带括号的文字；fixed 定位，不挤动下面的操作栏 -->
+    <!-- 拖到窗口外松手＝移除这条任务。提示只有全屏压暗 + 正中间一行带括号的文字；
+         fixed 定位，不挤动下面的操作栏 -->
     <div v-if="dragOutside" class="tasks-drop-hint">{{ t('drop-to-remove') }}</div>
 
     <!-- 底部批量操作栏：照批量页 `.batch-view__actions` 的样式（仿照批量的底部栏）。
@@ -993,7 +991,7 @@ function coverUrl(task: Task) {
   color: var(--phi-label-secondary);
 }
 
-/* 普通滚动列表（放弃虚拟滚动）：自己滚，撑满剩余高度 */
+/* 普通滚动列表（不用虚拟滚动）：自己滚，撑满剩余高度 */
 .tasks-list {
   position: relative;
   flex: 1 1 auto;
@@ -1001,7 +999,7 @@ function coverUrl(task: Task) {
   overflow-y: auto;
 }
 
-/* 长按拖动期间：别顺手把曲名文字选中（改成整行长按拖动） */
+/* 长按拖动期间：别顺手把曲名文字选中 */
 .tasks-list--dragging {
   user-select: none;
 }
@@ -1104,7 +1102,7 @@ function coverUrl(task: Task) {
   --task-row-h: 58px;
 }
 
-/* 勾选框：**默认不显示**（一度改成「常显示」，又改回默认不显示），
+/* 勾选框：**默认不显示**，
    悬停该行 / 已勾选 / 键盘聚焦时才淡入（见下面那条 hover 规则）。
    绝对定位放进列表左侧那段留白，不占任务条的宽度 ⇒ 任务条保持 95% 居中。
    垂直居中：`top` 落在折叠行中线上，再用 `translateY(-50%)` 把自己的中心贴上去。 */
@@ -1159,9 +1157,8 @@ function coverUrl(task: Task) {
   opacity: 0.2;
 }
 
-/* 「（松开移除此任务）」提示（类似于打开了一个窗口，中间显示『松开移除此任务』，
-   且不需要矩形，只要一个暗淡效果和文字，文字加括号）：
-   整屏压暗 + 正中一行文字；`pointer-events: none` 所以不挡拖动指针事件，也不参与布局 */
+/* 「（松开移除此任务）」提示：整屏压暗 + 正中一行文字；
+   `pointer-events: none` 所以不挡拖动指针事件，也不参与布局 */
 .tasks-drop-hint {
   position: fixed;
   inset: 0;
@@ -1201,7 +1198,7 @@ function coverUrl(task: Task) {
   color: var(--phi-label-primary);
 }
 
-/* 难度徽章：与 ChartHero / 底部悬浮条那枚「灰底白字、无圆角」一致 */
+/* 难度徽章：与 ChartHero / 渲染弹窗那枚「灰底白字、无圆角」一致 */
 .task-row__diff {
   display: inline-flex;
   flex: none;
@@ -1237,19 +1234,19 @@ function coverUrl(task: Task) {
 }
 
 /* 状态图标（下拉箭头左边那一枚）：
-   不配色，跟着行文字颜色走；尺寸 = 原来的 18px × 1.15 ≈ 20.7px（图标放大 15%）。 */
+   不配色，跟着行文字颜色走；尺寸 = 18px × 1.15 ≈ 20.7px（图标放大 15%）。 */
 .task-row__status {
   flex: none;
 }
 
 /* 顶部横幅就是渲染页「谱面信息」那个 ChartHero.vue，这里只负责固定高度与上面那层悬停操作。
-   高度写死 200px 让每张卡片等高（2026-10-13 换成普通滚动列表后不再需要给虚拟滚动估算 item-height）。 */
+   高度写死 200px 让每张卡片等高（不用给虚拟滚动估算 item-height）。 */
 .task-hero {
   position: relative;
   /* 自成层叠上下文，并让悬停层（z-index: 2）盖在 Hero 内部内容之上。
      `ChartHero` 的 `.chart-hero__inner` 是 `position: relative; z-index: 1`，
      比 `z-index: auto` 的悬停层高一层 —— 不改的话点击全被那层透明内容吃掉，
-     `@click="openInRender(item)"` 根本不触发（就是「点重渲按钮无法跳转」那个毛病）。 */
+     `@click="openInRender(item)"` 根本不触发。 */
   z-index: 1;
 }
 

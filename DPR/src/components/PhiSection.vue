@@ -1,16 +1,13 @@
 <script setup lang="ts">
-// 渲染参数页的统一分区外壳（2026-10-10）。
+// 渲染参数页的统一分区外壳。
 //
-// 取代了原来的两种外壳：
-//   - SettingWindow.vue：圆角卡片 + 半透明底 + 一圈描边（「渲染项目」等 6 个分区用它）
-//   - StickyLabel.vue：一条粘性标题（「输出」等 5 个分区用它）
-// 现在全页只有这一种：**一条 0.5px 底线 + 可点击的标题行 + 右侧箭头**，点开才显示内容。
+// 全页只有这一种外壳：**一条 0.5px 底线 + 可点击的标题行 + 右侧箭头**，点开才显示内容。
 //
 // 折叠状态写进 localStorage（键 `phi.section.<id>`），下次打开保持原样。
 //
 // `id` 同时是 DOM 锚点：`App.vue` 的左栏导航靠 `document.getElementById(id)` 跳转
 // + `onAnyScroll()` 做滚动联动高亮，所以**不能改名**，见 App.vue 的 renderGroups / renderOrder。
-// 2026-10-11 起它上面还套了一层同级的 PhiGroup.vue（一级分组），这里是二级。
+// 它上面还套了一层同级的 PhiGroup.vue（一级分组），这里是二级。
 import { computed, onUnmounted, watch } from 'vue';
 import { useStorage } from '@vueuse/core';
 import { setSectionGate } from '../config/sectionGate';
@@ -30,9 +27,8 @@ const props = withDefaults(
     collapsible?: boolean;
     /** 纯界面的总开关：不绑任何配置，只是「勾上才显示这一栏的选项」，
      *  状态存 localStorage（键 `phi.gate.<id>`）。有配置语义的开关请用 `v-model:gate`。
-     *  ⚠️ 2026-10-11 起**暂时没有分区在用它** —— 原来唯一的调用方「多语言」已经改成三级菜单行
-     *  （`PhiSubMenu` 的 `v-model` + `ConfigView.vue` 里的 `multiLang` 存储）。留着这个 prop 是因为
-     *  以后要加「纯界面总开关」的二级分区还得用它。 */
+     *  ⚠️ 目前**没有分区在用它**（原来唯一的调用方「多语言」已改成三级菜单行，见 `PhiSubMenu` 的 `v-model`）。
+     *  留着这个 prop 是因为以后要加「纯界面总开关」的二级分区还得用它。 */
     gateUi?: boolean;
     /** 总开关的问号提示（已翻译）；不传则退回 `tip` */
     gateTip?: string;
@@ -42,12 +38,12 @@ const props = withDefaults(
 
 const open = useStorage<boolean>(`phi.section.${props.id}`, true);
 
-/** 二级分区自己的总开关（2026-10-11：部分二级菜单也加上勾选框）：
+/** 二级分区自己的总开关（部分二级菜单有勾选框）：
  *  - 有配置语义的用 `v-model:gate`（按键 = `renderNote`、噪域 = `renderBlockArea`、
  *    谱面进水 = `waterScreen`）—— 与「渲染项目」等处的同一个值联动，改哪边都一样；
- *  - 纯界面的用 `gate-ui`（原来只有「多语言」；它 2026-10-11 已改成三级菜单行，见上面 props 注释）。
+ *  - 纯界面的用 `gate-ui`（见上面 props 注释）。
  *  关掉时整块 body 收起（与三级菜单 PhiSubMenu 同款行为），箭头也一并变灰、点不动。 */
-/** ⚠️ 这里的 `{ default: undefined }` 不能省（2026-10-11 踩过）：
+/** ⚠️ 这里的 `{ default: undefined }` 不能省：
  *  `defineModel<boolean | undefined>()` 编译出来的 prop 是 `{ type: Boolean, skipCheck: true }`，
  *  **没有 default**；而 Vue 的 Boolean 转换会把「父组件没传这个 prop」直接变成 `false`
  *  （`@vue/runtime-core` 的 `resolvePropValue`：`if (isAbsent && !hasDefault) value = false`）
@@ -96,9 +92,8 @@ function toggle() {
         <span class="phi-section__title">{{ title }}</span>
       </slot>
       <template v-if="variant === 'row'">
-        <!-- 二级总开关（2026-10-11）。位置：**紧跟在标题右边**（2026-10-11：
-             勾选框放到二级菜单标题右边、留一点间隙、尺寸缩小 50%）——
-             原来它在 `v-spacer` 之后、贴着最右边的箭头；现在挪到标题后面，尺寸减半（`small`）。
+        <!-- 二级总开关。位置：**紧跟在标题右边**（留一点间隙，尺寸减半 `small`）——
+             不是 `v-spacer` 之后贴着最右边的箭头。
              包一层 `@click.stop`：点开关不该顺手把分区折叠了（header 自己带 @click）。 -->
         <span v-if="gated" class="phi-section__gate" @click.stop>
           <CfgSwitch bare small :model-value="gateOn" :tip="gateTip || tip" @update:model-value="setGate" />
@@ -118,10 +113,9 @@ function toggle() {
 </template>
 
 <style scoped>
-/* 二级分区之间用**顶部**的 0.5px 细线分隔（2026-10-11：先去掉底部的线，再改成顶部线）——
+/* 二级分区之间用**顶部**的 0.5px 细线分隔 ——
    第一条不画（它紧跟在 PhiGroup 的分组标题下面，再画一条就成了双线）。
-   左侧另有一条导引线：**从标题下面一点开始，画到这个分区的最底部**（先画到「渲染到底」，
-   再纠正成「从二级标题下面一点开始，到这个二级框结束」）。
+   左侧另有一条导引线：**从二级标题下面一点开始，画到这个二级框结束**。
    它和标题前那根 3px 短竖条在同一条中心线上。 */
 .phi-section {
   position: relative;
@@ -155,7 +149,6 @@ function toggle() {
   display: flex;
   align-items: center;
   gap: var(--phi-space-2);
-  /* 行高与字号 2026-10-11 上调：38px → 44px、0.92rem → 1rem。 */
   min-height: 44px;
   padding: 0 var(--phi-space-2);
   cursor: pointer;
@@ -228,11 +221,9 @@ function toggle() {
   padding: 0;
   min-height: 0;
   overflow: hidden;
-  /* 2026-10-11 谱面信息曾去掉圆角 ⇒ 原来是 var(--phi-radius-lg)；
-     当天又恢复圆角、只圆上面两个角：
-     这块 head 就是整张卡的上半部分（曲绘横幅），下半部分的谱面信息表单接着往下排，
+  /* 只圆上面两个角：这块 head 就是整张卡的上半部分（曲绘横幅），下半部分的谱面信息表单接着往下排，
      下面两个角保持方角，整块才还像一张卡。
-     曲绘缩略图（ChartHero.vue 的 `.chart-hero__cover`）仍是 0，没动。 */
+     曲绘缩略图（ChartHero.vue 的 `.chart-hero__cover`）的圆角是 0。 */
   border-radius: var(--phi-radius-sm) var(--phi-radius-sm) 0 0;
 }
 .phi-section--hero .phi-section__head:hover {
@@ -244,9 +235,8 @@ function toggle() {
   top: var(--phi-space-3);
   z-index: 2;
   color: var(--phi-label-secondary);
-  /* 2026-10-11 去掉右上角箭头的背景 ⇒ 原来这里还有
-     `background: var(--phi-bg-overlay)` 与 `border-radius: var(--phi-radius-sm)`
-     （箭头底下一块半透明方块），现在只剩箭头本身，直接叠在曲绘上。 */
+  /* 右上角箭头直接叠在曲绘上：没有背景、没有圆角
+     （加了 `background: var(--phi-bg-overlay)` 与 `border-radius` 会在箭头底下出现一块半透明方块）。 */
 }
 .phi-section--hero .phi-section__body {
   padding: var(--phi-space-3) var(--phi-space-2) var(--phi-space-4);

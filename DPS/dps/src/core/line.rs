@@ -221,8 +221,8 @@ impl JudgeLine {
                 // 只要按键的坐标还画在屏幕里就一直算溺水时间（由 `Note::update_water`
                 // 自己判断）—— 既不限制判定过去多久，也**不跳过未来音符**：表演用的 Drag
                 // 常常很晚才被判定（本谱 line9 上就有一条 2:32 的），却从 0:12 起就画在水里；
-                // 它一旦提前离开 `update_order`（例如 object 提前 dead），以前那条
-                // `res.time < note.time - 60.` 的下界会让它永远拿不到扣血。
+                // 它一旦提前离开 `update_order`（例如 object 提前 dead），时间下界
+                //（如 `res.time < note.time - 60.`）会让它永远拿不到扣血。
                 crate::core::water::update(note, res, &tr, &mut ctrl_obj, line_height);
             }
         }

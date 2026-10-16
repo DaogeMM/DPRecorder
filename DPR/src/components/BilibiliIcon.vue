@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // B 站「小电视」图标（simple-icons 的 Bilibili 标记）。
 //
-// 2026-10-11：MDI 里**没有** bilibili 图标
+// MDI 里**没有** bilibili 图标
 // （`@mdi/font/css/materialdesignicons.css` 里 `.mdi-bilibili::before` 一条都没有，
 // 注意该文件用的是双冒号，用单冒号 grep 会全部假阴性），所以把这枚 simple-icons
 // 的单 path SVG 直接内联成组件，交给 `v-icon` / `prepend-icon` 用：

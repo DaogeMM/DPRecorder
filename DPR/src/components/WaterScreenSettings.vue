@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「屏幕进水」设置面板（原来内联在 ConfigView.vue 的「高级 → 更多」区块里）。
+// 「屏幕进水」设置面板。
 //
 // 整块抽到这里方便单独维护：面板的 12 个值由父组件 ConfigView 的 ref 通过 v-model 提供，
 // 读写与保存仍走 ConfigView 的 applyConfig / buildConfig。
@@ -10,12 +10,10 @@ const { t } = useI18n();
 import { RULES } from '../common';
 // 这个**必须显式 import**：`<script setup>` 里没注册的 PascalCase 标签不会被当成组件，
 // Vue 会按未知的原生标签渲染 —— 那样 `.cfg-item` / `.cfg-item__label` / `.cfg-item__control`
-// 三层壳都没了，整块只剩一排光秃秃的输入框（2026-10-11「谱面进水只剩输入框」的根因）。
-// （原先这里还要 import CfgSwitch，因为「屏幕进水」那个开关画在本组件里；
-//   2026-10-11 那个开关挪到了分区标题行 `PhiSection` 的 `v-model:gate` 上，本组件只剩 CfgField。）
+// 三层壳都没了，整块只剩一排光秃秃的输入框。
+// （「屏幕进水」那个开关画在分区标题行 `PhiSection` 的 `v-model:gate` 上，所以本组件只需要 CfgField。）
 import CfgField from './CfgField.vue';
-// 水的透明度 / 音效音量这两个 0~1 的键在 2026-10-11 一度改成拉动条，随后又
-// 全部改回文本框 ⇒ 复原成数值输入框，所以 `CfgSlider` 已不再 import。
+// 水的透明度 / 音效音量用数值输入框（`CfgSlider` 已不再使用，所以不 import）。
 
 const waterScreen = defineModel<boolean>('waterScreen', { required: true });
 const waterOpacity = defineModel<number>('waterOpacity', { required: true });
@@ -33,9 +31,9 @@ const waterSfxMax = defineModel<string>('waterSfxMax', { required: true });
 
 <template>
   <div class="cfg-grid">
-    <!-- 「屏幕进水」总开关 2026-10-11 挪到二级分区标题行（`PhiSection` 的 `v-model:gate`），
-         关掉时整栏收起，所以这里不再重复画一个。`waterScreen` 仍由父组件 v-model 传进来，
-         下面 11 个输入框的 `:disabled="!waterScreen"` 保持原样（栏都收起来了，它们不会露脸）。 -->
+    <!-- 「屏幕进水」总开关在二级分区标题行（`PhiSection` 的 `v-model:gate`），
+         关掉时整栏收起，所以这里不重复画一个。`waterScreen` 仍由父组件 v-model 传进来，
+         下面 11 个输入框的 `:disabled="!waterScreen"` 保留（栏都收起来了，它们不会露脸）。 -->
     <CfgField :label="t('water-opacity')"><v-text-field density="compact" hide-details="auto" :disabled="!waterScreen" :title="t('water-opacity-tip')" v-model="waterOpacity" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
     <CfgField :label="t('water-flow-speed')"><v-text-field density="compact" hide-details="auto" :disabled="!waterScreen" :title="t('water-flow-speed-tip')" v-model="waterFlowSpeed" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
     <CfgField :label="t('water-cell-scale')"><v-text-field density="compact" hide-details="auto" :disabled="!waterScreen" :title="t('water-cell-scale-tip')" v-model="waterCellScale" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>

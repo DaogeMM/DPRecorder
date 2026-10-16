@@ -296,7 +296,7 @@ impl Note {
     /// `min_dt` 是允许的最早时间差（相对判定时刻）：普通按键传 0.，判定后就不再画；
     /// Hold 传 f64::NEG_INFINITY，长条在按住期间一直显示，直到 hold 结束。
     fn judge_range_alpha(&self, res: &Resource, min_dt: f64) -> Option<f32> {
-        // 总开关。以前这里没有判断，判定范围是「始终启用」的，界面上的开关形同虚设。
+        // 总开关：少了这个判断，判定范围会「始终启用」，界面上的开关形同虚设。
         if !res.config.render_judge_range {
             return None;
         }
@@ -479,8 +479,8 @@ impl Note {
 
         // 「待判按键」：记下**判定时刻最靠前**的那个还没判定的按键（每个按键顺手收敛一次最小值，
         // 比在 `Chart` 里再遍历一遍全谱便宜，也早于本函数所有提前返回，不会漏掉最近的那个）。
-        // 真正染色的是 `Game::render` 里噪域之后那一趟 —— 于是染色压在噪域之上
-        //（需求：「优先级比噪域高」），而且那一趟是让按键用**自己的**绘制代码再画一遍，
+        // 真正染色的是 `Game::render` 里噪域之后那一趟 —— 于是染色压在噪域之上；
+        // 而且那一趟是让按键用**自己的**绘制代码再画一遍，
         // 旋转 / 移动时间 / 长条头尾 / 双押贴图全都天然一致。
         if !tint && res.config.render_pending_note && !self.fake && self.time >= res.time && self.time < res.pending_note_time.get() {
             res.pending_note_time.set(self.time);

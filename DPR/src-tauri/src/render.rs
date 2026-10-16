@@ -145,8 +145,8 @@ pub struct RenderConfig {
     pub background_dim: f32,
 
     // ---------------------- 谱面侧渲染参数 ----------------------
-    // 这些键与 `dps::info::ChartInfo` 同名，以前只存在于谱面信息里（改一次就随谱面走、存不下来）。
-    // 现在它们是配置项：`ConfigView` 的 `buildConfig()` 会把它们发出去，`RenderView` 的
+    // 这些键与 `dps::info::ChartInfo` 同名；谱面信息自身的值存不下来（改一次就随谱面走），
+    // 所以在这里单独存一份。现在它们是配置项：`ConfigView` 的 `buildConfig()` 会把它们发出去，`RenderView` 的
     // `buildParams()` 再把它们并进发给后端的 `info`（**配置值优先** ⇒ 导入谱面不再覆盖它们）。
     // 因此这里只负责**存下来**（预设 / config.toml / 渲染页工作配置），Rust 侧不再做覆盖。
     /// 「强制宽高比」：按 `aspect_ratio` 强制画面比例；关闭时只保证画面不超过该比例
@@ -456,8 +456,8 @@ impl Default for RenderConfig {
             render_bg: true,
             render_bg_dim: true,
             background_dim: 0.1,
-            // 谱面侧渲染参数：默认值与前端 DEFAULT_RENDER_CONFIG 一致（原来是 RenderView 里
-            // CHART_ROW_DEFAULTS 的那份）。注意 dps `ChartInfo::default()` 的值与这里不同
+            // 谱面侧渲染参数：默认值与前端 DEFAULT_RENDER_CONFIG 一致。注意 dps
+            // `ChartInfo::default()` 的值与这里不同
             // （force_aspect_ratio / fold_animation 默认 false、negative_length_hold 默认 true），
             // 但配置值优先，所以界面与出片以这里的值为准。
             force_aspect_ratio: true,
@@ -554,7 +554,7 @@ pub struct RenderParams {
 /// 里紧跟着读出配置就调，而渲染进程的上下文要到后面 `get_internal_gl()` 才建。
 /// 值必须是字面量 `"1"`；只设 `NvOptimusEnablement` 不够，A 卡要另一个名字。
 /// 没法验证是否真的切到独显（驱动不告诉我们），所以这里只设变量、不报错，
-/// 真正的选卡结果由显卡驱动决定；万一没生效也只是回到原来的核显，不会坏画面。
+/// 真正的选卡结果由显卡驱动决定；万一没生效也只是回到核显，不会坏画面。
 #[cfg(target_os = "windows")]
 fn prefer_high_performance_gpu() {
     use std::os::windows::ffi::OsStrExt;
@@ -638,7 +638,7 @@ fn cmd_hidden(program: impl AsRef<OsStr>) -> Command {
 
 /// 把「FFmpeg 路径」那格的值换算成**可执行文件**。
 ///
-/// 那格现在填的是 **ffmpeg 所在的目录**（2026-10-13 需求：不写 exe，写 exe 所在文件夹目录），
+/// 那格填的是 **ffmpeg 所在的目录**（不是 exe 本身），
 /// 而渲染管线（`cmd_hidden`）与探测要的都是可执行文件本身，所以读这份配置的地方都先过这一道：
 /// **给目录就补上 `ffmpeg.exe`（非 Windows 是 `ffmpeg`）**，给文件就原样用 ——
 /// 老配置里存的是 exe 完整路径，照旧能跑。
@@ -944,8 +944,8 @@ pub async fn generate_resource(
 /// 把音频线性重采样到 `target_rate`（保持时长与音高；`Frame` 自带 `interpolate`）。
 ///
 /// 资源包与曲子里的音频不一定是 48kHz（自制材质包常见 44.1kHz），而渲染管线固定按 48000
-/// 合成 ⇒ 以前这里对 `ending_music` / `sfx_*` 直接报「匹配采样率失败」让整个渲染失败。
-/// 现在改为就地重采样、只在日志里留一条 `warn`（2026-10-12 起这样，不再让渲染失败）。
+/// 合成 ⇒ 这里统一就地重采样，采样率对不上时只留一条 `warn`，不让整个渲染
+/// 因为这一条音频失败。
 fn resample_to(clip: &AudioClip, target_rate: u32, name: &str) -> AudioClip {
     let rate = clip.sample_rate();
     if rate == target_rate || rate == 0 {
@@ -1791,7 +1791,7 @@ pub async fn main(cmd: bool) -> Result<()> {
             // 高性能模式（`READBACK_FLIP`）：先用 `glBlitFramebuffer` 在显存里上下翻一遍再读回，
             // 省掉 ffmpeg 那一趟 CPU 的 `-vf vflip`。
             //
-            // 这里**不能**用「`glReadPixels` 传负高度」那套（最早就是那么写的，结果整段视频全黑）：
+            // 这里**不能**用「`glReadPixels` 传负高度」那套（那样整段视频会全黑）：
             // 规格里 ReadPixels 的 width/height 必须非负，负高度只会得到 `GL_INVALID_VALUE`，
             // PBO 里留着全零 ⇒ 黑帧。`glBlitFramebuffer` 的源/目标矩形则**允许** y0 > y1，
             // 所以镜像交给它做（目标矩形 y 从 vh 到 0 就是上下翻转），全程在 GPU 上。

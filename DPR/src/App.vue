@@ -52,10 +52,9 @@ import { pageReady } from './pageLoad';
 const appWindow = getCurrentWindow();
 const theme = useTheme();
 
-// 以前这里每次启动都 `localStorage.removeItem('BatchView.ChartList')` /
-// `removeItem('BatchView.Preset')`（从最初的提交就在），于是批量页的谱面列表、所选预设
-// 连同弹窗里改过的谱面信息一关程序就没了 —— 现在按需求让它们跟其它界面记忆一样留下来
-// （存储本身是 `BatchView.vue` 里的 `useStorage`，这里不再主动删）。
+// 批量页的谱面列表、所选预设，连同弹窗里改过的谱面信息都要作为界面记忆留下来
+// （存储本身是 `BatchView.vue` 里的 `useStorage`），所以这里不能主动 removeItem ——
+// 启动时删掉它们会让这些内容一关程序就没了。
 
 let count = 0;
 let timer: number | null = null;
@@ -116,12 +115,10 @@ const primaryNav = [
 const settingsNav = [{ name: 'settings', icon: 'mdi-cog' }];
 
 /*
- * 渲染页左栏现在是两级：
+ * 渲染页左栏分两级：
  *   一级 = renderGroups 里的组，对应 ConfigView 里的 <PhiGroup>，DOM id 就是 grp-xxx；
  *   二级 = 组里的叶子，对应 <PhiSection>，DOM id 是 sec-xxx。
  * 「谱面信息」（页面最上面的曲绘横幅）不属于任何组，单独排在最前面。
- * 「预设配置」原本也是一级分组，后来收进「渲染」组、成为该组第一条
- * （DOM id 相应地从 grp-preset 改成 sec-preset，ConfigView 模板同步改了）。
  * renderOrder 是「按页面顺序拍平」的结果，滚动联动高亮按它遍历 ——
  * 顺序必须与 ConfigView 模板里各块先后一致（取「最后一个 top ≤ 判定线」的那一项）。
  */
@@ -142,17 +139,16 @@ const renderGroups: RenderGroup[] = [
     label: 'title.render-group',
     icon: 'mdi-export-variant',
     children: [
-      // 「预设配置」原是一级分组，后收进本组、放最上面（顺序 = 页面顺序）
+      // 「预设配置」是本组第一条（顺序 = 页面顺序）
       { id: 'sec-preset', label: 'presets', icon: 'mdi-bookmark-outline' },
-      // 资源包排在预设配置下面：从原来第 4 条提到第 2 条
+      // 资源包排在预设配置下面（顺序 = 页面顺序）
       { id: 'sec-respack', label: 'respack', icon: 'mdi-package-variant' },
-      // 「画面参数」与「渲染参数」整合为「参数」：
-      // 原来的 sec-output（画面参数）/ sec-performance（渲染参数）并成这一条，两个旧 id 都不再存在
+      // 「画面参数」与「渲染参数」整合成这一条「参数」，
+      // 没有 sec-output / sec-performance 这两个 id
       { id: 'sec-params', label: 'title.params', icon: 'mdi-tune-variant' },
       { id: 'sec-audio', label: 'title.audio', icon: 'mdi-music-note' },
       { id: 'sec-player', label: 'title.player', icon: 'mdi-account' },
-      // 多语言放进渲染-更多、做成三级菜单：原「更多」一级组解散，
-      // 多语言成了本组末尾这个二级分区「更多」里的三级菜单行
+      // 多语言在渲染-更多里，做成三级菜单行（本组末尾这个二级分区「更多」里）
       { id: 'sec-more-render', label: 'more', icon: 'mdi-dots-horizontal' },
     ],
   },
@@ -168,8 +164,7 @@ const renderGroups: RenderGroup[] = [
       { id: 'sec-chart-line', label: 'title.judge-line', icon: 'mdi-minus' },
       // 噪域排在按键下面：顺序 = 页面顺序，必须与 ConfigView 模板一致
       { id: 'sec-block-area', label: 'title.block-area', icon: 'mdi-blur' },
-      // 「判定」已并入下面的「更多」：判定分区不再单列
-      // 同上：谱面进水成了本组末尾「更多」分区里的三级菜单行
+      // 「判定」与「谱面进水」都在本组末尾的「更多」分区里，不单列
       { id: 'sec-more-chart', label: 'more', icon: 'mdi-dots-horizontal' },
     ],
   },
@@ -285,8 +280,8 @@ function appMaximize() {
   appWindow.toggleMaximize();
 }
 
-// 主题只有一套：DeepDark（深色）。删掉了 Light / Dark / LightBlue
-// 以及设置页里的主题选项，所以这里不再有切换逻辑（原来的 F2 轮换与「跟随系统主题」一并删除）。
+// 主题只有一套：DeepDark（深色），设置页里也没有主题选项，所以这里没有切换逻辑 ——
+// Light / Dark / LightBlue、F2 轮换与「跟随系统主题」都不存在。
 theme.global.name.value = 'DeepDark';
 // 同步设计令牌层：tokens.css 按 body[data-phi-theme] 切换
 applyPhiTheme();
@@ -370,11 +365,11 @@ onMounted(async () => {
   document.addEventListener('scroll', onAnyScroll, true);
 });
 
-/** 底部悬浮条（`components/TaskStrip.vue`）与窗口任务栏进度都盯着这一份全局任务列表 */
+/** 渲染弹窗（`components/TaskStrip.vue`）与窗口任务栏进度都盯着这一份全局任务列表 */
 const tasks = useTasks();
 
-// 任务栏进度：和悬浮条同源。列表每 700ms 更新一次就跟着更新
-// （原来自己另开了一个 1400ms 的 `get_tasks` 轮询，这里并成一份）。
+// 任务栏进度：和渲染弹窗同源 —— 共用这一份全局任务列表，列表每 700ms 更新一次就跟着更新，
+// 不再另开 `get_tasks` 轮询。
 watch(tasks, async () => {
   try {
     const activeTask = tasks.value?.find(t => ['loading', 'mixing', 'mixing_sfx', 'rendering'].includes(t.status.type));
@@ -538,14 +533,14 @@ onUnmounted(() => {
         </router-view>
 
         <!-- 页面初始化遮罩：由 `./pageLoad` 的 `pageReady` 控制，挡住「默认值 → 实际值」的那一跳。
-             盖在内容区上、但不盖住下面的悬浮条（它比这一层高）。 -->
+             盖在内容区上、但不盖住下面的渲染弹窗（它比这一层高）。 -->
         <Transition name="phi-veil">
           <div v-if="!pageReady" class="phi-page-loading">
             <v-progress-circular indeterminate size="large" />
           </div>
         </Transition>
       </main>
-        <!-- 底部悬浮条：当前正在渲染的谱面（全局，见 components/TaskStrip.vue） -->
+        <!-- 渲染弹窗：当前正在渲染的谱面（全局，见 components/TaskStrip.vue） -->
         <TaskStrip />
     </div>
     <v-dialog v-model="ffmpegDialog" width="auto" min-width="400px" class="log-card-bg">
@@ -777,7 +772,7 @@ html {
 }
 
 /* 渲染页的分区列表：与上面的一级导航之间用一条细分隔线分开，
-   不再用分组标题（DSH 侧栏本身就是扁平列表） */
+   不用分组标题（DSH 侧栏本身就是扁平列表） */
 .phi-nav__section--sub {
   padding-top: var(--phi-space-3);
   margin-top: var(--phi-space-1);
@@ -909,7 +904,7 @@ html {
   border-radius: var(--phi-content-radius) 0 0 0;
 }
 
-/* 内容区底部不再给悬浮条让位（取消全局悬浮体强制空出一段空间的效果）：
+/* 内容区底部不给渲染弹窗让位（避免全局给它强制空出一段空间）：
    `components/TaskStrip.vue` 直接 absolute 浮在内容之上，有任务时也不再撑出 padding-bottom，
    所以页面内容不会因为有无任务而上下跳。`.phi-center` 保留 `position: relative` 当它的定位父级。 */
 
@@ -1004,7 +999,7 @@ html {
   opacity: 1 !important;
 }
 
-/* ===== 全局弹窗基底（2026-10-13：所有弹窗统一成「齿轮配置窗体」那套外观）=====
+/* ===== 全局弹窗基底（所有弹窗统一成「齿轮配置窗体」那套外观）=====
    这两条是应用里每个 `v-dialog` 卡片共用的底：`.log-card-window`（日志/详情类弹窗）、
    `.log-card-only-window`（确认框与配置类弹窗）—— 两个类只出现在 `v-dialog` 里，所以改这里
    就等于全局改。取值与 `design/config.css:411-445` 的 `.phi-config-dialog` 那套共用皮肤一致：
@@ -1021,7 +1016,7 @@ html {
 }
 
 /* 弹窗标题行：与齿轮弹窗的 `.phi-config-dialog__title` 一模一样（居中、1.5rem、不加粗、纯白）。
-   弹窗里的标题原本是 Vuetify 的 `v-card-title`（字号/字重/左对齐都是它自带的），这里归一。
+   标题元素是 Vuetify 的 `v-card-title`（字号 / 字重 / 左对齐都是它自带的），这里统一覆盖。
    只用 `>` 命中弹窗卡片的直接子标题 —— RPEView 列表卡片里那个 `v-card-title` 不受影响。 */
 .log-card-window > .v-card-title,
 .log-card-only-window > .v-card-title {

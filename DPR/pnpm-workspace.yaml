@@ -3,5 +3,12 @@
 # realpath 解析不了，导致 `node_modules/vite` 里找不到 rollup 等依赖而无法构建。
 # 改用 hoisted（扁平、真实目录、无 junction）绕开该问题。
 nodeLinker: hoisted
+# confirmModulesPurge: false —— pnpm 会把绝对路径写进 node_modules\.modules.yaml
+# （virtualStoreDir）和 node_modules\.pnpm-workspace-state-v1.json（projects），所以整个
+# DPR 目录换个位置之后，它就会判定现有 node_modules 作废、要先删掉整个目录再装。
+# `cargo tauri dev` → `pnpm dev` 跑在无 TTY 的子进程里，于是直接失败：
+#   [ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY] Aborted removal of modules directory due to no TTY
+# 关掉这个交互确认，让它照做即可（重装走本机 store，离线几秒就完）。
+confirmModulesPurge: false
 allowBuilds:
   esbuild: false

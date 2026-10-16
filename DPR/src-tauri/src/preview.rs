@@ -63,7 +63,7 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
 
     set_pc_assets_folder(ASSET_PATH.get().unwrap().to_str().unwrap());
     let mut prpr_config: Config = config.to_config();
-    // 普通UI 默认用 assets/respack/new（旧版本UI 的 assets/respack/old 分支已移除）
+    // 资源包：跟着 config 里选的那份走，没设置就用 assets/respack/new
     let respack_root = ASSET_PATH.get().unwrap().join("respack");
     prpr_config.res_pack_path = Some(
         config
@@ -75,8 +75,8 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
         prpr_config.mods |= Mods::AUTOPLAY;
     }
     prpr_config.volume_bgm = prpr_config.volume_music;
-    // 是否全屏由「设置 → 预览全屏」决定（2026-10-09 曾被写死成 true，2026-10-12 起搬回设置里）。
-    // 读不到配置时按 true 兜底，也就是和以前强制全屏的行为一致。
+    // 是否全屏由「设置 → 预览全屏」决定。
+    // 读不到配置时按 true 兜底。
     let preview_fullscreen = crate::common::read_config()
         .map(|config| config.preview_fullscreen)
         .unwrap_or(true);

@@ -1,15 +1,13 @@
 <script setup lang="ts">
 /**
- * 底部悬浮条：当前正在渲染的谱面。
+ * 渲染弹窗：当前正在渲染的谱面。
  *
- * 长条型，只显示曲绘 / 曲名 / 难度 / 进度条，之后再加上圆角、第一行曲名与难度、第二行进度条。
- * 2026-10-12 起改成在应用里全局显示 ⇒ 从 `TasksView.vue` 搬出来挂到
- * `App.vue` 的 `.phi-center` 里，任何页面都能看到；列表与轮询走 `../tasks.ts`。
+ * 长条型，显示曲绘 / 曲名 / 难度 / 进度条：圆角、第一行曲名与难度，第二行进度条。
+ * 它在应用里全局显示：挂在 `App.vue` 的 `.phi-center` 里，任何页面都能看到；
+ * 列表与轮询走 `../tasks.ts`。
  *
- * 2026-10-16：先做过「默认折叠成右下角一小块、点一下展开」，之后折叠态整块删掉
- * ⇒ 只留这条长条，一直显示展开的，宽度 40% → 20%。
- * 2026-10-13：宽度挪进设置页 ⇒ 走 localStorage
- * `TaskStrip.width`，设置页那根滑杆说了算，这里的内联 `width` 直接吃这个值。
+ * 只有这一条长条，一直显示展开态（没有折叠态）。
+ * 宽度走 localStorage `TaskStrip.width`，设置页那根滑杆说了算，这里的内联 `width` 直接吃这个值。
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
@@ -64,7 +62,7 @@ const activeDiffBadge = computed(() => diffBadge(activeTask.value?.info));
 /**
  * 上下左右拖动。
  * 存的是「距框架底边 / 右边的距离」而不是屏幕坐标：窗口尺寸变了位置依然合理。
- * 内容区不再给悬浮体留空（去掉全局悬浮体强制空出一段空间来的效果），
+ * 内容区不给渲染弹窗留空，
  * 所以它压住渲染页 / 批量页底部操作条时，把这里拖上去即可。
  *
  * 范围限制：两个方向都跟手拖，但整条必须留在右侧内容区
@@ -85,7 +83,7 @@ const MAX_WIDTH = 100;
 const DEFAULT_WIDTH = 15; // 默认就是最窄那格（设置页那根滑杆的最小值也是 15）
 
 /**
- * 悬浮体宽度（百分比），放到设置里调。
+ * 渲染弹窗宽度（百分比），放到设置里调。
  *
  * 和设置页共用同一个 localStorage 键 `TaskStrip.width`（`useStorage` 同一个页面里
  * 多个实例之间会同步），所以设置页一拉滑杆这里立刻跟着变；
@@ -115,7 +113,7 @@ const widgetEl = ref<HTMLElement | null>(null);
 const bottomOffset = ref(readBottom());
 const rightOffset = ref(readRight());
 
-/** 悬浮条的定位父级：`App.vue` 的 `.phi-frame`（`position: relative`），偏移量以它为准 */
+/** 渲染弹窗的定位父级：`App.vue` 的 `.phi-frame`（`position: relative`），偏移量以它为准 */
 function frameEl(): HTMLElement | null {
   return widgetEl.value?.closest<HTMLElement>('.phi-frame') ?? null;
 }
@@ -123,7 +121,7 @@ function frameEl(): HTMLElement | null {
 /**
  * 右侧内容区：渲染 / 批量 / 任务页所在的 `<main class="phi-center">`。
  *
- * 注意它是悬浮条的**兄弟**不是父级（`App.vue` 里 `<TaskStrip />` 紧跟在 `</main>` 后面），
+ * 注意它是渲染弹窗的**兄弟**不是父级（`App.vue` 里 `<TaskStrip />` 紧跟在 `</main>` 后面），
  * 而且 `.task-strip` 是 `position: absolute`、定位父级是 `.phi-frame` ——
  * `.phi-center` 的 `overflow: hidden` 管不到它，所以「拖出内容区」只能靠这里算边界拦。
  */
@@ -202,7 +200,7 @@ function onDragEnd() {
   localStorage.setItem(H_DRAG_STORAGE_KEY, String(Math.round(rightOffset.value)));
 }
 
-// 内容区尺寸变了（窗口缩放、左侧栏拖动调宽）、或者悬浮条刚出现（宽度要靠它自己量）时，
+// 内容区尺寸变了（窗口缩放、左侧栏拖动调宽）、或者渲染弹窗刚出现（宽度要靠它自己量）时，
 // 都把位置夹回内容区。用 ResizeObserver 盯着 `.phi-frame` / `.phi-center` 本身，
 // 比只听 window.resize 准。
 let resizeObserver: ResizeObserver | null = null;
@@ -229,9 +227,9 @@ watch([bottomOffset, rightOffset], () => clampToFrame());
 </script>
 
 <template>
-  <!-- 空闲时整个悬浮体都不渲染 -->
+  <!-- 空闲时整个渲染弹窗都不渲染 -->
   <transition name="fade-transition">
-    <!-- 长条型悬浮体（一直显示展开的，宽度 20%），
+    <!-- 长条型渲染弹窗（一直显示展开的，宽度 20%），
          上下左右都能拖。 -->
     <div
       v-if="activeTask"
@@ -277,13 +275,12 @@ watch([bottomOffset, rightOffset], () => clampToFrame());
 </template>
 
 <style scoped>
-/* ---------- 底部悬浮条：当前渲染的谱面 ----------
+/* ---------- 渲染弹窗：当前渲染的谱面 ----------
    长条型，放曲绘 / 曲名 / 难度 / 进度条四样东西；
    曲绘在左，右侧两行 —— 第一行曲名 + 难度，第二行进度条。
    它是 `App.vue` 里 `.phi-frame`（框架层，position: relative）的子元素，所以用
    absolute 而不是 fixed：fixed 会按视口定位，被左侧导航栏和标题栏挤歪。
-   宽度与位置：渲染页面保持 95%，悬浮体宽度从 40% 收到 20%（折叠态已整块删除），
-   并且右下角对齐；宽度后来改由内联样式给（设置页的 `TaskStrip.width`），
+   宽度与位置：右下角对齐；宽度由内联样式给（设置页的 `TaskStrip.width`），
    下面这条 `width` 只剩「内联没来之前」的静态默认值。
    高度固定 72px（box-sizing 写死，免得被全局样式影响）。
    它直接浮在内容之上：内容区不再为它留 padding-bottom
@@ -309,7 +306,7 @@ watch([bottomOffset, rightOffset], () => clampToFrame());
   /* 和 `.phi-config-dialog` 同一层「浮起来」的感觉 */
   background: rgb(21 21 23 / 88%);
   box-shadow: var(--phi-elevation-panel);
-  /* 悬浮体加个圆角 */
+  /* 渲染弹窗加个圆角 */
   border-radius: var(--phi-radius-lg);
 }
 
@@ -317,8 +314,7 @@ watch([bottomOffset, rightOffset], () => clampToFrame());
   cursor: grabbing;
 }
 
-/* 条宽砍到 20% 之后曲绘同步从 96px 收到 72px，否则曲名只剩几个字就被截断
-   （宽度缩小到 20% 所致）。 */
+/* 曲绘固定 72px：条本身窄，再宽曲名只剩几个字就被截断。 */
 .task-strip__cover {
   flex: none;
   display: flex;

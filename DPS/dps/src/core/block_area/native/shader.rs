@@ -97,7 +97,7 @@ static DISPLACE_TEX: Lazy<Texture2D> = Lazy::new(|| tex(include_bytes!("../../..
 static SPARK_TEX: Lazy<Texture2D> = Lazy::new(|| tex(include_bytes!("../../../../../../assets/blockarea/PointNoise.png"), TextureWrap::Repeat));
 static EMPTY_TEX: Lazy<Texture2D> = Lazy::new(|| Texture2D::from_rgba8(4, 4, &[0; 64]));
 
-/// 「岩浆噪域」用的两张 Minecraft 贴图（用户提供，放在仓库根的 `assets/Minecraft/`）。
+/// 「岩浆噪域」用的两张 Minecraft 贴图（随仓库分发，在 `assets/Minecraft/`）。
 ///
 /// `netherrack.png` 16×16 单帧；`lava.gif` 32×32、16 帧、每帧 160ms —— 这里把 16 帧各解成
 /// 一张纹理，按 [`LAVA_FRAME_SECONDS`] 在 Rust 侧选帧（采样器一次只认一张纹理，换帧就是换绑定，
@@ -500,7 +500,7 @@ fn lava_fill(zone: &Zone, lava: bool, disabled: bool) -> u8 {
 /// 把一帧里该画的方块按相位画出去。
 ///
 /// 简化噪域先按「是否减算」拆成两趟：简化模式的填充色是**材质级 uniform**，一趟绘制里
-/// 只可能有一个颜色；而需求是「`isSubtract` 的块用反色」，所以只能把两类方块各画一遍
+/// 只可能有一个颜色；而 `isSubtract` 的块要用反色，所以只能把两类方块各画一遍
 ///（掩码会因此重算一次，简化模式本来就不跑描边/辉光/位移，代价可以接受）。
 /// 完整噪域只有一趟（减算块靠 `enabled_compose` 的异或语义挖洞），只有「岩浆噪域」
 /// 需要分贴图时才会再拆组。
@@ -937,7 +937,7 @@ fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, c
     // 减算（`isSubtract`）的方块用反色：enable 是 `1 - rgb`，disable 是它的淡色。
     let color = cfg.block_area_color;
     let color = if invert { [1. - color[0], 1. - color[1], 1. - color[2]] } else { color };
-    // 与复刻版 `render_simplified` 一致的淡色公式：`pale = rgb + (1 - rgb) * 0.6`。
+    // 简化模式的淡色公式：`pale = rgb + (1 - rgb) * 0.6`。
     let pale = [color[0] + (1. - color[0]) * 0.6, color[1] + (1. - color[1]) * 0.6, color[2] + (1. - color[2]) * 0.6];
     if disabled {
         m.set_uniform("uDisabledFillColor", vec4(pale[0], pale[1], pale[2], 1.));

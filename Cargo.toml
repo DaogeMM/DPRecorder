@@ -1,6 +1,7 @@
 # DPRecorder —— 单一 Cargo 工作区。
-# 2026-10-11：DPS（原 Phire / DP-Simulator）与 DPR（原 Phi-Recorder / DP-Renderer）合并成一个项目，
-# 两边共用这一份 Cargo.lock 与根目录下的 target/。项目整体叫 DPRecorder。
+# DPS（原 Phire，早期工作名 DP-Simulator）与 DPR（原 Phi-Recorder，早期工作名 DP-Renderer）
+# 是同一个项目：两边共用这一份 Cargo.lock 与根目录下的 target/，项目整体叫 DPRecorder。
+# 那两个早期工作名从未发布过，正式使用前就已经改名为 DPS / DPR。
 # 注意：DPR 的运行时工作目录（assets / config.toml / respack / output）
 # 跟着 exe 走（见 src-tauri/src/common.rs::exe_dir），所以 target/ 的位置不能随便挪。
 [workspace]
@@ -14,13 +15,21 @@ members = [
 	"DPR/src-tauri",
 ]
 
-# DPR 原来在 src-tauri/Cargo.toml 里的 release 配置（member 里的 profile 会被 cargo 忽略，必须放根上）
+# 各 member 的公共元数据在这里统一下发，member 里写 `license.workspace = true`
+# 这种写法继承。license 统一 GPL-3.0-only（与仓库根的 `LICENSE` 全文一致）；
+# repository 同时供「设置 → 关于」页的文件链接使用。
+[workspace.package]
+license = "GPL-3.0-only"
+authors = ["HLMC", "Mivik", "DaogeMM"]
+repository = "https://github.com/DaogeMM/DPRecorder"
+
+# DPR 那份 release 配置：member 里的 profile 会被 cargo 忽略，必须放根上
 [profile.release]
 lto = "thin"
 strip = true
 opt-level = 3
 
-# DPS 原来自己那份工作区用的是 opt-level = 2，这里按包保留
+# DPS 侧各包保持 opt-level = 2（与它原工作区一致）
 [profile.release.package.dps]
 opt-level = 2
 [profile.release.package.dps-ui]
@@ -32,16 +41,16 @@ opt-level = 2
 [profile.release.package.prpr-pbc]
 opt-level = 2
 
-# 两边原本都有这一条：依赖用 opt-level = 2，dev 构建快很多。
+# 两边都有这一条：依赖用 opt-level = 2，dev 构建快很多。
 # 注意 `"*"` 只匹配「依赖」，**不匹配 workspace 成员**（Cargo book「Profile overrides」：
 #   "To override the settings for all dependencies (but not any workspace member)"）。
-# 2026-10-11 合并成单一工作区之后，dps / prpr-* 从「依赖」变成了工作区成员，
-# 这一条就不再覆盖渲染引擎 ⇒ dev 构建里引擎掉回 opt-level 0（实测：
+# dps / prpr-* 是工作区成员，`package."*"` 不覆盖成员 ⇒ 这一条不覆盖渲染引擎，
+# dev 构建里引擎掉回 opt-level 0（实测：
 # 只有通配时 dps / prpr-avc 的 rustc 命令行没有 -C opt-level，其余依赖都是 2）。
-# 症状（2026-10-12 报告告）：带噪域谱面离线渲染与预览都只剩 10 FPS（原 70~80 FPS），
+# 症状：带噪域谱面离线渲染与预览都只剩 10 FPS（正常 70~80 FPS），
 # GPU 基本没动静 —— 瓶颈是未优化的引擎 CPU 代码，不是显卡。
-# 下面把引擎侧的成员包显式补回来（dpr 自己是「应用」那侧，老项目里它也是
-# opt-level 0 且能跑满 70~80 FPS，所以这里不动它）。release 侧本来就有显式条目。
+# 下面把引擎侧的成员包显式补回来（dpr 自己是「应用」那侧，它也按
+# opt-level 0 跑满 70~80 FPS，所以这里不动它）。release 侧本来就有显式条目。
 [profile.dev.package."*"]
 opt-level = 2
 

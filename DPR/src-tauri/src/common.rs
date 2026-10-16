@@ -220,7 +220,6 @@ pub fn get_presets_json_file() -> Result<PathBuf> {
 
 /// 任务队列的落盘文件（`config/tasks.json`）。
 ///
-/// 以前任务列表只活在内存里（`TaskQueue` 的 `Vec`），关掉程序就全没了。
 /// 这里用 JSON 而不是和预设/配置一样的 TOML：存的是 `RenderParams`，
 /// 里面有 `Option` 字段，TOML 表示不了。
 pub fn get_tasks_file() -> Result<PathBuf> {
@@ -251,8 +250,7 @@ pub struct AppConfig {
     /// 是否在「渲染」页显示「游玩」按钮（进入游戏内试玩）。默认 `false`。
     pub enable_play_button: bool,
 
-    /// 预览 / 试玩 / 调整偏移的窗口是否全屏。默认 `true`（和 2026-10-12 之前强制全屏的行为一致）。
-    /// 2026-10-09 曾把这个开关从设置里删掉、改成写死全屏，2026-10-12 又搬回设置里。
+    /// 预览 / 试玩 / 调整偏移的窗口是否全屏。默认 `true`。
     pub preview_fullscreen: bool,
     /// 高性能模式（默认关闭）：只影响渲染进程**怎么跑**，不改画面像素。
     /// 勾选后在提交渲染 / 游玩时套用到那个渲染进程上，做两件事：

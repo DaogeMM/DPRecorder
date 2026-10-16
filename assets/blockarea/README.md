@@ -1,22 +1,22 @@
 # assets/blockarea（仓库根 `assets\`）
 
 官方 BlockArea（噪域）渲染所需的二进制素材。移植来源是 **Phira-Pro**
-（上游：<https://github.com/Phira-Pro/Phira-Pro>；本机快照在仓库根 `E:\DPRecorder\` 下的 `backsupFiles\Phira-Pro-main\`，本机专用、不随仓库分发）
+（上游：<https://github.com/Phira-Pro/Phira-Pro>）
 的 `prpr/src/core/{block_shader.rs, block_mask.rs}` + `block_shader_full.{vert,frag}`。
 
 ## 文件状态
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
-| `block_shader_full.vert` | **官方原件** | 从 `backsup/Phira-Pro-main/prpr/src/core/` 复制 |
+| `block_shader_full.vert` | **官方原件** | 从上游 Phira-Pro 的 `prpr/src/core/` 复制 |
 | `block_shader_full.frag` | ⚠️ **官方原件 + 本仓库改动** | 同上（559 行 Unity 反编译片元着色器）。本仓库改了两处：`snapshotSample` 里硬编码的场景快照降采样，以及「岩浆噪域」的 `_LavaTex` / `_LavaMode` / `_LavaScale`，见下面两节 |
 | `BlockNoise1.png` | **官方原件** | 256x256，位移图。与 `DPS/dps/src/core/block_area/BlockNoise1.png`、`index/res/BlockNoise1.png` 哈希一致 |
 | `PointNoise.png` | **官方原件** | 128x128，火花图。同上 |
 | `FD_Noise_00000.png` | ⚠️ **替身（非官方）** | 官方文件在 `Phira-Pro-main` 的备份里缺失（`prpr/assets/` 是空的），全工作区搜不到。这里是 64x64 值噪声近似 |
 | `TouchHover.png` | ⚠️ **替身（非官方）** | 官方应为 `Round10_Blur4`（44x44、PPU=100 的模糊圆点）。这里是 44x44 白色径向衰减近似 |
 
-两个替身由 `gen_blockarea_assets.js` 生成（该脚本没有随仓库分发，只在作者本机的构建临时目录里，
-运行方式是 `node out/gen_blockarea_assets.js`；**`out\` 已于 2026-10-09 整体删除**）。
+两个替身由 `gen_blockarea_assets.js` 生成（该脚本没有随仓库分发，只在开发时的本机构建临时目录里，
+运行方式是 `node out/gen_blockarea_assets.js`；**`out\` 目录已被删除**）。
 
 > TODO(未核实)：`out\gen_blockarea_assets.js` 删掉之后，这个生成脚本现在是否还有别处的副本；
 > 若已丢失，`FD_Noise_00000.png` / `TouchHover.png` 这两个替身目前没有可复现的生成方式。
@@ -57,9 +57,9 @@ vec2 u_lavaUV = sceneUV * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y),
 ```
 
 * `sceneUV`（`block_shader_full.vert:22`）= 屏幕 UV ⇒ 贴图**锚定屏幕**、噪域移动时从它下面滑过。
-* 素材是用户提供的 `assets/Minecraft/{netherrack.png, lava.gif}`（仓库根唯一一份资源目录；16×16 / 32×32×16 帧），
+* 素材取自 `assets/Minecraft/{netherrack.png, lava.gif}`（仓库根唯一一份资源目录；16×16 / 32×32×16 帧），
   由 `native/shader.rs:109` / `:111` 用 `include_bytes!` 打进二进制，不走 `assets/blockarea`。
-* 这一处的详细行为、分趟原因与验证见开发文档中的渲染篇（深入文档在仓库根 `docs/` 里，但不随仓库分发，需要时向作者索取）。
+* 这一处的详细行为、分趟原因与验证记录没有随仓库分发（属于开发时的本机笔记），需要时向作者索取。
 * 本仓库改动后的完整 MD5 `785B422FBFC838295ADB5D24A90B1AC3`（580 行）。
 
 ## 替身的影响

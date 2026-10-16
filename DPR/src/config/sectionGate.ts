@@ -1,5 +1,5 @@
 /**
- * 二级分区总开关的共享状态表（2026-10-11）。
+ * 二级分区总开关的共享状态表。
  *
  * 为什么要有这个文件：PhiSection 的总开关有两个来源 —— 绑配置的（`v-model:gate`，
  * 如按键 = `renderNote`、噪域 = `renderBlockArea`、谱面进水 = `waterScreen`）

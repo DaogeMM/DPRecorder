@@ -1,11 +1,5 @@
 
 @font-face {
-  font-family: 'HarmonyOSSansSC';
-  font-display: swap;
-  src: url('./HarmonyOS_Sans_SC_Regular.ttf');
-}
-
-@font-face {
   font-family: 'SarasaUiSC';
   src: url('./SarasaUiSC-Regular.ttf');
 }
@@ -17,15 +11,15 @@
 
 @layer base {
   html {
-    font-family: HarmonyOSSansSC, SarasaUiSC, system-ui !important;
+    font-family: SarasaUiSC, system-ui !important;
     transition: background-color 0.5s;
   }
 }
 
-/* 2026-10 UI 重构：删掉了 .hover-scale / .hover-move / .hover-scale-text / .fade-in /
+/* 界面不再使用毛玻璃、悬停位移与渐入动画，因此这里没有
+   .hover-scale / .hover-move / .hover-scale-text / .fade-in /
    @keyframes fadeIn|fadeUp|hoverUp|blurFade / .v-stepper__content 系列。
-   理由是「去掉毛玻璃与悬停位移、渐入动画」。模板里可能还残留这些类名，
-   没有对应规则时它们是空操作，不影响显示。 */
+   模板里可能还残留这些类名，没有对应规则时它们是空操作，不影响显示。 */
 
 .select {
   user-select: text;

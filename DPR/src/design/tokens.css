@@ -11,7 +11,7 @@
  *   - 不定义任何位移 / 渐入动效令牌（--phi-duration 只用于颜色与描边过渡）
  *   - 字体沿用项目自带字体栈，不用 DSH 的 Montserrat 品牌字体
  *
- * 主题只有一套：DeepDark（深色）。2026-10-11 起删掉了 Light / Dark / LightBlue，
+ * 主题只有一套：DeepDark（深色）。没有 Light / Dark / LightBlue，
  * 令牌层不再按主题名切换（`body` 直接吃深色令牌，data-phi-theme 只是留个标记）。
  */
 
@@ -125,7 +125,7 @@
   --phi-font-size-brand: 22px;
 
   /* 字体栈（沿用项目自带字体，不引入 DSH 的 Montserrat） */
-  --phi-font-family: HarmonyOSSansSC, SarasaUiSC, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --phi-font-family: SarasaUiSC, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --phi-font-family-code: CascadiaMono, 'SF Mono', 'JetBrains Mono', Consolas, 'Liberation Mono', Menlo, monospace;
 
   /* 动效：只用于颜色/描边过渡，不做位移与渐入 */
@@ -283,7 +283,6 @@
 
 /* ============================================================
    2b. 唯一的主题：DeepDark（深色，DSH 深色）
-   2026-10-11 起只保留这一套；Light / Dark / LightBlue 三块已删。
    ============================================================ */
 :root,
 body {

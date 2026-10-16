@@ -45,36 +45,27 @@ import { listen } from "@tauri-apps/api/event";
  *     （`measureConfigDialogWidth`），预设配置**吃满内容区**（`measurePresetDialogWidth`）——
  *     配置条目多，60% 太挤。
  *
- * 去掉压缩包、文件夹的按钮，只支持拖动放入 ⇒
- * 谱面**只能拖动导入**（和渲染页一样），所以这里没有选择文件/文件夹的入口，
- * 也没有 `@tauri-apps/plugin-dialog` 的导入对话框；空列表中间只留一行文字，用的是
+ * 谱面**只能拖动导入**（和渲染页一样）：没有选择文件 / 文件夹的入口，也没有
+ * `@tauri-apps/plugin-dialog` 的导入对话框；空列表中间只留一行文字，用的是
  * `render.json` 里现成的 `choose.can-also-drop` =「（可拖放谱面至此处）」。
- * 文案演变：先写「（拖放谱面到此处）」，后改成「（可拖放谱面至此处）」。
  * 注意这个键是**嵌在 `choose` 里**的，漏掉前缀就会在界面上原样显示 `can-also-drop`。
  *
- * 预设配置和筛选都放到下面、高度缩小 30% ⇒
- * 原先放在页面顶部的「预设配置 / 筛选」两个 cfg-grid 条目整个删掉，改成
- * `.batch-view__actions` 里的行内小控件（`.batch-view__pickers`），
- * 高度按 Vuetify 的 `--v-input-control-height` 从 40px 压到 28px（-30%）。
- * 更早「预设配置占 3/5、筛选在右」的排布随之作废（顶部那行已经不存在了）。
- * 接着又要求「预设配置和五个按钮放一行」「五个按钮放到右下角」「默认配置拉长点」
- * ⇒ 操作条改成**两排**（每排一个 `.batch-view__bar`）：
+ * 操作条（`.batch-view__actions`）分**两排**（每排一个 `.batch-view__bar`）：
  *   上排 = 筛选 / 打开输出文件夹 · 移除全部任务 / 三个开关；
  *   下排 = 预设配置（最左）………… 全选 反选 移除 取消 渲染（右下角）。
- * 再后来的「这里强制只显示一行，1/5放筛选，剩下的平分后面的按钮。预设配置拉长点，
- * 大概60%宽度」（配的是上排的截图）⇒ 上排 `flex-wrap: nowrap` 不换行、筛选那组固定 1/5、
- * 后面五项（两个按钮 + 三个开关）均分剩下的 4/5；下排「预设配置」那一组占整排 60%，
- * 里面下拉框自己撑满（宽度不再写死 280px）。
- * 同批的「去掉自动调整宽高比」把那个开关、`autoChangeAspectRatio` 这个 useStorage 和
- * `applyAspectRatio()` 函数一起删了：`postRender()` 现在直接把 `preset.value.config` 交给后端
- * （顺带在注释里记下了「Vue 响应式代理塞进 `structuredClone` 会抛 DataCloneError」这个坑）。
+ * 上排 `flex-wrap: nowrap` 不换行，筛选那组固定 1/5、后面五项（两个按钮 + 三个开关）
+ * 均分剩下的 4/5；下排「预设配置」那一组占整排 60%，里面下拉框自己撑满。
+ * 预设配置与筛选都不占页面顶部，改成操作条里的行内小控件
+ * （`.batch-view__pickers`），高度按 Vuetify 的 `--v-input-control-height` 压到 28px。
  *
- * 顺手修掉重做时发现的三个老问题（都在下面注释里）：
- *   1. 谱面信息弹窗的 `<v-form>` 以前没有 `ref="form"`，`checkInfo()` 里
+ * 没有「自动调整宽高比」开关：`postRender()` 直接把 `preset.value.config` 交给后端。
+ * ⚠️ 注意 Vue 响应式代理塞进 `structuredClone` 会抛 DataCloneError。
+ *
+ * 两处必须留意的校验 / 编号问题（详见下面各处注释）：
+ *   1. 谱面信息弹窗的 `<v-form>` 必须有 `ref="form"`，否则 `checkInfo()` 里
  *      `form.value!.validate()` 取到 undefined 会抛错 —— 批量「渲染」发不出去；
- *   2. `buildParams()` 以前忽略 `checkInfo()` 的结果（校验不过也照样提交）；
- *   3. 谱面 `id` 以前用 `charts.value.length`，删掉几条再导入就会和现有 id 撞号
- *      （虚拟滚动的 item-key 和「正在编辑哪一条」都靠它），改成最大值 +1。
+ *   2. 谱面 `id` 取当前最大值 +1，不能用 `charts.value.length`
+ *      （删掉几条再导入会撞号，虚拟滚动的 item-key 和「正在编辑哪一条」都靠它）。
  */
 
 const form = ref<VForm>();
@@ -743,12 +734,10 @@ function filterText(
       </div>
     </div>
 
-    <!-- 底部固定操作条：和渲染页同一条（`border-top` + 左右内边距）。
-          「预设配置和筛选都放到下面，高度缩小30%」（`--v-input-control-height`
-          从 Vuetify compact 的 40px 压到 28px = -30%，见样式）、「预设配置和五个按钮放一行」、
-          「五个按钮放到右下角」、「去掉自动调整宽高比」⇒ 现在是两排：
-            上排 = 筛选 / 打开输出文件夹 · 移除全部任务 / 三个开关
-            下排 = 预设配置（最左）………… 全选 反选 移除 取消 渲染（右下角） -->
+    <!-- 底部固定操作条：和渲染页同一条（`border-top` + 左右内边距），分两排：
+           上排 = 筛选 / 打开输出文件夹 · 移除全部任务 / 三个开关
+           下排 = 预设配置（最左）………… 全选 反选 移除 取消 渲染（右下角）
+         高度：`--v-input-control-height` 从 Vuetify compact 的 40px 压到 28px（见样式）。 -->
     <div class="batch-view__actions">
       <div class="batch-view__bar batch-view__bar--head">
         <div class="batch-view__pickers config-root">
