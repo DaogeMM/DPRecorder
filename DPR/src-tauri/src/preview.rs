@@ -75,6 +75,16 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
         prpr_config.mods |= Mods::AUTOPLAY;
     }
     prpr_config.volume_bgm = prpr_config.volume_music;
+    // 谱面信息里的「预览开始时间 / 结束时间」原来只喂选歌列表那 15 秒试听，试玩一律从 0 开始；
+    // 这里把它落到播放参数上：从开始时间起播，到结束时间收尾（结束时间为 0 就播到谱面结尾）。
+    // 引擎侧只有 `play_start_time` / `play_end_time` 两个入口（`GameScene::new` 的试玩区间、
+    // `Resource::new` 的 `track_length`），所以不需要改引擎。
+    if info.preview_start > 0. || info.preview_end.unwrap_or_default() > 0. {
+        prpr_config.play_start_time = info.preview_start.max(0.);
+        prpr_config.play_end_time = info
+            .preview_end
+            .filter(|end| *end > info.preview_start && *end > 0.);
+    }
     // 是否全屏由「设置 → 预览全屏」决定。
     // 读不到配置时按 true 兜底。
     let preview_fullscreen = crate::common::read_config()

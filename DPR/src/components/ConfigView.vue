@@ -29,11 +29,16 @@ import type { WorkingState } from '../config/types';
 
 import CfgField from './CfgField.vue';
 import CfgSwitch from './CfgSwitch.vue';
-
+import DebugFieldSettings from './DebugFieldSettings.vue';
 import PhiSection from './PhiSection.vue';
 import PhiGroup from './PhiGroup.vue';
 import PhiSubMenu from './PhiSubMenu.vue';
 import WaterScreenSettings from './WaterScreenSettings.vue';
+
+/** 「判定线调试」文本可显示的项与顺序（对应 dps 侧 `core::line` 里拼文本的那段）。 */
+const LINE_DEBUG_FIELDS = ['id', 'parent', 'height', 'ulp', 'z', 'aui', 'anchor', 'kind', 'rot'] as const;
+/** 「按键调试」文本可显示的项与顺序（对应 dps 侧 `core::note::debug_note_text`）。 */
+const NOTE_DEBUG_FIELDS = ['line', 'time', 'height', 'base', 'angle', 'speed', 'above', 'fake'] as const;
 
 // ===== 「渲染参数」页 =====
 // 本文件只负责**排版**：分组、控件摆放、插槽、预设的增删改查。
@@ -73,6 +78,26 @@ function openFileNameFormatDialog() {
   const base = content?.clientWidth || window.innerWidth;
   fileNameFormatDialogWidth.value = Math.max(480, Math.round(base * 0.6));
   fileNameFormatDialog.value = true;
+}
+
+const debugLineDialog = ref(false);
+/** 「判定线调试」齿轮弹窗的宽度：同一套算法（内容区的 60%，打开时量一次）。 */
+const debugLineDialogWidth = ref(880);
+function openDebugLineDialog() {
+  const content = document.querySelector<HTMLElement>('.phi-center');
+  const base = content?.clientWidth || window.innerWidth;
+  debugLineDialogWidth.value = Math.max(480, Math.round(base * 0.6));
+  debugLineDialog.value = true;
+}
+
+const debugNoteDialog = ref(false);
+/** 「按键调试」齿轮弹窗的宽度：同一套算法（内容区的 60%，打开时量一次）。 */
+const debugNoteDialogWidth = ref(880);
+function openDebugNoteDialog() {
+  const content = document.querySelector<HTMLElement>('.phi-center');
+  const base = content?.clientWidth || window.innerWidth;
+  debugNoteDialogWidth.value = Math.max(480, Math.round(base * 0.6));
+  debugNoteDialog.value = true;
 }
 
 /**
@@ -115,7 +140,7 @@ const {
 // 名单 = 模板用到的那些键 + 几个界面独占的槽位（hwAccel / maxParticlesText /
 // judgeRangeTransition / respack / encoder / judgeMode —— 它们不是 RenderConfig 的键）。
 const {
-  resolution, endingLength, renderLoading, hires, chartDebugLine, chartDebugNote, chartRatio,
+  resolution, endingLength, renderLoading, hires, chartDebugLine, chartDebugLineFields, chartDebugNote, chartDebugNoteFields, chartRatio,
   fps, dynamicBitrateControl, bitrate, aggressiveChart, aggressiveNote,
   aggressiveParticle, challengeColor, challengeRank, noteScale, particle, particleSquare,
   playerAvatar, playerName, playerRks, sampleCount, speed, volumeMusic, volumeSfx, watermark,
@@ -126,7 +151,10 @@ const {
   renderUiScore, renderUiCombo, renderUiBar, renderBg, renderBgDim, backgroundDim,
   // 谱面侧渲染参数：它们与谱面信息（ChartInfo）同名，`RenderView.buildParams()` 会并进 info，
   // **配置值优先** ⇒ 导入谱面不再覆盖这些设置（详见下面对「宽 : 高」与「偏移」的说明）
-  forceAspectRatio, foldAnimation, aspectRatio, noteUniformScale, holdPartialCover,
+  forceAspectRatio, foldAnimation, pureConfigChart, pureConfigChartLineY, pureConfigChartSpeed,
+  pureConfigChartSideLines, pureConfigChartSideX, pureConfigChartAngle, pureConfigChartNoise,
+  pureConfigChartNoiseHeight, pureConfigChartNoiseWidth, pureConfigChartNoiseTime, pureConfigChartNoiseDelay,
+  aspectRatio, noteUniformScale, holdPartialCover,
   negativeLengthHold, holdParticleIntervalRatio, lineLength, scoreTotal, previewStart,
   previewEnd, offset,
   renderBlockArea, simplifiedBlockArea, simplifiedBlockAreaText, blockAreaReuse, blockAreaLava,
@@ -597,6 +625,8 @@ defineExpose({
                进 config.toml，也出现在批量页的预设弹窗里。 -->
           <CfgSwitch :label="t('info.force-aspect-ratio')" v-model="forceAspectRatio"></CfgSwitch>
           <CfgSwitch :label="t('info.fold-animation')" v-model="foldAnimation"></CfgSwitch>
+          <!-- 「纯配置谱面」的三个控件都在谱面组的「更多」（`sec-more-chart`）：
+               开关是勾选框，跟在那里的一排勾选框后面；两个数字框按本分区惯例排在文本框一片。 -->
           <!-- ===== 文本框在后 ===== -->
           <!-- 这一格是谱面信息里的「偏移」；总分在主网格最后一格（「渲染结束时间」之后，见下面）。 -->
           <CfgField :label="t('info.offset')">
@@ -750,7 +780,7 @@ defineExpose({
             <v-text-field type="number" density="compact" hide-details="auto" :disabled="!renderNote || (!particle && !particleSquare)" :rules="[RULES.positive]" v-model="holdParticleIntervalRatio"></v-text-field>
           </CfgField>
           <CfgField :label="t('note-scale')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('note-scale-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(noteScale)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) noteScale = n; }"></v-text-field></CfgField>
-          <CfgField :label="t('chart-debug-note')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('chart-debug-note-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugNote)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugNote = n; }"></v-text-field></CfgField>
+          <CfgField :label="t('chart-debug-note')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('chart-debug-note-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugNote)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugNote = n; }" :append-inner-icon="chartDebugNote > 0 ? 'mdi-cog-outline' : undefined" @click:append-inner="openDebugNoteDialog"></v-text-field></CfgField>
           <!-- 按键染色 / 打击特效染色都在本分区 -->
           <CfgField :label="t('notecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderNote" v-model="notecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('hitcolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!particle" v-model="hitcolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
@@ -767,7 +797,7 @@ defineExpose({
         <div class="cfg-grid">
           <CfgSwitch :label="t('render-line-extra')" v-model="renderLineExtra" :disabled="!renderLine" :tip="t('render-line-extra-tips')" />
           <CfgField :label="t('linecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderLine" v-model="linecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
-          <CfgField :label="t('chart-debug-line')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderLine" :title="t('chart-debug-line-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugLine)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugLine = n; }"></v-text-field></CfgField>
+          <CfgField :label="t('chart-debug-line')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderLine" :title="t('chart-debug-line-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugLine)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugLine = n; }" :append-inner-icon="chartDebugLine > 0 ? 'mdi-cog-outline' : undefined" @click:append-inner="openDebugLineDialog"></v-text-field></CfgField>
           <!-- 「判定线长度」与谱面信息同名，也是配置项 -->
           <CfgField :label="t('info.lineLength')">
             <v-text-field type="number" density="compact" hide-details="auto" :disabled="!renderLine" :rules="[RULES.less10000]" v-model="lineLength"></v-text-field>
@@ -821,6 +851,24 @@ defineExpose({
         <div class="cfg-grid">
           <!-- 透明度染色：普通条目（不是三级菜单行），与下面的「谱面进水」同处一个网格。 -->
           <CfgSwitch :label="t('alpha-tint')" v-model="alphaTint" :tip="t('alpha-tint-tip')" />
+          <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
+               横向位置；判定时刻接近竖直的按键另分到左右两条竖判定线上；判定时刻落在噪域里的按键
+               在它周围长出一块噪域矩形。开关与它的参数（判定线高度 / 按键流速 / 竖判定线的两个参数 /
+               按键噪域与它的四个参数：矩形高度 / 矩形宽度 / 时间窗 / 延后视窗）同处这一个齿轮弹窗里。 -->
+          <PhiSubMenu id="sec3-pure-config" :label="t('pure-config-chart')" :tip="t('pure-config-chart-tip')" v-model="pureConfigChart">
+            <div class="cfg-grid">
+              <CfgSwitch :label="t('pure-config-chart-side-lines')" v-model="pureConfigChartSideLines" :tip="t('pure-config-chart-side-lines-tip')" />
+              <CfgSwitch :label="t('pure-config-chart-noise')" v-model="pureConfigChartNoise" :tip="t('pure-config-chart-noise-tip')" />
+              <CfgField :label="t('pure-config-chart-line-y')" :tip="t('pure-config-chart-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-speed')" :tip="t('pure-config-chart-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-side-x')" :tip="t('pure-config-chart-side-x-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartSideX" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-angle')" :tip="t('pure-config-chart-angle-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartAngle" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero, RULES.less100]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-height')" :tip="t('pure-config-chart-noise-height-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseHeight" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-width')" :tip="t('pure-config-chart-noise-width-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseWidth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-time')" :tip="t('pure-config-chart-noise-time-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseTime" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-delay')" :tip="t('pure-config-chart-noise-delay-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseDelay" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
           <PhiSubMenu id="sec3-chart-water" :label="t('title.chart-water')" :tip="t('water-screen-tip')" v-model="waterScreen">
             <WaterScreenSettings
                     v-model:water-screen="waterScreen"
@@ -890,6 +938,32 @@ defineExpose({
 
 
   </v-form>
+
+  <!-- 「判定线调试」「按键调试」的齿轮配置页：只有对应那一项 >0 时齿轮才出现（见上面的输入框）。
+       皮肤与「文件名格式」弹窗一致（`.phi-config-dialog*`），内容是一排勾选框，勾中的项
+       会拼成逗号名单存进 `chartDebugLineFields` / `chartDebugNoteFields`，由 dps 侧决定调试文本
+       显示什么。 -->
+  <v-dialog v-model="debugLineDialog" :width="debugLineDialogWidth" class="log-card-bg">
+    <v-card class="log-card-only-window phi-config-dialog">
+      <div class="phi-config-dialog__head">
+        <span class="phi-config-dialog__title" v-t="'chart-debug-line'"></span>
+      </div>
+      <v-card-text class="config-root phi-config-dialog__body">
+        <DebugFieldSettings v-model="chartDebugLineFields" :fields="LINE_DEBUG_FIELDS" prefix="chart-debug-line-field" />
+      </v-card-text>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="debugNoteDialog" :width="debugNoteDialogWidth" class="log-card-bg">
+    <v-card class="log-card-only-window phi-config-dialog">
+      <div class="phi-config-dialog__head">
+        <span class="phi-config-dialog__title" v-t="'chart-debug-note'"></span>
+      </div>
+      <v-card-text class="config-root phi-config-dialog__body">
+        <DebugFieldSettings v-model="chartDebugNoteFields" :fields="NOTE_DEBUG_FIELDS" prefix="chart-debug-note-field" />
+      </v-card-text>
+    </v-card>
+  </v-dialog>
 
   <v-dialog v-model="fileNameFormatDialog" :width="fileNameFormatDialogWidth" class="log-card-bg">
     <!-- 外观与齿轮弹窗（`PhiSubMenu.vue`）一致：

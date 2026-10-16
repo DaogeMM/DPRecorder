@@ -245,8 +245,17 @@ impl JudgeLine {
         // 不再绘制，但「强制定位」挖出来的洞要再停留一会儿，所以延迟窗口内的音符**不能**
         // 在这里被判成「可以跳过」—— 否则游标一推进，`Line::render` 的循环就再也扫不到
         // 它们，`Note::render_force_linger` 也就无从补洞（洞会跟着按键一起立刻消失）。
-        let linger = res.config.block_area_force_position && res.config.block_area_force_delay > 0.;
-        let delay = res.config.block_area_force_delay as f64;
+        //
+        // 「纯配置谱面」的按键噪域走同一条通路，但时间窗是它自己那两项
+        //（`pure_config_chart_noise_delay`），所以按按键各算各的：返回 `None` 就是「不必留」。
+        let linger_of = |note: &Note| -> Option<f64> {
+            let (on, delay) = if note.pure_config_noise {
+                (res.config.pure_config_chart && res.config.pure_config_chart_noise, res.config.pure_config_chart_noise_delay)
+            } else {
+                (res.config.block_area_force_position, res.config.block_area_force_delay)
+            };
+            (on && delay > 0.).then_some(delay as f64)
+        };
         let not_judge = |index: usize| {
             let note = &self.notes[index];
             // 「屏幕进水」：溺水死亡动画播放期间（`water_death > 0`）不能被当成「可以跳过」
@@ -278,7 +287,7 @@ impl JudgeLine {
                     note.time
                 }
             };
-            !(linger && res.time - force_end <= delay)
+            !linger_of(note).is_some_and(|delay| res.time - force_end <= delay)
         };
 
         //   self.cache.above_indices.retain_mut(|index| {
@@ -538,6 +547,7 @@ impl JudgeLine {
                 invisible_time: f64::INFINITY,
                 draw_below: self.show_below,
                 incline_sin: self.incline.now_opt().map(|it| it.to_radians().sin()).unwrap_or_default(),
+                line_angle: self.fetch_rot(lines),
             };
             if res.config.has_mod(Mods::FADE_OUT) {
                 config.invisible_time = LIMIT_BAD;
@@ -776,6 +786,41 @@ impl JudgeLine {
                         } else {
                             format!(" anc:{} {}", self.anchor[0], self.anchor[1])
                         };
+                        // 这一段文本显示哪些项由 `chart_debug_line_fields` 决定（逗号名单，大小写不敏感、
+                        // 未知项忽略）：`id` / `parent` / `height` / `ulp` / `z` / `aui` / `anchor` /
+                        // `kind` / `rot`（判定线这一帧的旋转角，度）。名单顺序不影响输出顺序。
+                        let debug_fields = res.config.chart_debug_line_fields.as_str();
+                        let on = |name: &str| {
+                            debug_fields.split(',').any(|it| it.trim().eq_ignore_ascii_case(name))
+                        };
+                        let mut debug_text = String::new();
+                        if on("id") {
+                            debug_text.push_str(&format!("[{}]", id));
+                        }
+                        if on("parent") {
+                            debug_text.push_str(&parent);
+                        }
+                        if on("height") {
+                            debug_text.push_str(&format!(" h:{:.2}", config.line_height));
+                        }
+                        if on("ulp") {
+                            debug_text.push_str(&line_height_ulp_string);
+                        }
+                        if on("z") {
+                            debug_text.push_str(&z_index);
+                        }
+                        if on("aui") {
+                            debug_text.push_str(&attach_ui);
+                        }
+                        if on("anchor") {
+                            debug_text.push_str(&anchor);
+                        }
+                        if on("kind") {
+                            debug_text.push_str(&kind);
+                        }
+                        if on("rot") {
+                            debug_text.push_str(&format!(" r:{:.1}", config.line_angle));
+                        }
                         let color = if line_height_ulp_in_f32 > 0.018518519 {
                             // 10px error in 1080P
                             Color::new(1., 0., 0., parse_alpha(alpha, res.alpha, 0.15, res.config.chart_debug_line > 0.))
@@ -785,10 +830,7 @@ impl JudgeLine {
                         } else {
                             Color::new(1., 1., 1., parse_alpha(alpha, res.alpha, 0.15, res.config.chart_debug_line > 0.))
                         };
-                        ui.text(format!(
-                            "[{}]{} h:{:.2}{}{}{}{}{}",
-                            id, parent, config.line_height, line_height_ulp_string, z_index, attach_ui, anchor, kind
-                        ))
+                        ui.text(debug_text)
                         .pos(0., -res.config.chart_debug_line * 0.1)
                         .anchor(0.5, 1.)
                         .size(res.config.chart_debug_line)

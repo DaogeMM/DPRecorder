@@ -345,7 +345,15 @@ pub fn render_all(res: &mut Resource, blocks: &[BlockArea], time: f64, flip_x: b
     // 噪域；屏幕上唯一该出现噪域的地方就是每个按键周围那圈矩形，于是把它们当成**真方块**
     // 推进 `zones`（`judge_cover = 0` ⇒ 照常进层、照常被绘制；编号取 `usize::MAX` ⇒ 不印号）。
     // 必须赶在下面的 `zones.is_empty()` 早退**之前**：这时 `zones` 十有八九就是空的。
-    let invert = res.config.block_area_force_position && res.config.block_area_force_invert;
+    //
+    // 「纯配置谱面」勾了按键噪域时走同一条路：转换阶段把判定时刻落在噪域里的按键标了出来，上游
+    // 同样传空列表，于是屏幕上只剩这些按键周围的矩形是噪域。
+    //
+    // 纯配置模式下「强制定位」那一支不参与：它要靠全屏噪域衬托，而纯配置模式把整层噪域关掉了，
+    // 参与进来只会把四边形本身当噪域铺满画面（每个按键周围一块）。
+    let pure_config_mode = res.config.pure_config_chart;
+    let invert = (pure_config_mode && res.config.pure_config_chart_noise)
+        || (!pure_config_mode && res.config.block_area_force_position && res.config.block_area_force_invert);
     if invert {
         let quads = res.force_position_quads.borrow();
         push_force_zones(&quads, &mut zones);

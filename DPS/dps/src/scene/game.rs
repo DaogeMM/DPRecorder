@@ -453,6 +453,25 @@ impl GameScene {
             }
         }?;
         chart.load_textures(fs).await?;
+        // 「纯配置谱面」：四种谱面格式都在上面汇成同一个 `Chart`，转换放在这里就与格式无关。
+        // 转换可能追加左右两条竖判定线，所以走 `Chart` 的方法、由它把新判定线补进绘制顺序。
+        if config.pure_config_chart {
+            let side = config.pure_config_chart_side_lines.then(|| crate::core::pure_config::SideLines {
+                angle: config.pure_config_chart_angle,
+                x: config.pure_config_chart_side_x,
+            });
+            // 按键落点的纵向要折纵横比，而这里是关联函数、拿不到 `Resource`，所以按 `Resource` 自己
+            // 那套口径从配置与谱面信息里推：配置里给了就优先用配置的（`force_aspect_ratio` 生效时
+            // 也是这个值）。
+            let aspect = config.aspect_ratio.unwrap_or(info.aspect_ratio);
+            chart.apply_pure_config(
+                config.pure_config_chart_line_y,
+                config.pure_config_chart_speed,
+                side,
+                config.pure_config_chart_noise,
+                aspect,
+            );
+        }
         Ok((chart, format))
     }
 

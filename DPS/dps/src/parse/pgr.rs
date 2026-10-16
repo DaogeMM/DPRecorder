@@ -274,6 +274,7 @@ fn parse_notes(r: f64, mut pgr: Vec<PgrNote>, _speed: &mut AnimFloatF64, height:
                 color: color_anim.clone(),
                 hit_fx_color: color_anim,
                 protected: false,
+                pure_config_noise: false,
                 water: Default::default(),
             })
         })

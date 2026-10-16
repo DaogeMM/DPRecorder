@@ -424,6 +424,8 @@ impl BinaryData for Note {
             color: r.read()?,
             hit_fx_color: r.read()?,
             protected: false,
+            // 纯配置谱面在渲染前现算，二进制里不存（`write_binary` 也不写它），所以读进来一律 false。
+            pure_config_noise: false,
             water: Default::default(),
         })
     }

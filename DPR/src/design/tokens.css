@@ -124,8 +124,9 @@
   --phi-font-size-h2: 19px;
   --phi-font-size-brand: 22px;
 
-  /* 字体栈（沿用项目自带字体，不引入 DSH 的 Montserrat） */
-  --phi-font-family: SarasaUiSC, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 字体栈：界面统一用仓库根那份 font.ttf（`Phigros`，与引擎同一份，见 `src/assets/main.css`），
+     SarasaUiSC 只作缺字回退 —— 它排在后面，缺字时才落到这里；再往后是系统字体。 */
+  --phi-font-family: Phigros, SarasaUiSC, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --phi-font-family-code: CascadiaMono, 'SF Mono', 'JetBrains Mono', Consolas, 'Liberation Mono', Menlo, monospace;
 
   /* 动效：只用于颜色/描边过渡，不做位移与渐入 */

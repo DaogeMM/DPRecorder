@@ -66,7 +66,11 @@ pub struct RenderConfig {
     pub render_loading: bool,
     pub hires: bool,
     pub chart_debug_line: f32,
+    /// 判定线调试文本里显示哪些项：逗号分隔的名单，由 dps 侧拼文本时读取。
+    pub chart_debug_line_fields: String,
     pub chart_debug_note: f32,
+    /// 按键调试文本显示哪些项（逗号分隔，见 dps 的 `core::note::debug_note_text`）。
+    pub chart_debug_note_fields: String,
     pub chart_ratio: f32,
     pub all_good: bool,
     pub all_bad: bool,
@@ -257,6 +261,29 @@ pub struct RenderConfig {
     pub judge_range_noise_occlusion: bool,
     pub preserve_framebuffer: bool,
     pub render_extra: bool,
+    /// 「纯配置谱面」：解析完谱面后把判定线拍平，只留下按键在屏幕上的横向位置
+    /// （见 dps 的 `core::pure_config`）。谱面文件不受影响，默认关闭。
+    pub pure_config_chart: bool,
+    /// 「纯配置谱面」的判定线高度：`0` 是屏幕底边、`1` 是屏幕顶边、`0.5` 是正中
+    pub pure_config_chart_line_y: f32,
+    /// 「纯配置谱面」的按键流速：判定线高度与长按尾端都按它算
+    pub pure_config_chart_speed: f64,
+    /// 「纯配置谱面 · 竖判定线」：判定时刻的角度接近竖直的按键分到屏幕左右两条竖判定线上
+    pub pure_config_chart_side_lines: bool,
+    /// 「纯配置谱面」竖判定线距最近那条屏幕竖边的距离：`0.5` 是屏幕正中、`0.1` 是离边一成
+    pub pure_config_chart_side_x: f32,
+    /// 「纯配置谱面」竖直判定的角度阈值：与水平方向相差多少度以内仍算横向按键，默认 45
+    pub pure_config_chart_angle: f32,
+    /// 「纯配置谱面 · 按键噪域」：判定时刻落在噪域里的按键，渲染时在它周围长出一块噪域矩形
+    pub pure_config_chart_noise: bool,
+    /// 「纯配置谱面 · 按键噪域」矩形高度：全高 = 该值 × 屏幕高度（默认 0.2 ⇒ 20% 屏高）
+    pub pure_config_chart_noise_height: f32,
+    /// 「纯配置谱面 · 按键噪域」矩形宽度：半宽 = 该值 × 屏幕高度 / 10（与判定范围同一套基准）
+    pub pure_config_chart_noise_width: f32,
+    /// 「纯配置谱面 · 按键噪域」时间窗（秒）：判定时刻进入本值以内的按键才长矩形（默认 3）
+    pub pure_config_chart_noise_time: f32,
+    /// 「纯配置谱面 · 按键噪域」延后视窗（秒）：判定完成后矩形再停留这么久才消失（默认 0.3）
+    pub pure_config_chart_noise_delay: f32,
     pub bg_blurriness: f32,
 
     pub max_particles: usize,
@@ -289,7 +316,9 @@ impl RenderConfig {
             volume_music: self.volume_music,
             volume_sfx: self.volume_sfx,
             chart_debug_line: self.chart_debug_line,
+            chart_debug_line_fields: self.chart_debug_line_fields.clone(),
             chart_debug_note: self.chart_debug_note,
+            chart_debug_note_fields: self.chart_debug_note_fields.clone(),
             chart_ratio: self.chart_ratio,
             all_good: self.all_good,
             all_bad: self.all_bad,
@@ -371,6 +400,17 @@ impl RenderConfig {
             judge_range_noise_occlusion: self.judge_range_noise_occlusion,
             preserve_framebuffer: self.preserve_framebuffer,
             render_extra: self.render_extra,
+            pure_config_chart: self.pure_config_chart,
+            pure_config_chart_line_y: self.pure_config_chart_line_y,
+            pure_config_chart_speed: self.pure_config_chart_speed,
+            pure_config_chart_side_lines: self.pure_config_chart_side_lines,
+            pure_config_chart_side_x: self.pure_config_chart_side_x,
+            pure_config_chart_angle: self.pure_config_chart_angle,
+            pure_config_chart_noise: self.pure_config_chart_noise,
+            pure_config_chart_noise_height: self.pure_config_chart_noise_height,
+            pure_config_chart_noise_width: self.pure_config_chart_noise_width,
+            pure_config_chart_noise_time: self.pure_config_chart_noise_time,
+            pure_config_chart_noise_delay: self.pure_config_chart_noise_delay,
             bg_blurriness: self.bg_blurriness,
 
             max_particles: self.max_particles,
@@ -422,7 +462,9 @@ impl Default for RenderConfig {
             loudness_equalization: false,
             audio_mix_optimization: true,
             chart_debug_line: 0.0,
+            chart_debug_line_fields: "id,parent,height,ulp,z,aui,anchor,kind".to_owned(),
             chart_debug_note: 0.0,
+            chart_debug_note_fields: "line,time,height,base,speed,above,fake,angle".to_owned(),
             chart_ratio: 1.0,
             all_good: false,
             all_bad: false,
@@ -444,7 +486,7 @@ impl Default for RenderConfig {
             render_line_extra: true,
             render_note: true,
             render_double_hint: true,
-            render_pending_note: true,
+            render_pending_note: false,
             pending_note_color: [1., 0.18, 0.18],
             render_ui_pause: true,
             render_ui_name: true,
@@ -527,6 +569,17 @@ impl Default for RenderConfig {
             judge_range_noise_occlusion: true,
             preserve_framebuffer: false,
             render_extra: true,
+            pure_config_chart: false,
+            pure_config_chart_line_y: 0.1,
+            pure_config_chart_speed: 2.8,
+            pure_config_chart_side_lines: true,
+            pure_config_chart_side_x: 0.05,
+            pure_config_chart_angle: 45.,
+            pure_config_chart_noise: true,
+            pure_config_chart_noise_height: 0.1,
+            pure_config_chart_noise_width: 1.1,
+            pure_config_chart_noise_time: 0.13,
+            pure_config_chart_noise_delay: 0.,
             bg_blurriness: 80.,
 
             max_particles: 5000,

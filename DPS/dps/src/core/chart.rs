@@ -92,6 +92,26 @@ impl Chart {
         }
     }
 
+    /// 「纯配置谱面」转换（见 `core::pure_config`）。
+    ///
+    /// 转换可能**新增**判定线（左右两条竖判定线），而 `render` / `render_pending_tint` 只遍历
+    /// `order`，所以新判定线要按 `new` 里同一套规则补进去（先按 `z_index`、同值再按下标）。
+    ///
+    /// `noise` 打开时，判定时刻落在噪域里的按键会被标上 `Note::pure_config_noise`；`aspect` 是屏幕
+    /// 纵横比 —— 转换发生在 `GameScene::load_chart` 里，那里还没有 `Resource`，所以要调用方给。
+    pub fn apply_pure_config(&mut self, line_y: f32, speed: f64, side: Option<super::pure_config::SideLines>, noise: bool, aspect: f32) {
+        let before = self.lines.len();
+        // 方块列表要借给转换（判按键在不在噪域里），转换又要可变借用 `lines`，所以先搬出来再放回。
+        let areas = std::mem::take(&mut self.block_areas);
+        let noise = noise.then(|| super::pure_config::Noise { areas: &areas });
+        super::pure_config::apply(&mut self.lines, line_y, speed, side, noise, aspect);
+        self.block_areas = areas;
+        if self.lines.len() > before {
+            self.order.extend(before..self.lines.len());
+            self.order.sort_unstable_by_key(|it| (self.lines[*it].z_index, *it));
+        }
+    }
+
     /// 设置剧情遮挡区域的外观参数。
     pub fn with_block_area_style(self, f: impl FnOnce(&mut super::BlockAreaStyle)) -> Self {
         f(&mut self.block_area_renderer.borrow_mut().style);
@@ -293,7 +313,28 @@ impl Chart {
         let force = res.config.block_area_force_position;
         let force_invert = force && res.config.block_area_force_invert;
         // 「简化噪域」单独勾选也要能出画面，所以两个开关任一打开就渲染
-        if (!res.config.render_block_area && !res.config.simplified_block_area) || (!force && self.block_areas.is_empty()) {
+        //
+        // 「纯配置谱面」下谱面自带的 `blockAreaList` 整层不画：判定线被拍平后那些方块都是按判定线原先
+        // 的坐标定位的，画出来与画面上的按键完全对不上。本函数开头已经把 `block_area_paint` /
+        // `judge_range_mat` 清成 `None`，所以判定范围（要这两个同时非空才画，见 `Note::render`）也跟着
+        // 回到原样。
+        //
+        // 例外是标了噪域的按键：它们会在自己周围推出四边形（`Note::pure_config_noise`），这里改成传
+        // **空**方块列表往下走 —— 与「反向强制定位」同一条通路，屏幕上于是只有那些矩形是噪域。没有这种
+        // 按键时 `render_all` 会因为 `zones` 为空立刻返回，所以照旧等于不画。
+        let pure_config_noise = res.config.pure_config_chart && res.config.pure_config_chart_noise;
+        if pure_config_noise {
+            let time = res.time;
+            let flip_x = res.config.flip_x();
+            let simplified = res.config.simplified_block_area || self.block_area_renderer.borrow().style.simplified;
+            let reuse = res.config.block_area_reuse || self.block_area_renderer.borrow().style.reuse;
+            super::block_area::render_native_block_areas(res, &[], time, flip_x, simplified, reuse);
+            return;
+        }
+        if res.config.pure_config_chart
+            || (!res.config.render_block_area && !res.config.simplified_block_area)
+            || (!force && self.block_areas.is_empty())
+        {
             return;
         }
         let time = res.time;

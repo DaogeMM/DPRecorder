@@ -189,13 +189,40 @@ const CHART = {
   speed: { widget: 'combobox' },
   fade: { widget: 'number' },
   chartDebugLine: { widget: 'number', uiValue: 'number' },
+  chartDebugLineFields: {
+    widget: 'text',
+    note: '没有独立控件：只在「判定线调试」旁边齿轮弹窗里按勾选拼成逗号名单，渲染时由 dps 的 line 文本拼装读取',
+  },
   chartDebugNote: { widget: 'number', uiValue: 'number' },
+  chartDebugNoteFields: {
+    widget: 'text',
+    note: '没有独立控件：只在「按键调试」旁边齿轮弹窗里按勾选拼成逗号名单，渲染时由 dps 的 note::debug_note_text 读取',
+  },
   backgroundDim: { widget: 'number', uiValue: 'number' },
   bgBlurriness: { widget: 'number' },
   watermark: { widget: 'textarea' },
   combo: { widget: 'textarea' },
   difficulty: { widget: 'textarea' },
   // ------------------------- 谱面侧渲染参数 -------------------------
+  // 「纯配置谱面」三项归属「谱面」这一族，但控件按「谱面 → 更多」摆放（见 ConfigView.vue 的
+  // `sec-more-chart`）：`section` 只决定配置族，不决定界面位置。
+  pureConfigChart: { widget: 'checkbox' },
+  // 这两个**不能**写 `uiValue: 'number'`：那样界面槽位里存的是数字，而文本框的校验规则
+  // （`RULES.*`）第一句就是 `value.trim()`，会当场抛 `value.trim is not a function`。
+  // 不写 `uiValue` 时 `defaultUiValue` 把数字存成字符串、`defaultConfigValue` 再解析回数字
+  // （见 config/convert.ts），规则拿到的就是文本。
+  pureConfigChartLineY: { widget: 'number' },
+  pureConfigChartSpeed: { widget: 'number' },
+  // 竖判定线的三个参数与上面几项同族（同样不能写 `uiValue: 'number'`）。
+  pureConfigChartSideLines: { widget: 'checkbox' },
+  pureConfigChartSideX: { widget: 'number' },
+  pureConfigChartAngle: { widget: 'number' },
+  pureConfigChartNoise: { widget: 'checkbox' },
+  // 噪域矩形的四个参数（高度 / 宽度 / 时间窗 / 延后视窗）同族。
+  pureConfigChartNoiseHeight: { widget: 'number' },
+  pureConfigChartNoiseWidth: { widget: 'number' },
+  pureConfigChartNoiseTime: { widget: 'number' },
+  pureConfigChartNoiseDelay: { widget: 'number' },
   forceAspectRatio: { widget: 'checkbox' },
   foldAnimation: { widget: 'checkbox' },
   aspectRatio: {

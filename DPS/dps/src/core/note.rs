@@ -52,6 +52,10 @@ pub struct Note {
     pub color: Anim<Color>,
     pub hit_fx_color: Anim<Color>,
     pub protected: bool,
+    /// 「纯配置谱面」：这个按键在**判定时刻**的屏幕位置落在谱面的噪域里，于是在它周围画一块噪域矩形
+    /// （「反向强制定位」那个观感）。标记在转换时算好（`core::pure_config`），之后不再变；只用于渲染，
+    /// 不进二进制谱面。
+    pub pure_config_noise: bool,
     /// 「屏幕进水」：这个按键的水下状态（血量 / 泡水时长 / 受伤闪红 / 死亡动画 …）。
     /// 状态定义与更新逻辑都在 `core::water`（`WaterState` / `water::update`）。
     pub water: crate::core::water::WaterState,
@@ -68,6 +72,70 @@ pub struct RenderConfig<'a> {
     pub invisible_time: f64,
     pub draw_below: bool,
     pub incline_sin: f32,
+    /// 判定线在这一帧的旋转角（度），只给按键调试文本用。
+    pub line_angle: f32,
+}
+
+/// 「按键调试」（`chart_debug_note > 0`）画在按键旁边的那段文本。
+///
+/// 内容由 `chart_debug_note_fields` 决定：逗号分隔的名单，大小写不敏感、未知项忽略。可选
+/// `line`（判定线序号）、`time`（判定时刻，长按再带尾端时刻）、`height`（判定线高度，长按带
+/// 尾端高度）、`base`（离判定线的高度差）、`angle`（判定线这一帧的旋转角，单位度）、`speed`、
+/// `above`、`fake`。第一行是数值，第二行只放 `speed` / `above` / `below` / `fake` 这些标记，
+/// 没有标记就不留空行。名单为空时只剩纯空白串，调用方仍按原样画（等于不显示文本）。
+fn debug_note_text(res: &Resource, note: &Note, line_id: usize, base: f64, angle: f32) -> String {
+    let fields = res.config.chart_debug_note_fields.as_str();
+    let on = |name: &str| fields.split(',').any(|it| it.trim().eq_ignore_ascii_case(name));
+    let (end_time, end_height, end_speed) = match &note.kind {
+        NoteKind::Hold {
+            end_time,
+            end_height,
+            end_speed,
+        } => (Some(*end_time), Some(*end_height), *end_speed),
+        _ => (None, None, None),
+    };
+    let mut text = String::new();
+    if on("line") {
+        text.push_str(&format!("[{}] ", line_id));
+    }
+    if on("time") {
+        match end_time {
+            Some(end) => text.push_str(&format!("t:{:.2}({:.2}) ", note.time, end)),
+            None => text.push_str(&format!("t:{:.2} ", note.time)),
+        }
+    }
+    if on("height") {
+        match end_height {
+            Some(end) => text.push_str(&format!("h:{:.2}({:.2}) ", note.height, end)),
+            None => text.push_str(&format!("h:{:.2} ", note.height)),
+        }
+    }
+    if on("base") {
+        text.push_str(&format!("[{:.2}] ", base));
+    }
+    if on("angle") {
+        text.push_str(&format!("angle:{:.1} ", angle));
+    }
+    let mut marks = String::new();
+    // 速度和原来一样只在「不是默认值」时出现：长按连尾端速度一起显示。
+    let hide_speed = note.speed == 1.0 && end_speed.is_none();
+    if on("speed") && !hide_speed {
+        marks.push_str(&format!(" v: {}", note.speed));
+        if let Some(end) = end_speed {
+            marks.push_str(&format!("({})", end));
+        }
+    }
+    if on("above") {
+        marks.push_str(if note.above { " above" } else { " below" });
+    }
+    if on("fake") && note.fake {
+        marks.push_str(" fake");
+    }
+    if !marks.is_empty() {
+        text.push('\n');
+        text.push_str(&marks);
+    }
+    text
 }
 
 fn draw_tex(res: &Resource, texture: Texture2D, order: i8, x: f32, y: f32, color: Color, mut params: DrawTextureParams, clip: bool) {
@@ -234,10 +302,19 @@ fn draw_judge_range(res: &Resource, kind: &NoteKind, y: f32, alpha: f32) {
 ///
 /// `tint` 再决定这一段要不要着色：判定之后「延后视窗」里的洞是**在音符本身已经不再绘制**
 /// 时补出去的（见 `Note::render` 开头那段），那时再着色会凭空多出一个方块，所以传 `false`。
-fn draw_force_position_hole(res: &Resource, y: f32, tint: bool) {
+///
+/// `noise` 表明这个按键是「纯配置谱面」里被噪域盖住的那一类：矩形的大小改由
+/// `pure_config_chart_noise_width` / `_height` 决定 —— 那一层只画在这些按键上，与「强制定位」
+/// 满屏铺噪域的场合需要各自独立的大小。
+fn draw_force_position_hole(res: &Resource, y: f32, tint: bool, noise: bool) {
     let screen_height = 2. / res.aspect_ratio;
-    let hw = res.config.block_area_force_width * screen_height / 10.;
-    let hh = res.config.block_area_force_height * screen_height * 0.5;
+    let (width, height) = if noise {
+        (res.config.pure_config_chart_noise_width, res.config.pure_config_chart_noise_height)
+    } else {
+        (res.config.block_area_force_width, res.config.block_area_force_height)
+    };
+    let hw = width * screen_height / 10.;
+    let hh = height * screen_height * 0.5;
     if hw <= 0. || hh <= 0. {
         return;
     }
@@ -416,11 +493,31 @@ impl Note {
     ///
     /// Hold 的判定到长条尾端才结束：按住期间 `end_time > res.time`、差值为负 ⇒ 这里不触发，
     /// 正被按住的 Hold 由 `render` 里那段负责（Hold 不会被那个 `continue` 跳过）。
+    /// 这一帧要不要围绕这个按键推出「强制定位」的四边形。
+    ///
+    /// 「纯配置谱面」下同一个四边形换了个用途：它是按键噪域的几何，只有被 [`Note::pure_config_noise`]
+    /// 标中的按键才推，此时**不看** `block_area_force_position`。强制定位要铺一整层全屏噪域再由按键挖洞，
+    /// 而纯配置模式把那一层关掉了、只把四边形本身当噪域画（见 `Chart::render_block_area`），两个开关叠在
+    /// 一起就会让每个按键周围都糊上一块噪域。
+    fn force_position_drawn(&self, res: &Resource) -> bool {
+        if res.config.pure_config_chart {
+            self.pure_config_noise
+        } else {
+            res.config.block_area_force_position
+        }
+    }
+
     pub fn render_force_linger(&self, res: &mut Resource, config: &mut RenderConfig) {
-        if !res.config.block_area_force_position || self.fake {
+        // 「纯配置谱面」里被标了噪域的按键也走这条通路 —— 那些按键周围要单独长出噪域矩形，而全屏噪域
+        // 那一层是关着的（见 `Chart::render_block_area`）。
+        if !self.force_position_drawn(res) || self.fake {
             return;
         }
-        let delay = res.config.block_area_force_delay as f64;
+        let delay = if self.pure_config_noise {
+            res.config.pure_config_chart_noise_delay
+        } else {
+            res.config.block_area_force_delay
+        } as f64;
         if delay <= 0. {
             return;
         }
@@ -444,12 +541,12 @@ impl Note {
                 let h = if self.time <= res.time { line_height } else { height };
                 let bottom = (h - line_height) as f32;
                 res.with_model(self.now_transform(res, ctrl_obj, 0., 0., true, false), |res| {
-                    draw_force_position_hole(res, bottom, false)
+                    draw_force_position_hole(res, bottom, false, self.pure_config_noise)
                 });
             }
             _ => {
                 res.with_model(self.now_transform(res, ctrl_obj, base as f32, config.incline_sin, true, true), |res| {
-                    draw_force_position_hole(res, 0., false)
+                    draw_force_position_hole(res, 0., false, self.pure_config_noise)
                 });
             }
         }
@@ -650,6 +747,16 @@ impl Note {
         // 本值这么长时间，然后被噪域重新盖住（`res.time - 判定时刻 <= 本值`）。Hold 的判定
         // 到长条尾端才结束，所以那里取 `end_time` —— 整条按住期间差值恒为负，洞一直在；
         // 松手（尾端过去）之后再留 `block_area_force_delay` 秒。
+        //
+        // 「纯配置谱面」下同一个矩形换了个用途：被 `Note::pure_config_noise` 标中的按键，这里推出去的
+        // 四边形会被 `block_area::native` 当成**噪域本体**（上游传空方块列表），于是按键周围自己长出一块
+        // 噪域，而屏幕上别处没有 —— 时间窗与延后视窗改由这一层自己的
+        // `pure_config_chart_noise_time` / `_delay` 决定，与「强制定位」那两项互不影响。
+        let (force_time, force_delay) = if self.pure_config_noise {
+            (res.config.pure_config_chart_noise_time, res.config.pure_config_chart_noise_delay)
+        } else {
+            (res.config.block_area_force_time, res.config.block_area_force_delay)
+        };
         let force_dt = self.time - res.time;
         let force_end = match self.kind {
             NoteKind::Hold { end_time, .. } => end_time,
@@ -657,20 +764,22 @@ impl Note {
         };
         let force_after = res.time - force_end;
         if !tint
-            && res.config.block_area_force_position
+            && self.force_position_drawn(res)
             && !self.fake
-            && force_dt <= res.config.block_area_force_time as f64
-            && force_after <= res.config.block_area_force_delay as f64
+            && force_dt <= force_time as f64
+            && force_after <= force_delay as f64
         {
             match self.kind {
                 NoteKind::Hold { .. } => {
                     let h = if self.time <= res.time { line_height } else { height };
                     let bottom = (h - line_height) as f32;
-                    res.with_model(self.now_transform(res, ctrl_obj, 0., 0., true, false), |res| draw_force_position_hole(res, bottom, true));
+                    res.with_model(self.now_transform(res, ctrl_obj, 0., 0., true, false), |res| {
+                        draw_force_position_hole(res, bottom, true, self.pure_config_noise)
+                    });
                 }
                 _ => {
                     res.with_model(self.now_transform(res, ctrl_obj, base as f32, config.incline_sin, true, true), |res| {
-                        draw_force_position_hole(res, 0., true)
+                        draw_force_position_hole(res, 0., true, self.pure_config_noise)
                     });
                 }
             }
@@ -871,35 +980,18 @@ impl Note {
         }
         if res.config.chart_debug_note > 0. {
             match self.kind {
-                NoteKind::Hold {
-                    end_time,
-                    end_height,
-                    end_speed,
-                } => {
+                NoteKind::Hold { end_time, .. } => {
                     if cover_base > height_above || res.time >= end_time {
                         return;
                     }
-                    let above = if self.above { "" } else { " below" };
-                    let fake = if self.fake { " fake" } else { "" };
                     let bottom = if self.time <= res.time { 0. } else { height - line_height };
-                    let speed = if self.speed == 1.0 && end_speed.is_none() {
-                        String::new()
-                    } else {
-                        let end_spd = match end_speed {
-                            Some(spd) => format!("({})", spd),
-                            None => "".to_string(),
-                        };
-                        format!(" v: {}{}", self.speed, end_spd)
-                    };
+                    let debug_text = debug_note_text(res, self, line_id, base, config.line_angle);
                     res.with_model(self.now_transform(res, ctrl_obj, bottom as f32, config.incline_sin, false, false), |res: &mut Resource| {
                         res.with_model(
                             Matrix::new_nonuniform_scaling(&Vector::new(1.0, if self.above { -1.0 } else { 1.0 })),
                             |res: &mut Resource| {
                                 res.apply_model(|res| {
-                                    ui.text(format!(
-                                        "[{}] t:{:.2}({:.2}) h:{:.2}({:.2})[{:.2}]\n{}{}{}",
-                                        line_id, self.time, end_time, self.height, end_height, base, speed, above, fake
-                                    ))
+                                    ui.text(debug_text)
                                     .pos(
                                         0.,
                                         if self.above {
@@ -922,22 +1014,13 @@ impl Note {
                     if cover_base > height_above || cover_base < height_below || res.time >= self.time {
                         return;
                     }
-                    let above = if self.above { "" } else { " below" };
-                    let fake = if self.fake { " fake" } else { "" };
-                    let speed = if self.speed == 1. {
-                        String::new()
-                    } else {
-                        format!(" v: {}", self.speed)
-                    };
+                    let debug_text = debug_note_text(res, self, line_id, base, config.line_angle);
                     res.with_model(self.now_transform(res, ctrl_obj, base as f32, config.incline_sin, false, false), |res: &mut Resource| {
                         res.with_model(
                             Matrix::new_nonuniform_scaling(&Vector::new(1.0, if self.above { -1.0 } else { 1.0 })),
                             |res: &mut Resource| {
                                 res.apply_model(|res| {
-                                    ui.text(format!(
-                                        "[{}] t:{:.2} h:{:.2}[{:.2}]\n{}{}{}",
-                                        line_id, self.time, self.height, base, speed, above, fake
-                                    ))
+                                    ui.text(debug_text)
                                     .pos(0., res.config.chart_debug_note * 0.15)
                                     .anchor(0.0, 0.)
                                     .size(res.config.chart_debug_note)

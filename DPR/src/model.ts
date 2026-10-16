@@ -113,7 +113,11 @@ export interface RenderConfig {
   renderLoading: boolean;
   hires: boolean;
   chartDebugLine: number;
+  /** 判定线调试文本显示哪些项，逗号分隔（取值见 dps 的 `core::line` 里拼文本的地方） */
+  chartDebugLineFields: string;
   chartDebugNote: number;
+  /** 按键调试文本显示哪些项，逗号分隔（取值见 dps 的 `core::note::debug_note_text`） */
+  chartDebugNoteFields: string;
   chartRatio: number;
   allGood: boolean;
   allBad: boolean;
@@ -284,6 +288,28 @@ export interface RenderConfig {
   judgeRangeNoiseOcclusion: boolean;
   preserveFramebuffer: boolean;
   renderExtra: boolean;
+  /** 「纯配置谱面」：解析完谱面后把判定线拍平，只留下按键在屏幕上的横向位置（谱面文件不受影响） */
+  pureConfigChart: boolean;
+  /** 「纯配置谱面」的判定线高度：0 是屏幕底边、1 是屏幕顶边、0.5 是正中 */
+  pureConfigChartLineY: number;
+  /** 「纯配置谱面」的按键流速：判定线高度与长按尾端都按它算 */
+  pureConfigChartSpeed: number;
+  /** 「纯配置谱面 · 竖判定线」：判定时刻接近竖直的按键分到屏幕左右两条竖判定线上 */
+  pureConfigChartSideLines: boolean;
+  /** 「纯配置谱面」竖判定线距最近那条屏幕竖边的距离：0.5 是屏幕正中、0.1 是离边一成 */
+  pureConfigChartSideX: number;
+  /** 「纯配置谱面」竖直判定的角度阈值：与水平方向相差多少度以内仍算横向按键，默认 45 */
+  pureConfigChartAngle: number;
+  /** 「纯配置谱面 · 按键噪域」：判定时刻落在噪域里的按键，渲染时在它周围长出一块噪域矩形 */
+  pureConfigChartNoise: boolean;
+  /** 「纯配置谱面 · 按键噪域」矩形高度：全高 = 该值 × 屏幕高度（默认 0.2 ⇒ 20% 屏高） */
+  pureConfigChartNoiseHeight: number;
+  /** 「纯配置谱面 · 按键噪域」矩形宽度：半宽 = 该值 × 屏幕高度 / 10（与判定范围同一套基准） */
+  pureConfigChartNoiseWidth: number;
+  /** 「纯配置谱面 · 按键噪域」时间窗（秒）：判定时刻进入本值以内的按键才长矩形（默认 3） */
+  pureConfigChartNoiseTime: number;
+  /** 「纯配置谱面 · 按键噪域」延后视窗（秒）：判定完成后矩形再停留这么久才消失（默认 0.3） */
+  pureConfigChartNoiseDelay: number;
   bgBlurriness: number;
 
   maxParticles: number;
@@ -300,7 +326,9 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   renderLoading: false,
   hires: false,
   chartDebugLine: 0.,
+  chartDebugLineFields: 'id,parent,height,ulp,z,aui,anchor,kind',
   chartDebugNote: 0.,
+  chartDebugNoteFields: 'line,time,height,base,speed,above,fake,angle',
   chartRatio: 1,
   allGood: false,
   allBad: false,
@@ -354,7 +382,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   renderLineExtra: true,
   renderNote: true,
   renderDoubleHint: true,
-  renderPendingNote: true,
+  renderPendingNote: false,
   pendingNoteColor: [1, 0.18, 0.18],
   renderUiPause: true,
   renderUiName: true,
@@ -434,6 +462,17 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   judgeRangeNoiseOcclusion: true,
   preserveFramebuffer: false,
   renderExtra: true,
+  pureConfigChart: false,
+  pureConfigChartLineY: 0.1,
+  pureConfigChartSpeed: 2.8,
+  pureConfigChartSideLines: true,
+  pureConfigChartSideX: 0.05,
+  pureConfigChartAngle: 45,
+  pureConfigChartNoise: true,
+  pureConfigChartNoiseHeight: 0.1,
+  pureConfigChartNoiseWidth: 1.1,
+  pureConfigChartNoiseTime: 0.13,
+  pureConfigChartNoiseDelay: 0,
   bgBlurriness: 80,
 
   maxParticles: 5000,

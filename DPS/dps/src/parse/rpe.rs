@@ -536,6 +536,7 @@ async fn parse_notes(
                 }
             },
             protected: false,
+            pure_config_noise: false,
             water: Default::default(),
         })
     }

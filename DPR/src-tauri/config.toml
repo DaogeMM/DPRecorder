@@ -32,7 +32,11 @@ challengeRank = 52
 # Graphics 图像
 # res_pack_path = ""
 chartDebugLine = 0.0
+# 判定线调试文本显示哪些项：id / parent / height / ulp / z / aui / anchor / kind / rot
+chartDebugLineFields = "id,parent,height,ulp,z,aui,anchor,kind"
 chartDebugNote = 0.0
+# 按键调试文本显示哪些项：line / time / height / base / angle / speed / above / fake
+chartDebugNoteFields = "line,time,height,base,speed,above,fake,angle"
 chartRatio = 1.0
 noteScale = 1.0
 
@@ -49,7 +53,7 @@ judgeRangeAlpha = 0.1     # 过渡结束后的不透明度 alpha（0~1）：0.1 
 judgeRangeColor = [1.0, 1.0, 1.0]  # 判定范围颜色 rgb（0~1）
 judgeRangeNoiseOcclusion = true  # 判定范围与噪域重合的部分是否让给噪域（官方行为 = 开；噪域没开时无效果）
 renderDoubleHint = true
-renderPendingNote = true  # 待判按键：把最近一个将要判定的按键染色再画一遍（画在噪域之上）
+renderPendingNote = false # 待判按键：把最近一个将要判定的按键染色再画一遍（画在噪域之上）
 pendingNoteColor = [1.0, 0.18, 0.18]  # 待判按键染色用的 rgb（0~1）
 renderUiPause = true
 renderUiName = true
@@ -80,6 +84,17 @@ offset = 0.0               # 谱面偏移（秒；界面上按毫秒编辑，默
 particle = true
 particleSquare = true
 renderExtra = true
+pureConfigChart = false       # 纯配置谱面：把判定线的移动/旋转/消失/速度全部拍平，只保留按键在屏幕上的横向位置（谱面文件不受影响）
+pureConfigChartLineY = 0.1    # 纯配置谱面：判定线钉在哪个高度，0 = 屏幕底边、1 = 屏幕顶边、0.5 = 正中
+pureConfigChartSpeed = 2.8    # 纯配置谱面：按键流速（判定线高度与长按尾长都按它算，点按/拖动/滑动固定 1）
+pureConfigChartSideLines = true   # 纯配置谱面：竖判定线，判定时刻接近竖直的按键分到屏幕左右两条竖判定线上
+pureConfigChartSideX = 0.05       # 纯配置谱面：竖判定线距最近那条屏幕竖边的距离（0.5 = 屏幕正中）
+pureConfigChartAngle = 45         # 纯配置谱面：竖直判定角度阈值，与水平方向相差多少度以内仍算横向按键
+pureConfigChartNoise = true       # 纯配置谱面：按键噪域，判定时刻落在噪域里的按键在它周围显示一块噪域矩形
+pureConfigChartNoiseHeight = 0.1      # 纯配置谱面：噪域矩形高度，全高占屏幕高度的比例
+pureConfigChartNoiseWidth = 1.1       # 纯配置谱面：噪域矩形宽度，半宽占屏幕高度的比例（再除以 10）
+pureConfigChartNoiseTime = 0.13       # 纯配置谱面：噪域时间窗（秒），判定时刻进入本值以内才长矩形
+pureConfigChartNoiseDelay = 0         # 纯配置谱面：噪域延后视窗（秒），判定完成后矩形再停留这么久
 renderBlockArea = true        # 噪域（Phigros 4.0 blockAreaList），Phira-Pro 原生实现
 simplifiedBlockArea = false   # 简化噪域：走同一份原生材质，覆写 uniform 降级成矩形纯色
 simplifiedBlockAreaText = false # 简化噪域文字：在简化噪域正中间印上噪域编号（disable 白字 / enable 粉红字）

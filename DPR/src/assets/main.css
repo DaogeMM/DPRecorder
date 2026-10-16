@@ -1,4 +1,15 @@
 
+/* 界面字体直接用仓库根 `assets/` 里的 font.ttf —— 和引擎画面里那份是同一个文件
+   （`DPS/dps-ui` 与 `DPR/src-tauri` 都按 `font.ttf` 加载）。
+   它在 Vite 的 root 之外，所以走 `vite.config.ts` 里 `@repo-assets` 这个别名：别名会被 CSS 的
+   `url()` 解析、由 Vite 把文件打进产物，dev 与打包后都能取到（不能写 `../../..` 相对路径 ——
+   dev 下能被 `server.fs.allow` 放行，打包后那个路径根本不存在）。
+   下面的 SarasaUiSC 只作缺字回退。 */
+@font-face {
+  font-family: 'Phigros';
+  src: url('@repo-assets/font.ttf');
+}
+
 @font-face {
   font-family: 'SarasaUiSC';
   src: url('./SarasaUiSC-Regular.ttf');
@@ -11,7 +22,7 @@
 
 @layer base {
   html {
-    font-family: SarasaUiSC, system-ui !important;
+    font-family: Phigros, SarasaUiSC, system-ui !important;
     transition: background-color 0.5s;
   }
 }
