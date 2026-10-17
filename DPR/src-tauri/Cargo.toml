@@ -1,6 +1,6 @@
 [package]
 name = "dpr"
-version = "1.6.1"
+version = "1.0.0"
 description = "DPRecorder"
 authors.workspace = true
 license.workspace = true
