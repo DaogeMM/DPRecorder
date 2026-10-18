@@ -145,7 +145,7 @@ const RESPACK = {
 /* =========================== 谱面信息 =============================
  * 这一区的控件由 RenderView 通过 `chart-info` 插槽填进来（解析谱面后才有）：
  *   - `diff` 难度标识（`AT`）、`lvl` 定数（`18.0`）都能手改；
- *   - `difficulty` 难度整串（`AT Lv.18.0`）默认随上面两项拼出来（见 RenderView 的 watch）。
+ *   - `difficulty` 难度文本，整串（`AT Lv.18.0`）默认随上面两项拼出来（见 RenderView 的 watch）。
  * 三者的值都不会被配置覆盖（不在 `config/chartSide.ts` 的名单里）。 */
 const CHART_INFO = {
   lvl: {
@@ -247,14 +247,26 @@ const CHART = {
   negativeLengthHold: { widget: 'checkbox' },
   holdParticleIntervalRatio: { widget: 'number' },
   lineLength: { widget: 'number' },
-  scoreTotal: { widget: 'number', integer: true },
+  // 总分 / 偏移的配置值仍随预设与 config.toml 存，但**控件搬到了「谱面信息」**
+  // （RenderView 的 chart-info 插槽）。这里用 `derived` + `syncToUi: false`：
+  //   - `applyConfig()` 不把它们写进界面（表单那边由 ConfigView 用 `bindChartInfoSlot` 填）；
+  //   - `toConfig` 从内部槽取 —— 内部槽建在**配置形态**上（总分整数、偏移秒），
+  //     由谱面信息表单写入，见 `useRenderConfig.ts` 的 chartInfoBindings。
+  scoreTotal: {
+    widget: 'derived',
+    uiKey: 'scoreTotalUi',
+    syncToUi: false,
+    toConfig: (ui) => Number(ui.scoreTotal),
+    note: '控件在谱面信息里，值存在内部槽 ui.scoreTotal（整数）',
+  },
   previewStart: { widget: 'number' },
   previewEnd: { widget: 'number', note: '0 = 到谱面结尾' },
   offset: {
-    widget: 'number',
-    note: '界面单位是毫秒，配置单位是秒（与 judgeOffset 同一套写法）',
-    toConfig: (ui) => parseFloat(String(ui.offset)) / 1000,
-    toUi: (value) => String(Math.round(value * 1000)),
+    widget: 'derived',
+    uiKey: 'offsetUi',
+    syncToUi: false,
+    toConfig: (ui) => Number(ui.offset),
+    note: '控件在谱面信息里（界面单位毫秒），值存在内部槽 ui.offset（秒）',
   },
 } satisfies Partial<FieldTable>;
 

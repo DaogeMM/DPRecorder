@@ -18,7 +18,7 @@
     },
     "info": {
         "name": "曲名",
-        "difficulty": "难度",
+        "difficulty": "难度文本",
         "level": "显示难度",
         "diff": "难度标识",
         "lvl": "定数",
@@ -29,12 +29,16 @@
         "music": "音乐文件",
         "illustration": "曲绘文件",
         "previewStart": "预览开始时间",
+        "previewStart-tip": "试听这首曲子时从第几秒开始",
         "previewEnd": "预览结束时间",
+        "previewEnd-tip": "试听到第几秒结束\n留空 = 从开始时间起 15 秒",
         "aspectRatio": "宽高比",
         "force-aspect-ratio": "强制宽高比",
+        "force-aspect-ratio-tip": "开: 严格按上面设置的宽高比出画, 多出来的边留黑\n关: 宽高比只取「设置值」与「窗口比例」里更窄的那个",
         "backgroundDim": "背景暗淡",
         "line-reference-y-axis": "判定线参考 Y 轴",
         "lineLength": "判定线长度",
+        "lineLength-tip": "判定线的总长 = 该值 × 屏幕宽度 (默认 6), 向两侧各伸一半\n只要比屏幕宽, 看起来都是贯穿整屏",
         "offset": "偏移",
         "tip": "Tip",
         "tip-placeholder": "留空则随机选择",
@@ -45,11 +49,14 @@
         "hold-partial-cover": "Hold 尾部遮罩",
         "hold-partial-cover-tip": "默认在头部, 开启后在尾部",
         "negative-length-hold": "允许负长度 Hold",
+        "negative-length-hold-tip": "谱面把 Hold 时长写成负数时 (长条头在尾后面), 是否翻个方向把条身照常画出来\n关掉时这类长条按原样算高度, 显示会不对 (默认关闭)",
         "note-uniform-scale": "Note 等比缩放",
         "note-uniform-scale-tip": "默认仅缩放 X 轴, 开启后 Note 等比缩放",
         "score-total": "总分",
         "hold-particle-interval-ratio": "Hold 打击特效间隔倍率",
-        "fold-animation": "折叠式入场"
+        "hold-particle-interval-ratio-tip": "按住 Hold 期间打击特效的间隔倍率 (默认 1)\n越大越稀; 实际间隔 = 原间隔 × 该值 / 速度",
+        "fold-animation": "折叠式入场",
+        "fold-animation-tip": "谱面开始前从中间横向展开、结束后再横向收起的过场动画\n关掉就没有这段过渡, 判定线一直按正常比例画 (默认开启)"
     },
     "error": {
         "preview-start-end-15s": "预览时间不能大于15秒"

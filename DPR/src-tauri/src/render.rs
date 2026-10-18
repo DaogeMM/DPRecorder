@@ -259,6 +259,7 @@ pub struct RenderConfig {
     pub judge_range_color: [f32; 3],
     /// 判定范围与噪域重合的部分是否让给噪域（官方行为 = 开）
     pub judge_range_noise_occlusion: bool,
+    /// 「拖影效果」：只保留最近几帧的残影（引擎侧见 `DPS` 的 `Resource::keep_target`）
     pub preserve_framebuffer: bool,
     pub render_extra: bool,
     /// 「纯配置谱面」：解析完谱面后把判定线拍平，只留下按键在屏幕上的横向位置

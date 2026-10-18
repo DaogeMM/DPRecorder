@@ -1613,7 +1613,11 @@ impl Scene for GameScene {
             set_camera(&res.camera);
         }
 
-        let msaa = res.config.sample_count > 1;
+        // 拖影下画面留残影，抗锯齿既拿不到残影又要多算一遍，
+        // 所以拖影里 `sample_count` 一律当 1 用（`Resource::update_size` 也不再建
+        // 多重采样那张 `chart_target`）。
+        let trail = res.config.preserve_framebuffer;
+        let msaa = res.config.sample_count > 1 && !trail;
 
         // camera setup
         let ui_viewport = if res.config.low_resolution_mode {
@@ -1622,8 +1626,30 @@ impl Scene for GameScene {
             ui.viewport
         };
         let vp = res.camera.viewport.unwrap_or(ui_viewport);
+        // 拖影：准备一张离屏累积缓冲（按窗口那一块建，与 `chart_target` 同尺寸）。
+        // 不能直接靠屏幕——窗口的缓冲是交换链，上一帧的内容留不住。
+        if trail {
+            let fresh = res.keep_target.as_ref().map(|it| it.dim())
+                != Some((ui_viewport.2 as u32, ui_viewport.3 as u32));
+            res.ensure_keep_target((ui_viewport.2 as u32, ui_viewport.3 as u32));
+            if fresh {
+                // 刚建出来的缓冲内容未定义，先刷成黑的，免得第一帧闪出一片杂质。
+                let onto = res.chart_onto();
+                set_camera(&Camera2D {
+                    zoom: vec2(1., 1.),
+                    render_target: onto,
+                    ..Default::default()
+                });
+                clear_background(BLACK);
+            }
+        } else if res.keep_target.is_some() {
+            // 关掉拖影就把那两张整屏缓冲还回去，别一直占着显存。
+            res.keep_target = None;
+        }
+        // 谱面这一帧是否走离屏目标（而不是直接画在屏幕上）。
+        let offscreen = trail || res.chart_target.is_some();
         let viewport_window = Some(ui_viewport);
-        let viewport_chart = if res.chart_target.is_some() {
+        let viewport_chart = if offscreen {
             Some((vp.0 - ui_viewport.0, vp.1 - ui_viewport.1, vp.2, vp.3))
         } else {
             res.camera.viewport
@@ -1634,20 +1660,53 @@ impl Scene for GameScene {
         let asp2_ui = vp.3 as f32 / vp.2 as f32;
         let asp2_ui_window = ui_viewport.3 as f32 / ui_viewport.2 as f32;
 
-        let chart_onto = res
-            .chart_target
-            .as_ref()
-            .map(|it| if msaa { it.input() } else { it.output() })
-            .or(res.camera.render_target);
+        // 拖影画进累积缓冲（单采样纹理），不走 `chart_target` 那张多重采样 FBO。
+        let chart_onto = if trail {
+            res.keep_target.as_ref().map(|it| it.output())
+        } else {
+            res.chart_target
+                .as_ref()
+                .map(|it| if msaa { it.input() } else { it.output() })
+                .or(res.camera.render_target)
+        };
 
         let h = 1. / res.aspect_ratio;
+        // 累积缓冲不会自己留住内容（实测不显式拷贝的话每帧都是空的），
+        // 所以「不清除帧缓冲」只能靠每帧把上一帧显式铺回来。
+        let last_frame = if trail {
+            res.keep_target.as_ref().and_then(|it| it.old_opt())
+        } else {
+            None
+        };
+        if let Some(last) = last_frame {
+            set_camera(&Camera2D {
+                // 渲染目标里的纹理与屏幕坐标上下相反（GL 的 framebuffer 原点在左下），
+                // 所以往回铺时要**再翻一次**：这里 y 用正的，才能和本帧画上去的内容对齐。
+                zoom: vec2(1., 1.),
+                render_target: chart_onto,
+                ..Default::default()
+            });
+            draw_texture_ex(
+                last.texture,
+                -1.,
+                -1.,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(2., 2.)),
+                    ..Default::default()
+                },
+            );
+        }
+
         set_camera(&Camera2D {
             zoom: vec2(1., -asp2_window),
-            viewport: if res.chart_target.is_some() { None } else { viewport_window },
+            viewport: if offscreen { None } else { viewport_window },
             render_target: chart_onto,
             ..Default::default()
         });
-        if !res.config.preserve_framebuffer {
+        // 清屏只发生在普通模式：拖影要留住累积缓冲里的上一帧，
+        // 清一下就等于把要保留的历史帧扔掉。
+        if !trail {
             clear_background(BLACK);
         }
         if res.config.render_bg {
@@ -1745,7 +1804,7 @@ impl Scene for GameScene {
             set_camera(&Camera2D {
                 zoom: if res.config.chart_ratio < 1. { vec2(asp2_ui_window * ratio, -1. * ratio) } else { vec2(asp2_ui * ratio, -1. * ratio) },
                 viewport: chart_viewport,
-                render_target: self.res.chart_target.as_ref().map(|it| it.output()).or(self.res.camera.render_target),
+                render_target: self.res.chart_onto(),
                 ..Default::default()
             });
             self.ui(ui, tm)?;
@@ -1764,17 +1823,25 @@ impl Scene for GameScene {
         // 并让 `chart_to_base` 取单位阵：四边形 `draw_rectangle(-1., -1./aspect, 2., 2./aspect)`
         // 的 clip 就是 `±1`，铺满整屏；谱面缩放整条交给掩码（`render_displaced` 按
         // `block_area_chart_scale` 缩放方块几何），于是原本落在可视区外的方块也能画出来。
+        // 拖影下噪域不能画进累积缓冲：它每帧都是一层半透明叠加（方块材质是
+        // `One / OneMinusSrcAlpha`，禁用层更是纯加算），叠进累积缓冲就等于每帧再叠一次，
+        // 几帧就烧成一片白。这两种模式改成等累积画面拷到屏幕之后再画 —— 那时它采样到的
+        // 是当帧（含残影）的画面，画完即弃，不会回头污染累积缓冲。
         {
             set_camera(&Camera2D {
                 zoom: vec2(1., self.res.aspect_ratio),
-                render_target: self.res.chart_target.as_ref().map(|it| it.output()).or(self.res.camera.render_target),
+                render_target: self.res.chart_onto(),
                 ..Default::default()
             });
             // 视口放开成「整张目标」（`apply_viewport(0, 0, pass_w, pass_h)`）。
             self.gl.quad_gl.viewport(None);
-            self.chart.render_block_area(&mut self.res);
-            // 「屏幕进水」：同一台相机、同一层（在噪域之上）再盖一层水贴图。
-            crate::core::water::draw_water(&mut self.res);
+            // 噪域是加算混合的整屏后处理，叠进累积缓冲会逐帧加亮、几帧就糊成一片白，
+            // 所以两种模式都只在拷屏之后画一次（见下面 `noise_on_screen`）。
+            if !trail {
+                self.chart.render_block_area(&mut self.res);
+                // 「屏幕进水」：同一台相机、同一层（在噪域之上）再盖一层水贴图。
+                crate::core::water::draw_water(&mut self.res);
+            }
         }
 
 
@@ -1794,7 +1861,7 @@ impl Scene for GameScene {
             set_camera(&Camera2D {
                 zoom: vec2(1., -asp2_window),
                 viewport: viewport_window,
-                render_target: self.res.chart_target.as_ref().map(|it| it.output()).or(self.res.camera.render_target),
+            render_target: self.res.chart_onto(),
                 ..Default::default()
             });
             if self.mode == GameMode::TweakOffset {
@@ -1811,7 +1878,7 @@ impl Scene for GameScene {
             set_camera(&Camera2D {
                 zoom: vec2(1., -asp2_chart),
                 viewport: viewport_chart,
-                render_target: self.res.chart_target.as_ref().map(|it| it.output()).or(self.res.camera.render_target),
+                render_target: self.res.chart_onto(),
                 ..Default::default()
             });
             self.overlay_ui(ui, tm)?;
@@ -1825,15 +1892,28 @@ impl Scene for GameScene {
             set_camera(&Camera2D {
                 zoom: chart_zoom,
                 viewport: chart_viewport,
-                render_target: self.res.chart_target.as_ref().map(|it| it.output()).or(self.res.camera.render_target),
+                render_target: self.res.chart_onto(),
                 ..Default::default()
             });
             self.chart.render_pending_tint(ui, &mut self.res);
         }
 
-        if !self.res.no_effect || msaa || self.res.config.low_resolution_mode {
-            // render the texture onto screen
-            if let Some(target) = &self.res.chart_target {
+        // 拖影的噪域与屏幕进水补画在拷屏之后（累积缓冲不能被它们污染），画完即弃。
+                let noise_on_screen = trail;
+
+        // 拖影要把累积缓冲整块拷到屏幕。
+        let copy_target = if trail {
+            self.res.keep_target.as_ref().map(|it| it.output())
+        } else {
+            self.res.chart_target.as_ref().map(|it| it.output())
+        };
+        if copy_target.is_some()
+            && (trail
+                || !self.res.no_effect
+                || msaa
+                || self.res.config.low_resolution_mode)
+        {
+            if let Some(target) = copy_target {
                 self.gl.flush();
                 self.gl.quad_gl.viewport(None);
                 set_camera(&Camera2D {
@@ -1843,7 +1923,7 @@ impl Scene for GameScene {
                     ..Default::default()
                 });
                 draw_texture_ex(
-                    target.output().texture,
+                    target.texture,
                     -1.,
                     -ui.top,
                     WHITE,
@@ -1852,9 +1932,28 @@ impl Scene for GameScene {
                         ..Default::default()
                     },
                 );
+                if noise_on_screen {
+                    // 与常规模式那趟完全一样的相机与视口：整张默认 framebuffer。
+                    set_camera(&Camera2D {
+                        zoom: vec2(1., self.res.aspect_ratio),
+                        render_target: self.res.camera.render_target,
+                        ..Default::default()
+                    });
+                    self.gl.quad_gl.viewport(None);
+                    self.chart.render_block_area(&mut self.res);
+                    crate::core::water::draw_water(&mut self.res);
+                }
             }
         } else {
             self.gl.flush();
+        }
+
+        // 把本帧的成品定格成下一帧要铺回来的「上一帧」。
+        if trail {
+            self.gl.flush();
+            if let Some(target) = &mut self.res.keep_target {
+                target.swap();
+            }
         }
 
         if self.res.config.auto_tweak_offset {

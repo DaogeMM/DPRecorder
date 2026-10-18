@@ -130,11 +130,7 @@ export function useRenderConfig() {
   };
 
   /* ------------------------ 材质包（异步） ------------------------ */
-  interface Respack {
-    name: string;
-    path: string | null;
-    index: number;
-  }
+  type Respack = { name: string; path: string | null; index: number };
   const DEFAULT_RESPACK: Respack = { name: t('respack-default'), path: null, index: 0 };
   const respacks = ref<Respack[]>([DEFAULT_RESPACK]);
 
@@ -286,6 +282,22 @@ export function useRenderConfig() {
     ui.bitrate = ui.dynamicBitrateControl ? bitrateCrfList[0]! : bitrateList[0]!;
   }
 
+  /* ---------------------- 谱面信息侧的槽位绑定 ----------------------
+   * 「总分」「偏移」的控件在谱面信息表单里（`RenderView` 的 chart-info 插槽），但它们的
+   * 配置值仍随预设与 config.toml 存，所以规格表里仍留着这两个键：`syncToUi: false`
+   * 表示 `applyConfig()` 不把预设里的值写进界面，而 `toConfig` 仍从内部槽读
+   * （`ui.scoreTotal` / `ui.offset` —— 它们建在**配置形态**上：总分是整数、偏移是秒）。
+   * 这两个函数让 `ConfigView` 读写那两个内部槽：
+   *   写 ⇒ 表单上的值进配置（buildConfig 每次现读，提交渲染时与表单一致）；
+   *   读 ⇒ 套用预设 / 读回工作配置之后，表单上显示的就是配置里那份值。 */
+  const chartInfoBindings = {
+    scoreTotal: () => ui.scoreTotal as number,
+    offset: () => ui.offset as number,
+  };
+  function bindChartInfoSlot(key: 'scoreTotal' | 'offset', value: unknown) {
+    ui[key] = value;
+  }
+
   /* ---------------------------- 联动 ------------------------------
    * 照抄原来 ConfigView.vue 里的 watch，语义一字不差。 */
   watch(
@@ -306,15 +318,31 @@ export function useRenderConfig() {
       if (value && ui.volumeMusic < 0.6) ui.volumeMusic = 1.0;
     }
   );
-  watch([() => ui.renderBg, () => ui.sampleCount], ([bg, sam]) => {
+  watch([() => ui.renderBg, () => ui.sampleCount], ([bg]) => {
     if (bg) ui.preserveFramebuffer = false;
-    if (sam === '1') ui.preserveFramebuffer = false;
   });
-  watch([() => ui.preserveFramebuffer, () => ui.sampleCount], ([pre, sam]) => {
-    if (!pre) return;
-    ui.renderBg = false;
-    if (sam === '1') ui.sampleCount = '2';
-  });
+  watch(
+    () => ui.preserveFramebuffer,
+    (pre) => {
+      if (!pre) return;
+      ui.renderBg = false;
+    }
+  );
+  // 拖影画在一张单采样的累积缓冲上，抗锯齿拿不到残影、还会白算一遍：
+  // 拖着开着就把抗锯齿选回「关」；反过来选了 MSAA / FXAA 就关掉拖影。
+  watch(
+    () => ui.preserveFramebuffer,
+    (value) => {
+      if (value) ui.sampleCount = '1';
+    }
+  );
+  watch(
+    () => ui.sampleCount,
+    (sam) => {
+      if (sam === '1') return;
+      ui.preserveFramebuffer = false;
+    }
+  );
   watch(
     () => ui.roman,
     (value) => {
@@ -364,6 +392,8 @@ export function useRenderConfig() {
     applyResolution,
     updateMaxParticles,
     updateBitrate,
+    chartInfoBindings,
+    bindChartInfoSlot,
     // 模板直接用的下拉项与校验器
     encoderList,
     resolutionList,

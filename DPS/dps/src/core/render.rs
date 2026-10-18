@@ -101,12 +101,21 @@ impl MSRenderTarget {
         self.dummy
     }
 
+    pub fn dim(&self) -> (u32, u32) {
+        self.dim
+    }
+
     pub fn output(&self) -> RenderTarget {
         self.output[0].unwrap()
     }
 
     pub fn old(&self) -> RenderTarget {
         self.output[1].unwrap()
+    }
+
+    /// `old()` 的可空版本：第一帧还没有「上一帧」时返回 `None`（`old()` 会直接 panic）。
+    pub fn old_opt(&self) -> Option<RenderTarget> {
+        self.output[1]
     }
 }
 

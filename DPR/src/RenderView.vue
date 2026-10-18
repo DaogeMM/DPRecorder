@@ -36,7 +36,7 @@ const router = useRouter();
 // 渲染参数(分辨率 / 编码器 / 音频 / 高级开关…)的控件都在 ./components/ConfigView.vue，
 // 新增参数的完整步骤见那个文件顶部的注释（以及 ../model.ts、src-tauri/src/render.rs 里同样的说明）。
 // 这个文件负责的是另外三件事:
-//   - 谱面信息表单（chart-info 插槽: 名称 / 难度 / 谱师 / 音乐制作 / 插画设计 / 简介 / 标签 …），
+//   - 谱面信息表单（chart-info 插槽: 名称 / 难度文本 / 谱师 / 音乐制作 / 插画设计 / 简介 / 标签 …），
 //     直接绑定 chartInfo —— 这些文字框是用户明确排除在配置之外的「谱面信息」
 //   - 最近一次导入的谱面本身（chartPath / chartInfo）与 Tip 的本地记忆（见下面的 ChartRowState）
 //   - buildParams() 调用 configView 的 buildConfig()，再把 { path, info, config } 交给 invoke('post_render')
@@ -61,8 +61,8 @@ const { text: lvlText, normalize: normalizeLvl } = useLvlField(
   },
 );
 
-// 「难度」整串默认由「难度标识」+「定数」拼出来（`AT` + `18.0` → `AT Lv.18.0`）。
-// 只在两者变化时覆盖，手改过的「难度」会一直留到下一次改动它们为止。
+// 「难度文本」整串默认由「难度标识」+「定数」拼出来（`AT` + `18.0` → `AT Lv.18.0`）。
+// 只在两者变化时覆盖，手改过的「难度文本」会一直留到下一次改动它们为止。
 watch(
   [() => chartInfo.value?.diff, () => chartInfo.value?.lvl],
   ([diff, lvl]) => {
@@ -73,6 +73,15 @@ watch(
     if (parts.length) chartInfo.value.difficulty = parts.join(' ');
   },
 );
+
+// 谱面信息里的「偏移」（毫秒）与「总分」：值住在渲染配置里（`RenderConfig.offset` / `scoreTotal`），
+// 控件在本页的谱面信息表单里。下面两个字符串是表单那一侧的镜像：
+//   - 解析完谱面 / 套用预设时，ConfigView 通过 `setChartInfoSlots()` 把配置里的值写进来；
+//   - 用户在这里改了，就回写进 ConfigView（`configView.setChartInfoSlots()`）——buildConfig() 会取它。
+// 用字符串是为了跟其它输入框一样随手打、不清空中间态；换算与校验交给 buildConfig() 与 rules。
+const offsetText = ref('');
+const scoreTotalText = ref('');
+const chartInfoSlotsReady = ref(false); // 配置里的值还没拿到之前，别把空字符串写回去
 
 // 「游玩」按钮默认不显示, 由「设置」里的「开启游玩按键」决定(读的是后端 config.toml)
 const appConfig = ref(DEFAULT_APP_CONFIG);
@@ -250,9 +259,11 @@ async function previewTweakoffset() {
     if (!params) return false;
     let offset = await invoke('preview_tweakoffset', { params });
     if (offset != null) {
-      // 偏移现在是配置项：后端算回来的秒数交给 ConfigView 写回「偏移」那一格（界面按毫秒显示），
+      // 偏移是配置项：后端算回来的秒数写回「偏移」那一格（界面按毫秒显示），
       // 下一次 buildParams() 会带着这个值再发给后端
-      configView.value?.setOffsetSeconds(offset as number);
+      const ms = Math.round((offset as number) * 1000);
+      offsetText.value = String(ms);
+      configView.value?.setChartInfoSlots({ offset: ms / 1000 });
     }
     return true;
   } catch (e) {
@@ -348,6 +359,32 @@ function onConfigState(state: WorkingState) {
   localStorage.setItem('RenderView.Config', JSON.stringify(state));
 }
 
+/** ConfigView 程序化改写了「总分 / 偏移」（套用预设、读回工作配置、调整偏移算回新值）：
+ *  把值回填进谱面信息表单里那两个输入框。 */
+let pushingFromForm = false;
+function onChartInfoSlots(values: { scoreTotal: number; offset: number }) {
+  chartInfoSlotsReady.value = true;
+  // 这一批是表单自己改出来的回声：不要再写回去（会把正在敲的「12.3」取整成「12」）
+  if (pushingFromForm) return;
+  offsetText.value = String(Math.round(values.offset * 1000));
+  scoreTotalText.value = String(values.scoreTotal);
+}
+
+/** 表单里改了「总分 / 偏移」：写回配置（配置是唯一的存储，这两个输入框只是它的控件） */
+watch([offsetText, scoreTotalText], ([offset, scoreTotal]) => {
+  if (!chartInfoSlotsReady.value) return;
+  // 空串 / 半截输入（"-"、"1."）不算数：等用户敲出个数再写，别把配置写成 NaN
+  const offsetMs = Number(offset);
+  const total = Number(scoreTotal);
+  if (!Number.isFinite(offsetMs) || !Number.isFinite(total)) return;
+  pushingFromForm = true;
+  try {
+    configView.value?.setChartInfoSlots({ offset: offsetMs / 1000, scoreTotal: total });
+  } finally {
+    pushingFromForm = false;
+  }
+});
+
 if (!isString(chartInQuery)) {
   onMounted(async () => {
     try {
@@ -370,6 +407,10 @@ if (!isString(chartInQuery)) {
       await configView.value?.updateRespacks();
       configView.value?.restoreWorking(saved);
     } finally {
+      // 「总分 / 偏移」的输入框要显示配置里的值（没存过工作配置时就是默认值）：
+      // 那两个值由 ConfigView 持有，这里主动拉一次（restoreWorking / 套用预设也会推过来）
+      const slots = configView.value?.chartInfoValues();
+      if (slots) onChartInfoSlots(slots);
       // 工作配置（含下拉框名字与星号）已经落到界面上，这才揭开内容区那层转圈（见 `./pageLoad`）
       await appConfigReady;
       await nextTick();
@@ -468,7 +509,7 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
     <div class="render-view__scroll">
       <!-- 谱面信息固定在整页最上面(ConfigView 的 chart-head 横幅 + chart-info 表单两个插槽)
            横幅 = 曲绘背景 + 曲名/难度/定数/谱师; 未导入谱面时横幅自己显示拖放提示 -->
-      <ConfigView ref="configView" :has-chart="!!chartInfo" :show-drop-hint="true" style="--config-scroll-max-height: none" @state="onConfigState">
+      <ConfigView ref="configView" :has-chart="!!chartInfo" :show-drop-hint="true" style="--config-scroll-max-height: none" @state="onConfigState" @chart-info="onChartInfoSlots">
           <template #chart-head>
             <ChartHero :info="chartInfo" :path="chartPath"></ChartHero>
           </template>
@@ -496,9 +537,12 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
             <CfgField :label="t('info.illustrator')">
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.illustrator"></v-textarea>
             </CfgField>
-            <!-- 谱面文件 / 音乐文件 / 曲绘文件 + 难度标识 / 定数 / 难度：紧接在上面那四个后面，同属**一个**网格
-                 （判定线长度在「谱面-判定线」，总分在「渲染-参数」）。
-                 「难度」是整串（`AT Lv.18.0`），默认由难度标识 + 定数拼出来，也能手改。 -->
+            <!-- 谱面文件 / 音乐文件 / 曲绘文件 + 难度标识 / 定数 / 难度文本 / 偏移 / 总分：紧接在上面那四个后面，同属**一个**网格
+                 （判定线长度在「谱面-判定线」）。
+                 「难度文本」是整串（`AT Lv.18.0`），默认由难度标识 + 定数拼出来，也能手改。
+                 「偏移」「总分」是**配置项**（`RenderConfig.offset` / `scoreTotal`，随预设存），
+                 但它们的值每谱面都要调，所以控件留在这里、值由 RenderView 与 ConfigView 互通
+                 （见下面的 watch 与 `setChartInfoSlots`）。 -->
             <CfgField :label="t('info.chart')">
               <v-text-field type="text" density="compact" hide-details="auto" v-model="chartInfo.chart"></v-text-field>
             </CfgField>
@@ -516,6 +560,14 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
             </CfgField>
             <CfgField :label="t('info.difficulty')">
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.difficulty"></v-textarea>
+            </CfgField>
+            <!-- 偏移（毫秒）与总分：值住在渲染配置里，控件在这里。
+                 偏移的「调整偏移」按钮在整页底部（`loadingTweakoffset` 也是那边的本地状态） -->
+            <CfgField :label="t('info.offset')">
+              <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.notEmpty]" v-model="offsetText"></v-text-field>
+            </CfgField>
+            <CfgField :label="t('info.score-total')">
+              <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.less4000000000, RULES.positive]" v-model="scoreTotalText"></v-text-field>
             </CfgField>
           </div>
 

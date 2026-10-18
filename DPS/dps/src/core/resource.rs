@@ -596,6 +596,19 @@ pub struct Resource {
     pub disable_hit_fx: bool,
 
     pub chart_target: Option<MSRenderTarget>,
+
+    /// 「拖影效果」专用的一张整屏缓冲：它自己就是上一帧的画面。
+    ///
+    /// 这两种模式要求「上一帧还在」，所以不能像平时那样在一帧结束时把画好的谱面丢给屏幕
+    /// 就完事 —— 屏幕每帧都被整屏覆盖，压不住历史。这里改成一个乒乓：每帧先把
+    /// `old()`（上一帧的成品）整屏拷回来，再往上画本帧的谱面，本帧结束后 `swap()`
+    /// 把它变成下一帧的 `old()`。
+    ///
+    /// 为什么不用现有的 `chart_target`（多重采样那张）：那张只在 `sample_count > 1` 时存在，
+    /// 而且实测它并不保留上一帧的内容（开了抗锯齿时残影毫无残留），拿它充当累积缓冲不可靠。
+    /// 这里显式「拷回上一帧」，不依赖渲染目标清不清屏。
+    pub keep_target: Option<MSRenderTarget>,
+
     pub no_effect: bool,
 
     pub note_buffer: RefCell<NoteBuffer>,
@@ -788,6 +801,7 @@ impl Resource {
             disable_hit_fx: false,
 
             chart_target: None,
+            keep_target: None,
             no_effect,
 
             note_buffer: RefCell::new(NoteBuffer::default()),
@@ -871,6 +885,27 @@ impl Resource {
         );
     }
 
+    /// 是否处于「拖影」模式 —— 要求上一帧的画面留在这一帧上。
+    pub fn keep_frame(&self) -> bool {
+        self.config.preserve_framebuffer
+    }
+
+    /// 谱面这一帧该画到哪张缓冲。拖影时是专用累积缓冲的当前面，
+    /// 否则沿用 `chart_target`（多重采样）或相机自带的渲染目标。
+    pub fn chart_onto(&self) -> Option<macroquad::texture::RenderTarget> {
+        if let Some(target) = &self.keep_target {
+            return Some(target.output());
+        }
+        self.chart_target.as_ref().map(|it| it.output()).or(self.camera.render_target)
+    }
+
+    /// 保证累积缓冲存在且尺寸对得上（只有换分辨率时才重建）。
+    pub fn ensure_keep_target(&mut self, dim: (u32, u32)) {
+        if self.keep_target.as_ref().map(|it| it.dim()) != Some(dim) {
+            self.keep_target = Some(MSRenderTarget::new(dim, 1));
+        }
+    }
+
     pub fn update_size(&mut self, vp: (i32, i32, i32, i32)) -> bool {
         if self.last_vp == vp {
             return false;
@@ -881,7 +916,12 @@ impl Resource {
         } else {
             vp
         };
-        if !self.no_effect || self.config.sample_count != 1 || self.config.low_resolution_mode {
+        // 拖影走的是单采样的 `keep_target`，多重采样那张既用不上也不该建
+        // （建了只会白占一份整屏显存），所以拖影下一律不建 `chart_target`，
+        // 之前建过的也一并释放。
+        if self.keep_frame() {
+            self.chart_target = None;
+        } else if !self.no_effect || self.config.sample_count != 1 || self.config.low_resolution_mode {
             self.chart_target = Some(MSRenderTarget::new((vp.2 as u32, vp.3 as u32), self.config.sample_count));
         }
         fn viewport(aspect_ratio: f32, (x, y, w, h): (i32, i32, i32, i32)) -> (i32, i32, i32, i32) {

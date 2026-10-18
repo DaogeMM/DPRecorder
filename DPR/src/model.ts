@@ -191,7 +191,7 @@ export interface RenderConfig {
   /* ---------- 谱面侧渲染参数（原本只存在于「谱面信息」里，现在也进配置） ----------
    * 这些键与 `dps::info::ChartInfo` 同名：`buildParams()` 会把它们并进发给后端的 `info`
    * （**配置值优先** ⇒ 导入谱面不再覆盖它们），于是它们既进预设、也进 config.toml。
-   * 真正属于单张谱面的那些文字框（名称 / 曲师 / 谱师 / 画师 / 难度 / 定数 / 简介 / Tip…）
+   * 真正属于单张谱面的那些文字框（名称 / 曲师 / 谱师 / 画师 / 难度文本 / 定数 / 简介 / Tip…）
    * 仍然不进配置 —— 见 `RenderView.vue` 的 `#chart-info` 插槽。 */
   /** 强制宽高比：开启时按 `aspectRatio` 强制画面比例，关闭时只保证画面不超过该比例 */
   forceAspectRatio: boolean;

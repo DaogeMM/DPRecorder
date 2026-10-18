@@ -305,6 +305,11 @@ pub struct Config {
     /// （官方 `judge_range.glsl` 的语义 `alpha *= 1 - 噪域覆盖度`）；关闭时判定范围照常
     /// 叠在噪域之上。噪域本身没开时本项无效果。
     pub judge_range_noise_occlusion: bool,
+    /// 「拖影效果」：只保留最近几帧的残影。
+    ///
+    /// 谱面与界面画在一张专用累积缓冲上：每帧先把上一帧整屏铺回来，再整体压暗一点
+    /// （`TRAIL_FADE`），于是旧帧逐帧淡出、只剩最近 8~10 帧。与「背景」互斥 ——
+    /// 背景是整屏不透明图，会把残影整个盖掉。
     pub preserve_framebuffer: bool,
     pub render_extra: bool,
     /// 「纯配置谱面」：解析完谱面后把判定线拍平 —— 移动 / 旋转 / 消失 / 速度全部变成常量，

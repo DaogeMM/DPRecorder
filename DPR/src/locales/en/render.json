@@ -18,7 +18,7 @@
     },
     "info": {
         "name": "Song Title",
-        "difficulty": "Difficulty",
+        "difficulty": "Difficulty Text",
         "level": "Display Difficulty",
         "charter": "Charter",
         "diff": "Difficulty tier",
@@ -29,12 +29,16 @@
         "music": "Music file",
         "illustration": "illustration File",
         "previewStart": "Preview Start Time",
+        "previewStart-tip": "Second at which previewing this song starts",
         "previewEnd": "Preview End Time",
+        "previewEnd-tip": "Second at which the preview stops\nEmpty = 15 seconds after the start time",
         "aspectRatio": "Aspect Ratio",
         "force-aspect-ratio": "Force Aspect Ratio",
+        "force-aspect-ratio-tip": "On: draw exactly at the aspect ratio set above, with black bars on the rest\nOff: use the narrower of that setting and the window ratio",
         "backgroundDim": "Background Dim",
         "line-reference-y-axis": "Line Reference Y Axis",
         "lineLength": "Line Length",
+        "lineLength-tip": "Total line length = this value x screen width (default 6), half to each side\nAnything wider than the screen always spans the whole frame",
         "offset": "Offset",
         "tip": "Tip",
         "tip-placeholder": "Leave empty to choose randomly",
@@ -45,11 +49,14 @@
         "hold-partial-cover": "Hold Tail Cover",
         "hold-partial-cover-tip": "Default at the head, enable to cover at the tail",
         "negative-length-hold": "Allow Negative Length Hold",
+        "negative-length-hold-tip": "For holds whose length is written as a negative number (head behind the tail), flip the body so it is still drawn\nOff: such holds keep the raw height and display wrongly (default off)",
         "note-uniform-scale": "Note Uniform Scale",
         "note-uniform-scale-tip": "Default only scales X axis, enable to scale Note uniformly",
         "score-total": "Total Score",
         "hold-particle-interval-ratio": "Hold Particle Interval Ratio",
-        "fold-animation": "Folded Entry Animation"
+        "hold-particle-interval-ratio-tip": "Interval multiplier of hit effects while a hold is held (default 1)\nBigger means sparser; the real interval is the base interval x this value / speed",
+        "fold-animation": "Folded Entry Animation",
+        "fold-animation-tip": "Transition that folds the chart open horizontally before it starts and folds it back after it ends\nOff: no such transition and judge lines keep their normal proportions (default on)"
     },
     "error": {
         "preview-start-end-15s": "Preview time cannot be greater than 15 seconds"

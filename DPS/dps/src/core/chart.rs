@@ -257,7 +257,9 @@ impl Chart {
                 res.note_pos_map.clear();
             }
 
-            if res.config.sample_count > 1 {
+            // 拖影不建 `chart_target`（见 `Resource::update_size`），这里也就没有
+            // 多重采样需要解析。
+            if res.config.sample_count > 1 && !res.keep_frame() {
                 unsafe { get_internal_gl() }.flush();
                 if let Some(target) = &res.chart_target {
                     target.blit();

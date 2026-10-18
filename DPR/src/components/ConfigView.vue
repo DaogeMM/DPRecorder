@@ -15,6 +15,9 @@ defineProps<{ hasChart?: boolean; showDropHint?: boolean }>();
 const emit = defineEmits<{
   change: [config: RenderConfig];
   state: [state: WorkingState];
+  /** 「总分 / 偏移」被程序化改写（套用预设、读回工作配置、调整偏移算回新值）：
+   *  控件长在谱面信息表单里（RenderView 的插槽），那边要靠这个事件把显示同步过去。 */
+  chartInfo: [values: { scoreTotal: number; offset: number }];
 }>();
 
 import { invoke } from '@tauri-apps/api/core';
@@ -118,7 +121,9 @@ const {
   respacks,
   updateRespacks,
   buildConfig: buildConfigFromFields,
-  applyConfig,
+  applyConfig: applyConfigToUi,
+  chartInfoBindings,
+  bindChartInfoSlot,
   applyAspectRatio,
   applyResolution,
   updateMaxParticles,
@@ -157,8 +162,8 @@ const {
   fixedLaneChart, fixedLaneGap, fixedLaneSpeed, fixedLaneLineY, fixedLaneInterval,
   fixedLaneHoldLength, fixedLaneThird, playSplitView,
   aspectRatio, noteUniformScale, holdPartialCover,
-  negativeLengthHold, holdParticleIntervalRatio, lineLength, scoreTotal, previewStart,
-  previewEnd, offset,
+  negativeLengthHold, holdParticleIntervalRatio, lineLength, previewStart,
+  previewEnd,
   renderBlockArea, simplifiedBlockArea, simplifiedBlockAreaText, blockAreaReuse, blockAreaLava,
   waterScreen, waterOpacity, waterFlowSpeed, waterCellScale, waterHp, waterDrownDelay, waterDamage,
   waterDamageInterval, waterDeathTime, waterDeathParticles, waterSfxVolume, waterSfxMax,
@@ -372,7 +377,13 @@ function updateDirty(): boolean {
 function applyPreset(config: RenderConfig) {
   markProgrammatic();
   keepDirtyOnProgrammatic = false;
-  applyConfig(config);
+  applyConfigToUi(config);
+  // 「总分 / 偏移」的控件在谱面信息表单里（自己一份状态），套用预设时也要跟着这份配置走，
+  // 否则预设里存的总分 / 偏移读出来只留在配置里、界面上还是旧值。没谱面时由 RenderView 稍后补写。
+  setChartInfoSlots({
+    scoreTotal: config.scoreTotal ?? DEFAULT_RENDER_CONFIG.scoreTotal,
+    offset: config.offset ?? DEFAULT_RENDER_CONFIG.offset,
+  });
 }
 
 /** 材质包列表刷新：列表刚到时可能改写界面上的选择，那也不是用户改的 */
@@ -386,9 +397,21 @@ function applyAspectRatioFromConfig() {
   applyAspectRatio(Number(ui.aspectRatio) || 16 / 9);
 }
 
+/** 配置侧「总分 / 偏移」的当前值：控件在谱面信息表单里，那边用它回填输入框 */
+function chartInfoValues() {
+  return { scoreTotal: chartInfoBindings.scoreTotal(), offset: chartInfoBindings.offset() };
+}
+
+/** 把「总分 / 偏移」写进配置，并把结果广播给谱面信息表单（程序化改写时用） */
+function setChartInfoSlots(values: { scoreTotal?: number; offset?: number }) {
+  if (values.scoreTotal !== undefined) bindChartInfoSlot('scoreTotal', values.scoreTotal);
+  if (values.offset !== undefined) bindChartInfoSlot('offset', values.offset);
+  emit('chartInfo', chartInfoValues());
+}
+
 /** `RenderView.vue` 的「调整偏移」拿到后端算出来的秒数后调：写回配置（界面按毫秒编辑） */
 function setOffsetSeconds(seconds: number) {
-  ui.offset = String(Math.round(seconds * 1000));
+  setChartInfoSlots({ offset: seconds });
 }
 
 /** 一批改动落定（防抖到点、或者组件要卸载被提前叫醒）：把工作状态发出去 */
@@ -441,7 +464,11 @@ let createConfig: RenderConfig | null = null;
  *  基准取「回来之后这份」，之后用户再改才重新亮星号。 */
 function restoreWorking(state: WorkingState) {
   markProgrammatic();
-  applyConfig(state.config);
+  applyConfigToUi(state.config);
+  setChartInfoSlots({
+    scoreTotal: state.config.scoreTotal ?? DEFAULT_RENDER_CONFIG.scoreTotal,
+    offset: state.config.offset ?? DEFAULT_RENDER_CONFIG.offset,
+  });
   // 名字缺了（旧版本这个键里存的是一份裸配置）就用列表第一项的名字兜底，别让下拉框空着
   preset.value = { key: state.presetKey, name: state.presetName || presets.value[0]?.name || '', config: state.config };
   baseline = canonical(buildConfigFromFields());
@@ -524,6 +551,9 @@ async function replacePreset() {
  */
 defineExpose({
   buildConfig,
+  // 谱面信息表单里的「总分 / 偏移」→ 配置里的同名字段（RenderView 解析完谱面、或表单改动时调）
+  setChartInfoSlots,
+  chartInfoValues,
   // 切页回来时把工作配置（值 + 名字 + 星号）读回界面
   restoreWorking,
   // 下面几个都包了一层：套用配置、材质包列表回来、谱面改分辨率这些**程序化**写入
@@ -599,8 +629,10 @@ defineExpose({
            最后是「文件名格式」与 Tip（Tip 是 RenderView
            插进来的 `#params-tip`）—— 这两项都是整行宽的长文本框，按惯例**单独放第二个
            `.cfg-grid`**（只有 full 条目的网格才不画栏间竖线，见下面那段注释）。
-           谱面侧那几项（强制宽高比 / 折叠式入场 / 宽:高 / 总分 / 预览开始时间 / 预览结束时间 /
-           偏移）也是**配置项**，所以由本文件直接渲染、不走插槽。
+           谱面侧那几项（强制宽高比 / 折叠式入场 / 宽:高 / 预览开始时间 / 预览结束时间）
+           也是**配置项**，所以由本文件直接渲染、不走插槽；「总分」「偏移」则搬进了谱面信息
+           （见 RenderView 的 chart-info 插槽）。
+           「保留帧缓冲（拖影效果）」也搬到了谱面组的「更多」（`sec-more-chart`）。
            这里只剩一个 `.cfg-grid`（同一分区里多个并列网格早已合并成一个）。 -->
       <PhiSection id="sec-params" :title="t('title.params')">
         <div class="cfg-grid">
@@ -609,9 +641,8 @@ defineExpose({
           <!-- 「高性能模式」在设置页（挨着「默认展开侧边栏」）：
                它是 app 配置项、由后端在提交渲染时注入，不是每份渲染配置的开关；
                所以本页不出现第二个「性能」开关。 -->
-          <CfgSwitch :label="t('dynamic-bitrate-control')" v-model="dynamicBitrateControl" />
-          <CfgSwitch :label="t('render-loading')" v-model="renderLoading" />
-          <CfgSwitch :label="t('preserve-framebuffer')" v-model="preserveFramebuffer" :tip="t('preserve-framebuffer-tips')" />
+          <CfgSwitch :label="t('dynamic-bitrate-control')" v-model="dynamicBitrateControl" :tip="t('dynamic-bitrate-control-tip')" />
+          <CfgSwitch :label="t('render-loading')" v-model="renderLoading" :tip="t('render-loading-tip')" />
           <!-- 三级菜单：激进优化紧跟渲染管线开关；
                子项收进齿轮弹窗，勾选框只管开关。
                子项里不用再判 `aggressiveChart` —— `useRenderConfig.ts:317-328` 的 watch 会在
@@ -625,27 +656,23 @@ defineExpose({
           <CfgSwitch :label="t('render-extra')" v-model="renderExtra" :tip="t('render-extra-tips')" />
           <!-- 谱面侧渲染参数：它们是配置项，会进预设、
                进 config.toml，也出现在批量页的预设弹窗里。 -->
-          <CfgSwitch :label="t('info.force-aspect-ratio')" v-model="forceAspectRatio"></CfgSwitch>
-          <CfgSwitch :label="t('info.fold-animation')" v-model="foldAnimation"></CfgSwitch>
+          <CfgSwitch :label="t('info.force-aspect-ratio')" v-model="forceAspectRatio" :tip="t('info.force-aspect-ratio-tip')"></CfgSwitch>
+          <CfgSwitch :label="t('info.fold-animation')" v-model="foldAnimation" :tip="t('info.fold-animation-tip')"></CfgSwitch>
           <!-- 「纯配置谱面」的三个控件都在谱面组的「更多」（`sec-more-chart`）：
                开关是勾选框，跟在那里的一排勾选框后面；两个数字框按本分区惯例排在文本框一片。 -->
           <!-- ===== 文本框在后 ===== -->
-          <!-- 这一格是谱面信息里的「偏移」；总分在主网格最后一格（「渲染结束时间」之后，见下面）。 -->
-          <CfgField :label="t('info.offset')">
-            <!-- 这里不需要 `:disabled="loadingTweakoffset"`（那是 RenderView 的本地状态）；
-                 点「调整偏移」时后端算回的值由 ConfigView 暴露的 setOffsetSeconds() 写回本格 -->
-            <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.notEmpty]" v-model="offset"></v-text-field>
-          </CfgField>
-          <CfgField :label="t('resolution')">
+          <!-- 「偏移」与「总分」不在本分区：「渲染参数」的空状态（未导入谱面）里也能改。 -->
+          <CfgField :label="t('resolution')" :tip="t('resolution-tip')">
             <v-combobox density="compact" hide-details="auto" :items="resolutionList" :rules="[resolutionRule]" v-model="resolution"></v-combobox>
           </CfgField>
-          <CfgField :label="t('fps')">
+          <CfgField :label="t('fps')" :tip="t('fps-tip')">
             <v-combobox density="compact" hide-details="auto" :items="fpsList" type="number" :rules="[RULES.int, RULES.positive]" v-model="fps"></v-combobox>
           </CfgField>
           <CfgField :label="t('anti-aliasing')" :tip="t('sample-count-tips')">
-            <v-autocomplete density="compact" hide-details="auto" v-model="sampleCount" :items="antiAliasingList" item-title="title" item-value="value"></v-autocomplete>
+            <!-- 拖影画在单采样的累积缓冲上，抗锯齿在这种模式下没有意义，直接锁死 -->
+            <v-autocomplete density="compact" hide-details="auto" v-model="sampleCount" :items="antiAliasingList" item-title="title" item-value="value" :disabled="preserveFramebuffer"></v-autocomplete>
           </CfgField>
-          <CfgField :label="t('encoder')">
+          <CfgField :label="t('encoder')" :tip="t('video-encoder-tip')">
             <v-combobox density="compact" hide-details="auto" v-model="encoder" :items="encoderList"></v-combobox>
           </CfgField>
           <CfgField v-if="encoder !== encoderList[2]" :label="dynamicBitrateControl ? t('bitrate-crf') : t('bitrate')" :tip="dynamicBitrateControl ? t('bitrate-crf-tip') : undefined">
@@ -659,21 +686,17 @@ defineExpose({
             <span class="cfg-colon">:</span>
             <v-text-field type="number" density="compact" hide-details="auto" style="max-width: 96px" :rules="[RULES.positive]" v-model="aspectHeight" @update:modelValue="commitAspect()"></v-text-field>
           </CfgField>
-          <!-- 这一格是最大粒子数；总分在下面 `t('info.score-total')` 那一格。 -->
+          <!-- 这一格是最大粒子数；「偏移」「总分」在谱面信息里（见 RenderView 的 chart-info 插槽）。 -->
           <CfgField :label="t('max-particles')"><v-combobox density="compact" hide-details="auto" :disabled="!particle && !particleSquare" :rules="[RULES.notEmpty]" :title="t('max-particles-tip')" :items="maxParticlesTextList" v-model="maxParticlesText"></v-combobox></CfgField>
-          <CfgField :label="t('info.previewStart')">
+          <CfgField :label="t('info.previewStart')" :tip="t('info.previewStart-tip')">
             <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" v-model="previewStart"></v-text-field>
           </CfgField>
-          <CfgField :label="t('info.previewEnd')">
+          <CfgField :label="t('info.previewEnd')" :tip="t('info.previewEnd-tip')">
             <v-text-field type="number" density="compact" hide-details="auto" v-model="previewEnd"></v-text-field>
           </CfgField>
-          <CfgField :label="t('ending-length')"><v-text-field density="compact" hide-details="auto" v-model="endingLength" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
-          <CfgField :label="t('render-start-time')"><v-text-field density="compact" hide-details="auto" v-model="playStartTime" type="number" :rules="[RULES.positiveOrZero]"></v-text-field></CfgField>
-          <CfgField :label="t('render-end-time')"><v-text-field density="compact" hide-details="auto" v-model="playEndTime" type="number" :rules="[RULES.positiveOrNull]"></v-text-field></CfgField>
-          <!-- 总分这一格排在「渲染结束时间」之后 -->
-          <CfgField :label="t('info.score-total')">
-            <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.less4000000000, RULES.positive]" v-model="scoreTotal"></v-text-field>
-          </CfgField>
+          <CfgField :label="t('ending-length')" :tip="t('ending-length-tip')"><v-text-field density="compact" hide-details="auto" v-model="endingLength" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+          <CfgField :label="t('render-start-time')" :tip="t('render-start-time-tip')"><v-text-field density="compact" hide-details="auto" v-model="playStartTime" type="number" :rules="[RULES.positiveOrZero]"></v-text-field></CfgField>
+          <CfgField :label="t('render-end-time')" :tip="t('render-end-time-tip')"><v-text-field density="compact" hide-details="auto" v-model="playEndTime" type="number" :rules="[RULES.positiveOrNull]"></v-text-field></CfgField>
         </div>
         <!-- ===== 文件名格式 + Tip（放在「参数」的最后）=====
              这两项都是整行宽的长文本框，**单独放一个「只有 full 条目」的网格**：
@@ -701,8 +724,8 @@ defineExpose({
           <!-- 两条各自独立的条目（各一个 ✅/❌）：后端是 `roman` / `chinese`
                两个独立布尔键，两条互不影响。
                `CfgRadio.vue` 因此暂时没有人引用（留在仓库里备用，样式在 `design/config.css` 的 `.cfg-radio*`）。 -->
-          <CfgSwitch :label="t('roman')" v-model="roman" />
-          <CfgSwitch :label="t('chinese')" v-model="chinese" />
+          <CfgSwitch :label="t('roman')" v-model="roman" :tip="t('roman-tip')" />
+          <CfgSwitch :label="t('chinese')" v-model="chinese" :tip="t('chinese-tip')" />
         </div>
       </PhiSection>
     </PhiGroup>
@@ -736,19 +759,21 @@ defineExpose({
                          「判定线」这一格排第 5，与「判定线」分区表头那个 ⏻ 是同一个
                          `renderLine`，所以那边照样能开关、子项照样跟着变灰。 -->
                     <CfgSwitch :label="t('render-note')" v-model="renderNote" />
-                    <CfgSwitch :label="t('render-double-hint')" v-model="renderDoubleHint" :disabled="!renderNote" />
+                    <CfgSwitch :label="t('render-double-hint')" v-model="renderDoubleHint" :disabled="!renderNote" :tip="t('render-double-hint-tip')" />
                     <CfgSwitch :label="t('render-particle')" v-model="particle" />
-                    <CfgSwitch :label="t('render-particle-square')" v-model="particleSquare" />
+                    <CfgSwitch :label="t('render-particle-square')" v-model="particleSquare" :tip="t('render-particle-square-tip')" />
                     <CfgSwitch :label="t('render-line')" v-model="renderLine" />
                     <CfgSwitch :label="t('render-block-area')" v-model="renderBlockArea" :tip="t('render-block-area-tips')" />
-                    <CfgSwitch :label="t('render-background')" v-model="renderBg" />
+                    <!-- 背景：「拖影效果」开着时必须关掉（那一趟会整屏盖掉上一帧，见 `sec-more-chart`），
+                         所以那时这个开关是灰的（值由 useRenderConfig 的联动强制写成 false）。 -->
+                    <CfgSwitch :label="t('render-background')" v-model="renderBg" :tip="t('render-background-tip')" />
                     <CfgSwitch :label="t('render-ui-pause')" v-model="renderUiPause" />
                     <CfgSwitch :label="t('render-ui-name')" v-model="renderUiName" />
                     <CfgSwitch :label="t('render-ui-score')" v-model="renderUiScore" />
                     <CfgSwitch :label="t('render-ui-difficulty')" v-model="renderUiDifficulty" />
-                    <CfgSwitch :label="t('render-ui-level')" v-model="renderUiLevel" :disabled="!renderUiDifficulty" />
+                    <CfgSwitch :label="t('render-ui-level')" v-model="renderUiLevel" :disabled="!renderUiDifficulty" :tip="t('render-ui-level-tip')" />
                     <CfgSwitch :label="t('render-ui-combo')" v-model="renderUiCombo" />
-                    <CfgSwitch :label="t('render-ui-bar')" v-model="renderUiBar" />
+                    <CfgSwitch :label="t('render-ui-bar')" v-model="renderUiBar" :tip="t('render-ui-bar-tip')" />
           <!-- `chart-ratio`（谱面缩放）在下面的「界面」分区；`speed`（速度）与
                `fade`（上隐/下隐）在谱面组的「更多」分区。
                这个分区剩下的都是开关，网格里不混数值项。 -->
@@ -762,10 +787,10 @@ defineExpose({
           <CfgField :label="t('chart-ratio')"><v-text-field density="compact" hide-details="auto" type="number" :title="t('chart-ratio-tip')" :rules="[RULES.notEmpty, RULES.positive]" :model-value="String(chartRatio)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartRatio = n; }"></v-text-field></CfgField>
           <!-- 0~1 范围的项用数值输入框（`CfgSlider` 全项目已不再被引用），0 等于不压暗（见上面的 watch）。 -->
           <CfgField :label="t('background-dim')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderBg" :title="t('background-dim-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(backgroundDim)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) backgroundDim = n; }"></v-text-field></CfgField>
-          <CfgField :label="t('bg-blurriness')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBg" v-model="bgBlurriness" type="number" :rules="[RULES.positiveOrZero, RULES.less10000]"></v-text-field></CfgField>
-          <CfgField :label="t('watermark')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow v-model="watermark"></v-textarea></CfgField>
-          <CfgField :label="t('combo')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiCombo" :rules="[RULES.notCOMBO]" v-model="combo"></v-textarea></CfgField>
-          <CfgField :label="t('difficulty')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiDifficulty" v-model="difficulty"></v-textarea></CfgField>
+          <CfgField :label="t('bg-blurriness')" :tip="t('bg-blurriness-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBg" v-model="bgBlurriness" type="number" :rules="[RULES.positiveOrZero, RULES.less10000]"></v-text-field></CfgField>
+          <CfgField :label="t('watermark')" :tip="t('watermark-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow v-model="watermark"></v-textarea></CfgField>
+          <CfgField :label="t('combo')" :tip="t('combo-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiCombo" :rules="[RULES.notCOMBO]" v-model="combo"></v-textarea></CfgField>
+          <CfgField :label="t('difficulty')" :tip="t('difficulty-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiDifficulty" v-model="difficulty"></v-textarea></CfgField>
         </div>
       </PhiSection>
       <!-- 二级总开关：「按键」标题行上那个开关就是「渲染项目」里的「按键」开关
@@ -776,9 +801,9 @@ defineExpose({
         <div class="cfg-grid">
           <CfgSwitch :label="t('info.note-uniform-scale')" v-model="noteUniformScale" :disabled="!renderNote" :tip="t('info.note-uniform-scale-tip')" />
           <CfgSwitch :label="t('info.hold-partial-cover')" v-model="holdPartialCover" :disabled="!renderNote" :tip="t('info.hold-partial-cover-tip')" />
-          <CfgSwitch :label="t('info.negative-length-hold')" v-model="negativeLengthHold" :disabled="!renderNote" />
+          <CfgSwitch :label="t('info.negative-length-hold')" v-model="negativeLengthHold" :disabled="!renderNote" :tip="t('info.negative-length-hold-tip')" />
           <!-- Hold 打击特效跟着「特效粒子」走，所以它的上级链比上面三个多一条 -->
-          <CfgField :label="t('info.hold-particle-interval-ratio')">
+          <CfgField :label="t('info.hold-particle-interval-ratio')" :tip="t('info.hold-particle-interval-ratio-tip')">
             <v-text-field type="number" density="compact" hide-details="auto" :disabled="!renderNote || (!particle && !particleSquare)" :rules="[RULES.positive]" v-model="holdParticleIntervalRatio"></v-text-field>
           </CfgField>
           <CfgField :label="t('note-scale')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('note-scale-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(noteScale)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) noteScale = n; }"></v-text-field></CfgField>
@@ -801,7 +826,7 @@ defineExpose({
           <CfgField :label="t('linecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderLine" v-model="linecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('chart-debug-line')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderLine" :title="t('chart-debug-line-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugLine)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugLine = n; }" :append-inner-icon="chartDebugLine > 0 ? 'mdi-cog-outline' : undefined" @click:append-inner="openDebugLineDialog"></v-text-field></CfgField>
           <!-- 「判定线长度」与谱面信息同名，也是配置项 -->
-          <CfgField :label="t('info.lineLength')">
+          <CfgField :label="t('info.lineLength')" :tip="t('info.lineLength-tip')">
             <v-text-field type="number" density="compact" hide-details="auto" :disabled="!renderLine" :rules="[RULES.less10000]" v-model="lineLength"></v-text-field>
           </CfgField>
         </div>
@@ -853,6 +878,9 @@ defineExpose({
         <div class="cfg-grid">
           <!-- 透明度染色：普通条目（不是三级菜单行），与下面的「谱面进水」同处一个网格。 -->
           <CfgSwitch :label="t('alpha-tint')" v-model="alphaTint" :tip="t('alpha-tint-tip')" />
+          <!-- 拖影效果 = 「保留帧缓冲」：每帧先把上一帧整屏铺回来再叠本帧，残影一直留着。
+               画在单采样的累积缓冲上，所以开着时抗锯齿会被强制关掉，见 `config/useRenderConfig.ts`。 -->
+          <CfgSwitch :label="t('preserve-framebuffer')" v-model="preserveFramebuffer" :tip="t('preserve-framebuffer-tips')" />
           <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
                横向位置；判定时刻接近竖直的按键另分到左右两条竖判定线上；判定时刻落在噪域里的按键
                在它周围长出一块噪域矩形。开关与它的参数（判定线高度 / 按键流速 / 竖判定线的两个参数 /
@@ -944,10 +972,10 @@ defineExpose({
               <CfgField :label="t('block-area-force-delay')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-force-delay-tip')" v-model="blockAreaForceDelay" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
-          <CfgField :label="t('judge-mode')"><v-autocomplete density="compact" hide-details="auto" :rules="[RULES.notEmpty]" :items="t('judge-modes').split(',')" v-model="judgeMode"></v-autocomplete></CfgField>
-          <CfgField :label="t('judgeOffset')"><v-text-field density="compact" hide-details="auto" v-model="judgeOffset" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+          <CfgField :label="t('judge-mode')" :tip="t('judge-mode-tip')"><v-autocomplete density="compact" hide-details="auto" :rules="[RULES.notEmpty]" :items="t('judge-modes').split(',')" v-model="judgeMode"></v-autocomplete></CfgField>
+          <CfgField :label="t('judgeOffset')" :tip="t('judgeOffset-tip')"><v-text-field density="compact" hide-details="auto" v-model="judgeOffset" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
           <!-- 速度与上/下隐在本分区（谱面组的「更多」），取值与校验规则见下。 -->
-          <CfgField :label="t('speed')"><v-combobox density="compact" hide-details="auto" v-model="speed" type="number" :items="speedList" :rules="[RULES.notEmpty, RULES.positive, RULES.less100, RULES.greater0_01]"></v-combobox></CfgField>
+          <CfgField :label="t('speed')" :tip="t('speed-tip')"><v-combobox density="compact" hide-details="auto" v-model="speed" type="number" :items="speedList" :rules="[RULES.notEmpty, RULES.positive, RULES.less100, RULES.greater0_01]"></v-combobox></CfgField>
           <CfgField :label="t('fade')"><v-text-field density="compact" hide-details="auto" :title="t('fade-tip')" v-model="fade" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
         </div>
       </PhiSection>

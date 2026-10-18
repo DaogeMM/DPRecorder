@@ -561,11 +561,7 @@ pub struct Ui<'a> {
 
 impl<'a> Ui<'a> {
     pub fn new(text_painter: &'a mut TextPainter, viewport: Option<(i32, i32, i32, i32)>) -> Self {
-        unsafe { get_internal_gl() }.quad_context.begin_default_pass(PassAction::Clear {
-            depth: None,
-            stencil: Some(0),
-            color: None,
-        });
+        unsafe { get_internal_gl() }.quad_context.begin_default_pass(PassAction::Nothing);
         let viewport = viewport.unwrap_or_else(|| (0, 0, screen_width() as i32, screen_height() as i32));
         Self {
             top: viewport.3 as f32 / viewport.2 as f32,
