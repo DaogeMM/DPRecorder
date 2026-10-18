@@ -21,11 +21,13 @@
 //! 只是逐帧覆写 uniform 把它降级成纯色。细节见 [`native`] 与 `blockArea/NATIVE_PORT.md`。
 
 mod native;
+mod next;
 
 pub use native::{
     block_touch_blocked, collect as collect_zones, judge_paint_view, render_all as render_native_block_areas, reset_block_effects as reset_native_block_effects,
     touch_inset_world, NativeBlocks, Zone,
 };
+pub use next::{is_native_block_area, is_next_block_area, parse_next, NextArea, Tempo as NextTempo};
 
 use super::Resource;
 use macroquad::prelude::*;
@@ -191,6 +193,12 @@ pub struct RawBlockArea {
     /// `false` = Normal，`true` = Subtract（挖洞）
     #[serde(default)]
     pub is_subtract: bool,
+    /// 这块噪域的调色板颜色，`[r, g, b]`（0~1）。缺省 = 原生红。
+    ///
+    /// 官方谱面的 `blockAreaList` 没有颜色字段（参考实现里官方噪域也永远是原生红），
+    /// 所以这是 DPS 自己的可选扩展：写了就按这个色相画，没写就逐字节走原路径。
+    #[serde(default)]
+    pub color: Option<[f32; 3]>,
     #[serde(default)]
     rotate_events: Vec<RawRotateEvent>,
     #[serde(default)]
@@ -220,6 +228,11 @@ pub struct BlockArea {
     pub disable_time: f64,
     pub disappear_time: f64,
     pub is_subtract: bool,
+    /// 这块噪域的调色板颜色（线性 0~1 的 RGB）。`None` = 原生红 = 走无颜色的原路径。
+    ///
+    /// 来源见 [`RawBlockArea::color`]；渲染侧由 [`Zone::is_colored`] 判定要不要启用彩色材质
+    /// 与颜色平面。
+    pub color: Option<[f32; 3]>,
     pub rotate_events: Vec<BlockAreaEvent>,
     pub move_events: Vec<BlockAreaEvent>,
     pub scale_events: Vec<BlockAreaEvent>,
@@ -279,6 +292,7 @@ impl BlockArea {
             disable_time: f64::INFINITY,
             disappear_time: f64::INFINITY,
             is_subtract: false,
+            color: None,
             rotate_events: Vec::new(),
             move_events: Vec::new(),
             scale_events: Vec::new(),
@@ -315,6 +329,7 @@ impl BlockArea {
             disable_time: raw.disable_time,
             disappear_time: raw.disappear_time,
             is_subtract: raw.is_subtract,
+            color: raw.color,
             rotate_events,
             move_events,
             scale_events,
@@ -507,12 +522,16 @@ impl Default for BlockAreaRenderer {
 // ---------------------------------------------------------------------------
 
 /// 从谱面 JSON 的 `blockAreaList` 字段解析。
+///
+/// 同一个数组里可能混着 rpe-next v220 的条目（字段是 `bottomLeft` / `topRight`），那些归
+/// [`next::parse_next`] 管；这里显式跳过，免得两套字段互相污染。
 pub fn parse_block_areas(value: Option<&serde_json::Value>) -> Vec<BlockArea> {
     let Some(serde_json::Value::Array(list)) = value else {
         return Vec::new();
     };
     list.iter()
         .enumerate()
+        .filter(|(_, v)| !next::is_next_block_area(v))
         .filter_map(|(i, v)| {
             serde_json::from_value::<RawBlockArea>(v.clone())
                 .ok()
@@ -861,6 +880,37 @@ mod tests {
                 "isSubtract":{subtract},"rotateEvents":[],"moveEvents":[{move_events}],"scaleEvents":[]}}"#
         ))
         .unwrap()
+    }
+
+    /// `blockAreaList` 的可选 `color` 键：写了就带上调色板，没写就是 `None`（原生红）。
+    ///
+    /// 官方谱面没有这个键，所以它必须是 `#[serde(default)]` 的可选项 —— 少了这一条，
+    /// 老谱面会整份解析失败。
+    #[test]
+    fn block_area_color_is_optional_and_flows_into_the_zone() {
+        let json = serde_json::json!({
+            "topRightPercentage": {"x": 0.6, "y": 0.6},
+            "bottomLeftPercentage": {"x": 0.4, "y": 0.4},
+            "appearTime": 1., "enableTime": 2., "disableTime": 3., "disappearTime": 4.,
+            "color": [0.2, 0.4, 0.8],
+        });
+        let raw: RawBlockArea = serde_json::from_value(json).unwrap();
+        let area = BlockArea::from_raw(raw, 0);
+        assert_eq!(area.color, Some([0.2, 0.4, 0.8]));
+        let zone = crate::core::block_area::native::Zone::from_area(&area, 2.5, 16. / 9.).unwrap();
+        assert_eq!(zone.color, Some([0.2, 0.4, 0.8]));
+        assert!(zone.is_colored());
+
+        let json = serde_json::json!({
+            "topRightPercentage": {"x": 0.6, "y": 0.6},
+            "bottomLeftPercentage": {"x": 0.4, "y": 0.4},
+            "appearTime": 1., "enableTime": 2., "disableTime": 3., "disappearTime": 4.,
+        });
+        let raw: RawBlockArea = serde_json::from_value(json).unwrap();
+        let area = BlockArea::from_raw(raw, 0);
+        assert_eq!(area.color, None);
+        let zone = crate::core::block_area::native::Zone::from_area(&area, 2.5, 16. / 9.).unwrap();
+        assert!(!zone.is_colored());
     }
 
     /// 「噪域优化」：几何与相对动画相同的条目并成一个噪域（共享编号、各有自己的窗口），

@@ -5,6 +5,7 @@
 //! * `BlockNoise1.png` 的路径改成 `../BlockNoise1.png`（复用既有素材，不重复入库）；
 //! * `Zone` 里的 `Vector` 类型名；
 //! * 测试里的 `crate::core::Vector` 引用。
+use super::shader::DEFAULT_BLOCK_COLOR;
 use super::Zone;
 use once_cell::sync::Lazy;
 
@@ -73,6 +74,25 @@ pub(super) struct Masks {
     warp_y: Vec<(f32, usize)>,
     enabled_compose: Vec<u8>,
     point_aux: Vec<[u8; 3]>,
+    /// 彩色噪域的两张颜色平面（RGBA、与 `rgba` 同尺寸）：`uActiveColors` / `uDisabledColors`。
+    ///
+    /// 只有 [`Masks::colored`] 为真时才烘；否则保持空 —— 上传侧据此绑空纹理，片元走
+    /// `uColored == 0` 的原路径，逐像素一行额外工作都没有。
+    pub active_colors: Vec<u8>,
+    pub disabled_colors: Vec<u8>,
+    /// 本帧是否至少有一个噪域带颜色。
+    ///
+    /// 它同时决定材质选哪套变体（彩色 `uColored = 1`）与要不要烘颜色平面，所以必须是
+    /// 整个 `Masks` 的公共状态，而不是绘制侧自己再算一遍。
+    pub colored: bool,
+    /// 源空间（`bw × bh`）每像素的主人噪域颜色，`layer` 0 = active、1 = disabled，RGBA。
+    ///
+    /// 先在源空间按「合成后谁还可见」定颜色归属，再跟着掩码的位移搬到输出 —— 与参考实现
+    /// 的 `Colors::warp` 同口径。之所以不直接往输出平面里写：位移是**逐输出纹素**的回溯
+    /// 采样，颜色必须在源空间就定好主人，否则被减算挖掉的洞会把它自己的颜色蹭到边上。
+    color_grid: [Vec<u8>; 2],
+    color_seeds: Vec<usize>,
+    color_owners: Vec<usize>,
 }
 
 impl Masks {
@@ -124,6 +144,9 @@ impl Masks {
         // 便宜的那半边（覆盖度位图 + 合成）只认 `covers`。
         let layers_dirty = self.last_dim != dim || self.last_zones != zones;
         let covers_dirty = self.last_dim != dim || self.last_covers != covers;
+        // 颜色是整帧的性质：只要有一块噪域带色，这一帧就整张走彩色材质（材质里的
+        // `uColored` 是编译期常量，不能逐噪域切）。
+        self.colored = zones.iter().any(Zone::is_colored);
         if !layers_dirty && !covers_dirty && self.last_time == Some(time) {
             return;
         }
@@ -164,6 +187,10 @@ impl Masks {
                     }
                 });
             }
+        }
+        // 颜色归属只在层变化时重算（它只依赖几何），位移每帧都会把颜色搬到输出平面。
+        if self.colored && layers_dirty {
+            self.render_color_grid(bw, bh, aspect, zones);
         }
         // 覆盖度位图 + 合成：判定范围每帧都在动，所以这一段基本每帧都会跑。它只依赖
         // `covers`、6 张层与 `judge_cover`，不碰方块几何（那是上面那半边的活），
@@ -216,6 +243,15 @@ impl Masks {
         self.rgba.fill(0);
         self.aux_rgba.resize(ew * eh * 4, 0);
         self.aux_rgba.fill(0);
+        // 没有颜色的帧把两张平面清空：上传侧见到 `colored == false` 就绑空纹理，
+        // 片元走 `uColored == 0` 的原路径，与加颜色之前逐字节相同。
+        if self.colored {
+            self.active_colors.resize(ew * eh * 4, 0);
+            self.disabled_colors.resize(ew * eh * 4, 0);
+        } else {
+            self.active_colors.clear();
+            self.disabled_colors.clear();
+        }
         let stride = ew.div_ceil(64);
         self.active.resize(stride * eh, 0);
         self.active.fill(0);
@@ -254,10 +290,30 @@ impl Masks {
                 let [ready_n, ready_s, disabled] = self.point_aux[i];
                 let rgba = [mask, 0, 0, disabled, mask, 0, 0, disabled];
                 let aux = [ready_n, ready_s, disabled, 0, ready_n, ready_s, disabled, 0];
+                // 片元两张颜色平面都用**未位移**的 `fieldUV` 采样，所以颜色要跟掩码那条通道
+                // 取同一个源像素：active 跟位移后的 `di`（与 `uMasks.r` 同源），disabled 跟
+                // 未位移的 `i`（与 `uMasks.a` 同源）。每个源像素铺成 2×2 的同色块，与掩码一致。
+                let (active_colors, disabled_colors) = if self.colored {
+                    let active = di * 4;
+                    let disabled = i * 4;
+                    let mut active_colors = [0_u8; 8];
+                    active_colors[..4].copy_from_slice(&self.color_grid[0][active..active + 4]);
+                    active_colors[4..].copy_from_slice(&self.color_grid[0][active..active + 4]);
+                    let mut disabled_colors = [0_u8; 8];
+                    disabled_colors[..4].copy_from_slice(&self.color_grid[1][disabled..disabled + 4]);
+                    disabled_colors[4..].copy_from_slice(&self.color_grid[1][disabled..disabled + 4]);
+                    (active_colors, disabled_colors)
+                } else {
+                    ([0_u8; 8], [0_u8; 8])
+                };
                 for yy in [y * 2, y * 2 + 1] {
                     let dst = (yy * ew + x * 2) * 4;
                     self.rgba[dst..dst + 8].copy_from_slice(&rgba);
                     self.aux_rgba[dst..dst + 8].copy_from_slice(&aux);
+                    if self.colored {
+                        self.active_colors[dst..dst + 8].copy_from_slice(&active_colors);
+                        self.disabled_colors[dst..dst + 8].copy_from_slice(&disabled_colors);
+                    }
                     if mask != 0 {
                         self.active[yy * stride + x * 2 / 64] |= 3 << ((x * 2) % 64);
                     }
@@ -267,6 +323,104 @@ impl Masks {
         self.render_rings();
         self.last_time = Some(time);
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// 把「每个源像素属于哪个噪域、那个噪域什么颜色」烘成两张 `bw × bh` 的 RGBA 平面。
+    ///
+    /// 颜色归属与覆盖度无关：它只决定**色调**，不动减算、不动透明度、也不动描边与辉光。
+    /// 所以这里不参与掩码的合成，而是单独一趟「最近可见噪域」的 Voronoi：先把每个仍然
+    /// 可见的矩形的颜色播进它自己的像素，再按平方欧氏距离把最近的种子铺满整张平面 ——
+    /// 被减算挖出来的洞、以及矩形边界外的辉光，都会取到最近那个**还看得见**的矩形的颜色。
+    fn render_color_grid(&mut self, bw: usize, bh: usize, aspect: f32, zones: &[Zone]) {
+        self.color_seeds.resize(bw * bh, usize::MAX);
+        self.color_owners.resize(bw * bh, usize::MAX);
+        for layer in 0..2 {
+            self.color_seeds.fill(usize::MAX);
+            self.color_owners.fill(usize::MAX);
+            // 只有合成后仍然可见的那一侧拥有颜色。两种极性播进的是互不相交的像素集
+            // （`color_source` 按「是谁盖住了它」判极性），所以先后顺序不影响结果。
+            for invert in [true, false] {
+                for (id, zone) in zones.iter().enumerate() {
+                    if zone.active != (layer == 0) || zone.invert != invert || !zone.is_colored() {
+                        continue;
+                    }
+                    let layers = &self.layers;
+                    let raw_green = &self.raw_disabled_green;
+                    let (seeds, owners) = (&mut self.color_seeds, &mut self.color_owners);
+                    raster_rows(bw, bh, aspect, zone, |y, first, last| {
+                        for i in y * bw + first..y * bw + last {
+                            if color_source(layers, raw_green, layer, i) == Some(invert) {
+                                seeds[i] = i;
+                                owners[i] = id;
+                            }
+                        }
+                    });
+                }
+            }
+            // 两趟 chamfer 扩散：每像素只看 4 个已经处理过的邻居，O(bw·bh) 而不是
+            // 「每个像素遍历所有噪域」。按平方欧氏距离比较，所以横向/纵向的传播不会失真。
+            for reverse in [false, true] {
+                let dy: isize = if reverse { 1 } else { -1 };
+                for row in 0..bh {
+                    let y = if reverse { bh - 1 - row } else { row };
+                    let ny = y as isize + dy;
+                    if ny < 0 || ny as usize >= bh {
+                        continue;
+                    }
+                    let ny = ny as usize;
+                    for x in 0..bw {
+                        let i = y * bw + x;
+                        if self.color_seeds[i] != usize::MAX {
+                            continue;
+                        }
+                        let base = ny * bw;
+                        let row_base = y * bw;
+                        let mut candidates = [base + x, base + x + 1, usize::MAX, usize::MAX];
+                        if x > 0 {
+                            // 左邻与「上一行左邻」：行首没有，别用扁平下标回绕到上一行末尾。
+                            candidates[2] = base + x - 1;
+                            candidates[3] = row_base + x - 1;
+                        }
+                        let mut best = usize::MAX;
+                        let mut best_distance = usize::MAX;
+                        for candidate in candidates {
+                            if candidate == usize::MAX || candidate >= bw * bh {
+                                continue;
+                            }
+                            let seed = self.color_seeds[candidate];
+                            if seed == usize::MAX {
+                                continue;
+                            }
+                            let (sx, sy) = (seed % bw, seed / bw);
+                            let dx = sx as isize - x as isize;
+                            let dyv = sy as isize - y as isize;
+                            let distance = (dx * dx + dyv * dyv) as usize;
+                            if distance < best_distance {
+                                best_distance = distance;
+                                best = seed;
+                            }
+                        }
+                        self.color_seeds[i] = best;
+                    }
+                }
+            }
+            // 播成 RGBA：没被任何噪域覆盖的地方是原生红（= 没有颜色），alpha 恒 255
+            // （片元只用 RGB，但纹理上传必须是 4 通道）。
+            let seeds = &self.color_seeds;
+            let owners = &self.color_owners;
+            let grid = &mut self.color_grid[layer];
+            grid.resize(bw * bh * 4, 0);
+            for (i, pixel) in grid.chunks_exact_mut(4).enumerate() {
+                let rgb = match seeds[i] {
+                    usize::MAX => DEFAULT_BLOCK_COLOR,
+                    seed => zones[owners[seed]].color.unwrap_or(DEFAULT_BLOCK_COLOR),
+                };
+                pixel[0] = unorm(rgb[0]);
+                pixel[1] = unorm(rgb[1]);
+                pixel[2] = unorm(rgb[2]);
+                pixel[3] = 255;
+            }
+        }
     }
 
     fn render_rings(&mut self) {
@@ -398,6 +552,27 @@ fn subtract_disabled(red: u8, green: u8) -> (f32, f32) {
     (unorm(r) as f32 / 255., unorm(g * r * 10.) as f32 / 255.)
 }
 
+/// 这个源像素在某一层里由哪一侧（`false` = 普通矩形，`true` = 减算矩形）拥有颜色。
+///
+/// 只有「合成之后还看得见」的那一侧才算数：被减算挖掉的矩形只挖洞，不该把它的 RGB
+/// 种到洞边上。`None` = 两侧都没覆盖到这个像素（那里的颜色由最近的可见噪域接管）。
+fn color_source(layers: &[Vec<u8>; 6], raw_green: &[u8], layer: usize, pixel: usize) -> Option<bool> {
+    let normal = layers[layer * 2][pixel];
+    let subtract = layers[layer * 2 + 1][pixel];
+    // 与合成那一步同一套判据：enabled 用阈值窗口，disabled 走 RG16 的那条公式。
+    let inverse = if layer == 0 {
+        if subtract_enabled(subtract) == 1. {
+            255
+        } else {
+            0
+        }
+    } else {
+        let (r, g) = subtract_disabled(subtract, raw_green[pixel]);
+        unorm(r * g)
+    };
+    (normal != inverse).then_some(normal < inverse)
+}
+
 /// `BlockCompose` pass 0：保留原生归一化方向与 ST。
 ///
 /// 原生 `u_xlat16_*` 是 mediump（binary16）而不是全精度 CPU 浮点：导出的 GLES 着色器里，
@@ -519,7 +694,15 @@ mod tests {
             opacity: 1.,
             index: 0,
             judge_cover: 0,
+            color: None,
         }
+    }
+
+    /// 带调色板颜色的 zone（颜色测试专用：`zone()` 保持无颜色，用来验证零回归路径）。
+    fn colored_zone(x: f32, y: f32, half_x: f32, half_y: f32, invert: bool, color: [f32; 3]) -> Zone {
+        let mut zone = zone(x, y, half_x, half_y, 0., invert);
+        zone.set_color(Some(color));
+        zone
     }
 
     #[test]
@@ -742,7 +925,107 @@ mod tests {
         }
     }
 
-    /// 原版 `render_gray_rings`（照抄），只用于上面的逐位对照。
+    /// 无颜色的噪域必须**逐字节**保持原样：颜色平面不烘、`colored` 为假，
+    /// 掩码本身与「把颜色显式填成原生红」的那次渲染完全相同。
+    #[test]
+    fn uncolored_zones_skip_color_planes_and_keep_the_native_red_path() {
+        let zones = [zone(0.1, -0.1, 0.45, 0.23, 0.57, false), zone(-0.2, 0.1, 0.2, 0.2, 0., true)];
+        let (width, height, aspect) = (129, 75, 16. / 9.);
+        let mut plain = official_masks();
+        plain.render_displaced(width * 8, height * 8, aspect, &zones, 0.5);
+        assert!(!plain.colored, "没有颜色的噪域不该走彩色路径");
+        assert!(plain.active_colors.is_empty() && plain.disabled_colors.is_empty(), "不该烘颜色平面");
+        let explicit_red: Vec<Zone> = zones.iter().cloned().map(|mut z| {
+            z.set_color(Some(super::DEFAULT_BLOCK_COLOR));
+            z
+        }).collect();
+        let mut red = official_masks();
+        red.render_displaced(width * 8, height * 8, aspect, &explicit_red, 0.5);
+        assert!(!red.colored, "原生红就是「没有颜色」");
+        assert_eq!(plain.rgba, red.rgba);
+        assert_eq!(plain.aux_rgba, red.aux_rgba);
+    }
+
+    /// 带颜色的噪域：颜色平面里它的矩形是本色、矩形外是原生红（没被任何噪域覆盖），
+    /// 且掩码本身不受影响（颜色只决定色调）。
+    #[test]
+    fn colored_zone_bakes_its_palette_into_the_active_color_plane() {
+        let palette = [0.2, 0.4, 0.8];
+        let geometry = [zone(-0.3, 0.2, 0.2, 0.15, 0., false)];
+        let mut masks = official_masks();
+        masks.render_displaced(640, 360, 1., &geometry, 0.);
+        assert!(!masks.colored);
+        let previous = masks.rgba.clone();
+        let mut colored = geometry.to_vec();
+        colored[0].set_color(Some(palette));
+        masks.render_displaced(640, 360, 1., &colored, 0.);
+        assert_eq!(masks.rgba, previous, "颜色不该改变覆盖度/描边/辉光");
+        assert!(masks.colored);
+        assert_eq!(masks.active_colors.len(), masks.width * masks.height * 4);
+        assert_eq!(masks.disabled_colors.len(), masks.active_colors.len());
+        // 掩码是 80×45 源像素 2× 上采样；噪域中心在 chart (-0.3, 0.2)。
+        let bw = masks.width / 2;
+        let bh = masks.height / 2;
+        let inside = |x: f32, y: f32| {
+            let col = (((x + 1.) * 0.5 * bw as f32) as usize).min(bw - 1) * 2;
+            let row = ((((y * 1.) + 1.) * 0.5 * bh as f32) as usize).min(bh - 1) * 2;
+            (row * masks.width + col) * 4
+        };
+        let p = inside(-0.3, 0.2);
+        assert_eq!(&masks.active_colors[p..p + 3], &[unorm(palette[0]), unorm(palette[1]), unorm(palette[2])]);
+        assert_eq!(masks.active_colors[p + 3], 255);
+        // 颜色会从可见矩形继续铺到矩形外（辉光/位移填充也要着色，所以是「最近可见噪域」
+        // 的 Voronoi，不是「矩形内才有颜色」）。
+        let far = inside(0.8, -0.8);
+        assert_eq!(&masks.active_colors[far..far + 3], &[unorm(palette[0]), unorm(palette[1]), unorm(palette[2])]);
+        // active 层没有这块噪域（它是 enabled 的），disabled 平面整张是原生红。
+        assert!(masks.disabled_colors.chunks_exact(4).all(|p| p[..3] == [255, 84, 84]));
+    }
+
+    /// 被减算挖掉的矩形只挖洞，不把它的颜色种进洞里：洞里的颜色来自**最近仍然可见**的噪域。
+    #[test]
+    fn subtract_hole_keeps_the_surrounding_palette() {
+        let mut masks = official_masks();
+        masks.render_displaced(
+            640,
+            360,
+            1.,
+            &[
+                colored_zone(0., 0., 0.6, 0.5, false, [1., 1., 1.]),
+                colored_zone(0., 0., 0.15, 0.15, true, [1., 0., 0.]),
+            ],
+            0.,
+        );
+        assert!(masks.colored);
+        let center = ((masks.height / 2) * masks.width + masks.width / 2) * 4;
+        assert_eq!(&masks.active_colors[center..center + 3], &[255, 255, 255], "洞里的颜色该是外面那块的白色");
+        // 洞里确实是空的（红/绿都没被填上），这条保证上面那格不是被别的东西挡住。
+        assert_eq!(masks.rgba[center], 0);
+    }
+
+    /// `disabled` 层用未经位移的取色口径（片元拿 `uMasks.a` 与 `fieldUV` 同时采样），
+    /// 所以只要边缘破碎开着，两张颜色平面的内容可以不同 —— 这条只要求两者都能烘出来。
+    #[test]
+    fn disabled_layer_colors_are_baked_too() {
+        let mut masks = official_masks();
+        masks.render_displaced(
+            320,
+            180,
+            1.,
+            &[colored_zone(0., 0., 0.4, 0.4, false, [0., 1., 0.])],
+            0.,
+        );
+        assert!(masks.disabled_colors.len() == masks.width * masks.height * 4);
+        assert!(masks.disabled_colors.chunks_exact(4).all(|p| p[..3] == [255, 84, 84]));
+        // 把这块改成「还没生效」：它进 disabled 层，disabled 平面就该是绿色。
+        let mut disabled = colored_zone(0., 0., 0.4, 0.4, false, [0., 1., 0.]);
+        disabled.active = false;
+        masks.render_displaced(320, 180, 1., &[disabled], 0.);
+        let center = ((masks.height / 2) * masks.width + masks.width / 2) * 4;
+        assert_eq!(&masks.disabled_colors[center..center + 3], &[0, 255, 0]);
+    }
+
+    /// 原生 `render_gray_rings`（照抄），只用于上面的逐位对照。
     fn gray_rings_reference(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
         let mut out = rgba.to_vec();
         let mut ping = vec![0_u8; w * h];

@@ -1459,6 +1459,11 @@ impl Scene for GameScene {
                 self.res.health.update(time as f32);
             }
             self.gl.quad_gl.viewport(None);
+        } else {
+            // 暂停 / 回放 / 离线渲染时不判定：噪域上的 hover 光晕也要跟着停，
+            // 否则会一直亮在最后一帧的位置上。
+            self.chart.blocked_touches.clear();
+            self.judge.clear_blocked_fingers();
         }
         if let Some(update) = &mut self.update_fn {
             update(self.res.time, &mut self.res, &mut self.judge);

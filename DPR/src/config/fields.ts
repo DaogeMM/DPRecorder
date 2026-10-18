@@ -175,6 +175,8 @@ const RENDER_ITEM = {
   particle: { widget: 'checkbox' },
   particleSquare: { widget: 'checkbox' },
   renderBlockArea: { widget: 'checkbox' },
+  blockAreaHover: { widget: 'checkbox' },
+  blockAreaHoverRadius: { widget: 'number' },
 } satisfies Partial<FieldTable>;
 
 /* ====================== 谱面 / 背景与文字 =========================

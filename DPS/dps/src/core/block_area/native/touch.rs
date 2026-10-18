@@ -10,7 +10,7 @@
 //! `include_bytes!(...).expect("official touch hover source")`，缺文件会连编译都过不去。
 //! 这里改成：编译期探测该文件，存在才 `include_bytes!`，否则退化成 1x1 全零灰度图 ——
 //! 于是整套 slot 生命周期与 SDF 采样逻辑都保持原样，只是「没有手指时」永远采到 0。
-//! 配合 `super::HOVER_ASSET = false`（不建 hover 材质），AUTOPLAY 下与原生一致。
+//! 仓库里放的是一份自生成的近似替身，「噪域打击效果」打开时由它出光晕。
 
 use macroquad::prelude::Vec2;
 
@@ -70,8 +70,8 @@ pub(super) struct TouchMask {
 /// `assets/blockarea/TouchHover.png`（仓库根）里放了一份**我们自己生成的近似替身**
 ///（44x44 白色径向衰减，见 `assets/blockarea/README.md`）。拿到官方素材直接覆盖该文件即可。
 ///
-/// 注意：`super::HOVER_ASSET` 目前是 `false`，hover 材质根本不建，这份贴图在 AUTOPLAY 下
-/// 不参与渲染；它存在只是为了编译通过，以及将来打开 hover 时有合理观感。
+/// 注意：「噪域打击效果」由 [`crate::core::chart::Chart::render_block_area`] 侧传入命中点驱动，
+/// 不依赖真实触摸输入；这份贴图决定光晕长什么样。
 fn hover_source() -> (Vec<u8>, usize, usize) {
     let source = image::load_from_memory(include_bytes!("../../../../../../assets/blockarea/TouchHover.png"))
         .expect("official touch hover source")

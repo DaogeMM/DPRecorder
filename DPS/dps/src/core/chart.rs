@@ -1,6 +1,8 @@
 crate::tl_file!("parser");
 
-use super::{BlockArea, BlockAreaRenderer, BlockGroup, BpmList, Effect, JudgeLine, JudgeLineKind, Matrix, Resource, UIElement, Vector};
+use super::{
+    BlockArea, BlockAreaRenderer, BlockGroup, BpmList, Effect, JudgeLine, JudgeLineKind, Matrix, NextArea, Resource, UIElement, Vector,
+};
 use crate::{
     core::Object,
     fs::FileSystem,
@@ -41,6 +43,14 @@ pub struct Chart {
     pub fonts: Vec<RefCell<TextPainter>>,
     /// Phigros 4.0 剧情遮挡区域（`blockAreaList`），时间单位是**秒**
     pub block_areas: Vec<BlockArea>,
+    /// rpe-next v220 噪域（同一份 `blockAreaList` 里另一套字段的条目），时间单位是**全局 beat**，
+    /// 解析时就靠谱面 BPM 表换算成秒了。
+    pub next_block_areas: Vec<NextArea>,
+    /// 这一帧被噪域吞掉的触摸（`(手指 id, chart 坐标)`）：处于 `Active` 相位噪域里的手指。
+    ///
+    /// 官方语义：这些触点**不参与判定**（下面的按键打不中），同时噪域上会以它们为圆心
+    /// 亮一圈 hover 光晕，手指不离开就一直亮。判定每帧重算，所以松手即清空。
+    pub blocked_touches: Vec<(u64, Vector)>,
     /// 「噪域复用」的归组结果：每个「噪域」以及它各次出现的窗口（`BlockGroup`）。
     /// 解析时无条件算好；用不用它编号由 `config.block_area_reuse` 决定。
     pub block_groups: Vec<BlockGroup>,
@@ -86,6 +96,8 @@ impl Chart {
             hitsounds,
             fonts,
             block_areas: Vec::new(),
+            next_block_areas: Vec::new(),
+            blocked_touches: Vec::new(),
             block_groups: Vec::new(),
             block_area_renderer: RefCell::new(BlockAreaRenderer::default()),
             trs,
@@ -344,12 +356,12 @@ impl Chart {
             let flip_x = res.config.flip_x();
             let simplified = res.config.simplified_block_area || self.block_area_renderer.borrow().style.simplified;
             let reuse = res.config.block_area_reuse || self.block_area_renderer.borrow().style.reuse;
-            super::block_area::render_native_block_areas(res, &[], time, flip_x, simplified, reuse);
+            super::block_area::render_native_block_areas(res, &[], &[], time, flip_x, simplified, reuse, &self.blocked_touches);
             return;
         }
         if res.config.pure_config_chart
             || (!res.config.render_block_area && !res.config.simplified_block_area)
-            || (!force && self.block_areas.is_empty())
+            || (!force && self.block_areas.is_empty() && self.next_block_areas.is_empty())
         {
             return;
         }
@@ -362,6 +374,9 @@ impl Chart {
         } else {
             &self.block_areas
         };
+        // 「强制定位」把整层换成合成噪域（反向时只留下按键矩形），谱面自带的 rpe-next 噪域
+        // 同样要忽略，所以这两种情况都传空列表。
+        let next: &[NextArea] = if force { &[] } else { &self.next_block_areas };
         let flip_x = res.config.flip_x();
         // 噪域现在只有一条管线：Phira-Pro 的原生实现（掩码 + 原版 Unity 面元着色器）。
         // 「简化噪域」**不是另一条路**，而是让同一份官方材质退化成「纯色 × 不透明度」
@@ -370,6 +385,6 @@ impl Chart {
         let simplified = res.config.simplified_block_area || self.block_area_renderer.borrow().style.simplified;
         // 「噪域复用」同理：只换「简化噪域文字」印的号（条目序号 → 噪域编号），不碰画面。
         let reuse = res.config.block_area_reuse || self.block_area_renderer.borrow().style.reuse;
-        super::block_area::render_native_block_areas(res, blocks, time, flip_x, simplified, reuse);
+        super::block_area::render_native_block_areas(res, blocks, next, time, flip_x, simplified, reuse, &self.blocked_touches);
     }
 }

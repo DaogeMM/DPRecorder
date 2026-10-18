@@ -378,6 +378,17 @@ pub fn parse_phigros(source: &str, extra: ChartExtra) -> Result<Chart> {
 
     // Phigros 4.0 剧情遮挡区域：注意 time 单位就是秒，不走 _time_coverter
     let mut block_areas = crate::core::parse_block_areas(pgr.block_area_list.as_ref());
+    // 官方格式没有全局 beat 表（`BPMList` 只按判定线索引给），rpe-next v220 噪域的时间就是
+    // 全局 beat，换算不出秒，所以这里不解析它们：`parse_block_areas` 会跳过 next 形状的条目，
+    // 只提示一句，免得以为是解析器漏了。
+    if pgr
+        .block_area_list
+        .as_ref()
+        .and_then(|it| it.as_array())
+        .is_some_and(|list| list.iter().any(crate::core::is_next_block_area))
+    {
+        warn!("blockAreaList: 官方格式没有全局 BPM 表，rpe-next 噪域已忽略");
+    }
     // 「噪域优化」：解析时无条件把同形状的条目归成同一个噪域（`BlockArea::group`），
     // 各条成为它的多个出现窗口。用不用这个编号由 config.block_area_reuse 决定，
     // 所以这里不必等配置——归一次组只是几百微秒的一次哈希。

@@ -18,6 +18,13 @@ use miniquad::{TextureWrap, UniformType};
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 
+/// 官方噪域的原生红（`84/255` 是绿蓝）：没有配色的噪域就是这个颜色。
+///
+/// 片元里 `uColored == 0` 那条路径、`blockPalette()` 的恒等分支、以及 `nativeColor` 的
+/// 早退判据用的都是它。所以「颜色恰好等于这个值」与「没有颜色」在画面上是同一件事，
+/// 颜色平面不必为这类噪域做任何特化。
+pub const DEFAULT_BLOCK_COLOR: [f32; 3] = [1., 84. / 255., 84. / 255.];
+
 /// 解算好的矩形（在它自己的空间里是轴对齐的）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zone {
@@ -40,6 +47,27 @@ pub struct Zone {
     /// 「判定范围让位」的覆盖度（0 = 普通方块）。`> 0` 的块是**合成块**：它只往
     /// `Masks::judge_cover` 里打覆盖度、把噪域按 `alpha` 擦掉，本身不参与绘制。
     pub judge_cover: u8,
+    /// 这块噪域的调色板颜色（线性 0~1 的 RGB，`None` = 原生红 = 没有颜色）。
+    ///
+    /// 它与 [`DEFAULT_BLOCK_COLOR`] 相等的效果就是「没有颜色」。有颜色的噪域会额外烘
+    /// 一张颜色平面（`Masks::active_colors` / `disabled_colors`），并改用彩色材质：
+    /// 片元把原生红材质的饱和度/明度搬到这个色相上（`blockPalette()`）。
+    pub color: Option<[f32; 3]>,
+}
+
+impl Zone {
+    /// 本帧这块噪域要不要走彩色材质。
+    ///
+    /// 三个条件缺一不可：配了色、颜色不等于原生红（后者可以整条走老路径）、
+    /// 以及这块真的会画出像素（`opacity > 0`，初始渐显进度 0 时它还没出现）。
+    pub fn is_colored(&self) -> bool {
+        self.opacity > 0. && self.color.is_some_and(|color| color != DEFAULT_BLOCK_COLOR)
+    }
+
+    /// 设置调色板颜色；`None` 退回原生红。颜色按 0~1 夹取，越界会让片元的色相搬运算出负值。
+    pub fn set_color(&mut self, color: Option<[f32; 3]>) {
+        self.color = color.map(|c| c.map(|v| v.clamp(0., 1.)));
+    }
 }
 
 impl Zone {
@@ -70,6 +98,7 @@ impl Zone {
             },
             index: 0,
             judge_cover: 0,
+            color: area.color,
         })
     }
 }
@@ -162,6 +191,8 @@ const FLOATS: &[(&str, f32)] = &[
     ("_BackgroundPixelScale", 6.),
     // 本仓库新增（`block_shader_full.frag` 里官方原本硬编码 3.0 的那处场景快照降采样）：
     // 默认 3.0 ⇒ 与官方逐位一致；「噪域扭曲」关闭时置 1.0 ⇒ 快照 1:1 采样，后面不再发虚。
+    // 官方把 ActiveBlock 的 Ready 分支按 `uReadyExtra` 再叠一层亮度（默认 0 = 官方 0.12）。
+    ("uReadyExtra", 0.),
     ("_SnapshotPixelScale", 3.),
     // 本仓库新增（「岩浆噪域」）：`_LavaMode` 0 = 关闭 ⇒ 逐位保持官方原样；
     // `_LavaScale` 是每屏高铺多少格，16 ⇒ 720p 下 45px 一格。
@@ -280,6 +311,13 @@ struct FrameTextures {
     masks: mask::Masks,
     effect: Option<Texture2D>,
     aux: Option<Texture2D>,
+    /// 彩色噪域的两张颜色平面（`uActiveColors` / `uDisabledColors`），尺寸与 `effect` 相同。
+    ///
+    /// 只有本帧至少一块噪域带颜色（`masks.colored`）时才会建出来并上传；其余帧保持
+    /// `None`，绘制时绑空纹理 —— 加颜色之前那条路径因此一个字节都不变。
+    color_textures: [Option<Texture2D>; 2],
+    /// 颜色平面当前对应的掩码 `revision`（与 `uploaded_masks` 同一套判据）。
+    uploaded_colors: Option<u64>,
     scene: Option<Texture2D>,
     /// `copy_scene` 的写入端 framebuffer：把 `scene` 那张纹理挂上去，
     /// 这样场景副本走 GPU 端 `glBlitFramebuffer`，不必读回 CPU。
@@ -302,7 +340,21 @@ pub(super) fn set_simplified(value: bool) {
     FRAME.with(|frame| frame.borrow_mut().simplified = value);
 }
 
-fn load_block_material(disabled: bool, hover: bool) -> Result<Material, miniquad::ShaderError> {
+/// `MATERIAL` 的下标。
+///
+/// 布局是 `[disabled, active, hover]`，彩色变体是同一套再往后挪 3 张。抽成函数是为了让
+/// 「带颜色的噪域会选彩色材质」这件事能单测 —— 材质本身要 GL 上下文才建得起来。
+fn material_index(disabled: bool, hover: bool, colored: bool) -> usize {
+    3 * usize::from(colored) + if disabled { 0 } else if hover { 2 } else { 1 }
+}
+
+/// `colored` 为真时把整条彩色路径编译进去。
+///
+/// `uColored` 做成**编译期常量**（而不是每帧设的 uniform）与参考实现一致：GLES 驱动能
+/// 折掉 `uColored == 0` 那些分支，`blockPalette()` 的恒等路径也就整段消失；同时按参考
+/// 实现把 `mediump` 提到 `highp` —— 把原生红的饱和度搬到别的色相时要够精度，否则
+/// 深色噪域的调色板会在 mediump 上量化出可见的色阶。
+fn load_block_material(disabled: bool, hover: bool, colored: bool) -> Result<Material, miniquad::ShaderError> {
     let mut uniforms = vec![
         ("uView".to_owned(), UniformType::Float3),
         ("uUnityTime".to_owned(), UniformType::Float4),
@@ -313,6 +365,11 @@ fn load_block_material(disabled: bool, hover: bool) -> Result<Material, miniquad
         ("_TouchPosCount".to_owned(), UniformType::Int1),
         ("uLayer".to_owned(), UniformType::Int1),
     ];
+    if !colored {
+        // 彩色噪域：1 时片元按 `fieldUV` 去采 `uActiveColors` / `uDisabledColors`。
+        // 彩色变体里它是编译期常量（见下面的特化），没有 uniform 可设。
+        uniforms.push(("uColored".to_owned(), UniformType::Int1));
+    }
     uniforms.extend(FLOATS.iter().map(|(name, _)| (name.to_string(), UniformType::Float1)));
     uniforms.extend(COLORS.iter().map(|(name, _)| (name.to_string(), UniformType::Float4)));
     for i in 0..10 {
@@ -340,15 +397,27 @@ fn load_block_material(disabled: bool, hover: bool) -> Result<Material, miniquad
             "uAuxMasks".to_owned(),
             "uNoiseTex".to_owned(),
             "_LavaTex".to_owned(),
+            // 彩色噪域的两张颜色图。没有彩色噪域时绑 1x1 空纹理、`uColored` 归零，
+            // 片元里的 `uColored == 0` 分支不会去采它们。
+            "uActiveColors".to_owned(),
+            "uDisabledColors".to_owned(),
         ],
     };
     // 把「只跟 uniform 有关」的分支特化掉。移动端 GPU 上，原生 hover SDF 即使零手指
     // 也会吃掉寄存器和指令。
     let mut fragment = FRAGMENT.replace("uniform int uLayer;", if disabled { "const int uLayer = 0;" } else { "const int uLayer = 3;" });
+    if colored {
+        fragment = fragment
+            .replace("uniform int uColored;", "const int uColored = 1;")
+            .replace("mediump", "highp");
+    }
     if !hover {
         fragment = fragment
             .replace("uniform \tint _TouchPosCount;", "const int _TouchPosCount = 0;")
-            .replace("float hoverSample(vec2 uv) { return texture2D(uAuxMasks, basePixelUV(uv)).a; }", "float hoverSample(vec2 uv) { return 0.0; }");
+            .replace(
+                "return texture2D(uAuxMasks, (floor(uv * size) + 0.5) / size).a;",
+                "return 0.0;",
+            );
     }
     let material = load_material(VERTEX, &fragment, params)?;
     for (name, value) in FLOATS {
@@ -361,14 +430,34 @@ fn load_block_material(disabled: bool, hover: bool) -> Result<Material, miniquad
     material.set_uniform("uDisabledSparkTint", vec3(0.31132078, 0.077830195, 0.077830195));
     material.set_uniform("_TouchPosCount", 0_i32);
     material.set_uniform("uLayer", if disabled { 0_i32 } else { 3_i32 });
+    if !colored {
+        material.set_uniform("uColored", 0_i32);
+    }
     for i in 0..10 {
         material.set_uniform(&format!("_TouchPos[{i}]"), vec2(0., 0.));
     }
     Ok(material)
 }
 
-static MATERIAL: Lazy<Option<[Material; 2]>> = Lazy::new(|| {
-    let loaded = (|| Ok([load_block_material(true, false)?, load_block_material(false, false)?]))();
+static MATERIAL: Lazy<Option<[Material; 6]>> = Lazy::new(|| {
+    // 六张一起编：`MATERIAL` 本来就是在第一次真正要画噪域时才 Lazy 一次的事（离线录制
+    // 卡一帧无所谓），而按需再编彩色那三张会把「哪一帧第一次出现彩色噪域」变成一次额外的
+    // 着色器编译停顿，还会让 `MATERIAL` 的类型变成可变的 Option 内层。无颜色的谱面只是
+    // 多编了 3 份变体，不选就永远不画。
+    //
+    // 第 2 张是「噪域打击效果」专用的 hover 材质：同一份片元着色器，但不把 `hoverSample`
+    // 特化成 0，于是它能真的去采 aux 纹理的 alpha（零手指时那里本来就是 0，画面零回归）。
+    // 只有指到手的帧才会切到它，没开「噪域打击效果」时永远走第 1 张，开销与改动前一致。
+    let loaded = (|| {
+        Ok([
+            load_block_material(true, false, false)?,
+            load_block_material(false, false, false)?,
+            if HOVER_ASSET { load_block_material(false, true, false)? } else { load_block_material(false, false, false)? },
+            load_block_material(true, false, true)?,
+            load_block_material(false, false, true)?,
+            if HOVER_ASSET { load_block_material(false, true, true)? } else { load_block_material(false, false, true)? },
+        ])
+    })();
     loaded
         .map_err(|e: miniquad::ShaderError| {
             tracing::warn!("block-area shader failed: {e}");
@@ -442,7 +531,7 @@ fn warm_up() {
                 material.set_texture("uDisplaceTex", *DISPLACE_TEX);
                 material.set_texture("uSparkTex", *SPARK_TEX);
                 material.set_texture("uNoiseTex", *NOISE_TEX);
-                for sampler in ["uMasks", "uAuxMasks", "uScene", "_LavaTex"] {
+                for sampler in ["uMasks", "uAuxMasks", "uScene", "_LavaTex", "uActiveColors", "uDisabledColors"] {
                     material.set_texture(sampler, empty);
                 }
                 material.set_uniform("uView", vec3(1., 1., 1.));
@@ -548,7 +637,10 @@ pub fn draw_zones_with_touches(res: &mut Resource, aspect: f32, zones: &[Zone], 
     // 该相机把 chart 的 x∈[-1,1]、y∈[-1/aspect,1/aspect]（y 向上）直接映到 NDC。
     let mut touches: Vec<_> = touches
         .iter()
-        .map(|&(id, p)| (id, vec2(0.5 + 0.5 * if flip_x { -p.x } else { p.x }, 0.5 + 0.5 * aspect * p.y)))
+        .map(|&(id, p)| {
+            let uv = vec2(0.5 + 0.5 * if flip_x { -p.x } else { p.x }, 0.5 + 0.5 * aspect * p.y);
+            (id, uv)
+        })
         .collect();
     // 判定从 `HashMap` 收集触摸。新增/移除手指时要让 SDF 累加顺序稳定。
     touches.sort_by_key(|(id, _)| *id);
@@ -683,7 +775,9 @@ fn draw_layer_at(
             frame.touch.update_fingers(touches, time);
         }
         let hover = !disabled && HOVER_ASSET && frame.touch.visible();
-        let m = m[if disabled { 0 } else { 1 }];
+        // 颜色是整帧的性质（`uColored` 在材质里是编译期常量），由掩码那一步写好。
+        let colored = frame.masks.colored;
+        let m = m[material_index(disabled, hover, colored)];
         if hover {
             let bw = frame.masks.width / 2;
             let bh = frame.masks.height / 2;
@@ -737,6 +831,27 @@ fn draw_layer_at(
                 .update(unsafe { get_internal_gl() }.quad_context, &frame.masks.aux_rgba);
         }
         frame.uploaded_masks = Some(frame.masks.revision);
+        // 彩色噪域的两张颜色平面：尺寸与掩码一致、点采样（颜色归属是逐掩码纹素定的，
+        // 线性插值会把颜色糊出噪域边缘）。没有颜色的帧连一次 `update` 都不做。
+        if frame.masks.colored {
+            for layer in 0..2 {
+                let colors = if layer == 0 { &frame.masks.active_colors } else { &frame.masks.disabled_colors };
+                let resized = frame.color_textures[layer].is_none_or(|texture| (texture.width() as u32, texture.height() as u32) != effect_dim);
+                if resized {
+                    let texture = Texture2D::from_rgba8(effect_dim.0 as u16, effect_dim.1 as u16, colors);
+                    texture.set_filter(FilterMode::Nearest);
+                    if let Some(old) = frame.color_textures[layer].replace(texture) {
+                        old.delete();
+                    }
+                } else if frame.uploaded_colors != Some(frame.masks.revision) {
+                    frame.color_textures[layer]
+                        .unwrap()
+                        .raw_miniquad_texture_handle()
+                        .update(unsafe { get_internal_gl() }.quad_context, colors);
+                }
+            }
+            frame.uploaded_colors = Some(frame.masks.revision);
+        }
         // 判定范围「让位给噪域」：把这份掩码纹理连同它的视口交给判定范围 —— 掩码 R 通道就是
         // 噪域方块的覆盖度，`judge_range.glsl` 按 `color.a * (1 - R)` 画，于是重合处被噪域擦掉。
         // 判定范围画在 `Chart::render` 里（早于本函数），读到的是**上一帧**留下的这份；
@@ -786,15 +901,34 @@ fn draw_layer_at(
         }
         m.set_uniform("_LavaMode", if lava == 0 { 0.0_f32 } else { 1.0_f32 });
         m.set_uniform("_LavaScale", LAVA_CELLS_PER_SCREEN_HEIGHT);
+        // 彩色噪域：本帧至少一块带颜色才把 `uColored` 置 1 并绑上颜色平面。没有颜色的帧
+        // 把 `uColored` 归零、两张颜色绑空纹理 —— 片元走的是 `blockPalette` 恒等分支，
+        // 逐像素与加颜色之前相同。
+        match (colored, frame.color_textures[0], frame.color_textures[1]) {
+            (true, Some(active), Some(disabled_colors)) => {
+                m.set_texture("uActiveColors", active);
+                m.set_texture("uDisabledColors", disabled_colors);
+            }
+            _ => {
+                m.set_uniform("uColored", 0_i32);
+                m.set_texture("uActiveColors", *EMPTY_TEX);
+                m.set_texture("uDisabledColors", *EMPTY_TEX);
+            }
+        }
         m.set_uniform("uUnityTime", vec4(time / 20., time, time * 2., time * 3.));
         m.set_uniform("uView", vec3(width as f32, height as f32, aspect));
         m.set_uniform("_ScreenParams", vec4(width as f32, height as f32, 1. + 1. / width as f32, 1. + 1. / height as f32));
         m.set_uniform("_EffectRT_TexelSize", vec4(1. / effect_dim.0 as f32, 1. / effect_dim.1 as f32, effect_dim.0 as f32, effect_dim.1 as f32));
         m.set_uniform("_TouchPosCount", touches.len().min(10) as i32);
         for (i, (_, uv)) in touches.iter().take(10).enumerate() {
-            m.set_uniform(&format!("_TouchPos[{i}]"), vec2(uv.x * width as f32 / height as f32, uv.y));
+            // `uv` 是 [0,1] 的屏幕 UV（y 向上）；片元里拿它比较的是
+            // `screenPos.xy / screenPos.w * _ScreenParams.xy / _ScreenParams.y`，也就是
+            // x∈[-w/h, w/h]、y∈[-1, 1] 的 NDC 空间，所以这里要先乘 2 减 1。
+            m.set_uniform(&format!("_TouchPos[{i}]"), vec2((uv.x * 2. - 1.) * width as f32 / height as f32, uv.y * 2. - 1.));
         }
         m.set_uniform("_TouchPosShine", (0.63 + 0.37 * ((time * 43.).sin() * 0.5 + 0.5)) * 2.);
+        // 「噪域打击光晕半径」：官方默认 0.5，这里允许按配置放大 / 缩小。
+        m.set_uniform("_TouchPosRadius", res.config.block_area_hover_radius.max(0.));
         let simplified = frame.simplified || res.config.simplified_block_area;
         set_fill_style(m, disabled, simplified, invert, &res.config);
         // `chart_to_base` 把这台四边形从 chart 归一化空间送到当前基础空间：全屏四边形
@@ -1003,3 +1137,83 @@ fn copy_scene(
 
 const FRAGMENT: &str = include_str!("../../../../../../assets/blockarea/block_shader_full.frag");
 const VERTEX: &str = include_str!("../../../../../../assets/blockarea/block_shader_full.vert");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 布局必须是 `[disabled, active, hover]`，彩色变体在同一套上再加 3。选错下标就是
+    /// 「带颜色的噪域仍然画成原生红」或者「无颜色的噪域去采空颜色图」。
+    #[test]
+    fn material_index_matches_the_layout() {
+        assert_eq!(material_index(true, false, false), 0);
+        assert_eq!(material_index(false, false, false), 1);
+        assert_eq!(material_index(false, true, false), 2);
+        assert_eq!(material_index(true, false, true), 3);
+        assert_eq!(material_index(false, false, true), 4);
+        assert_eq!(material_index(false, true, true), 5);
+        // disabled 永远不会是 hover（`draw_layer_at` 里 `hover = !disabled && ...`），
+        // 但真传进来也得落在自己那一格。
+        assert_eq!(material_index(true, true, false), 0);
+        assert_eq!(material_index(true, true, true), 3);
+    }
+
+    /// 彩色材质靠**逐字替换**片元里的这几行来特化。片元是从官方反编译产物搬过来的，
+    /// 再同步一次就可能改掉空白/写法；那时替换会静默失效（`uColored` 退回 uniform 的 0，
+    /// 于是带颜色的噪域仍然画成原生红），所以这里把字面量钉住。
+    #[test]
+    fn fragment_keeps_the_literals_the_colored_specialization_replaces() {
+        assert_eq!(FRAGMENT.matches("uniform int uColored;").count(), 1, "彩色特化靠这条精确替换");
+        assert!(FRAGMENT.contains("texture2D(uActiveColors, fieldUV)"));
+        assert!(FRAGMENT.contains("texture2D(uDisabledColors, fieldUV)"));
+        assert!(FRAGMENT.contains("mediump"), "彩色变体会把 mediump 提到 highp");
+    }
+
+    /// 「有没有颜色」的判据：原生红与 `None` 等价，`opacity == 0` 的块不算。
+    #[test]
+    fn is_colored_treats_native_red_as_no_color() {
+        let mut zone = Zone {
+            center: Vector::new(0., 0.),
+            half: Vector::new(0.5, 0.5),
+            angle: 0.,
+            invert: false,
+            active: true,
+            ready: false,
+            before_enable: false,
+            opacity: 1.,
+            index: 0,
+            judge_cover: 0,
+            color: None,
+        };
+        assert!(!zone.is_colored());
+        zone.set_color(Some(DEFAULT_BLOCK_COLOR));
+        assert!(!zone.is_colored(), "原生红不是「有颜色」");
+        zone.set_color(Some([0., 1., 0.]));
+        assert!(zone.is_colored());
+        zone.opacity = 0.;
+        assert!(!zone.is_colored(), "还没出现的块不该把整帧拖进彩色材质");
+        zone.opacity = 1.;
+        zone.set_color(None);
+        assert!(!zone.is_colored());
+    }
+
+    /// `set_color` 按 0~1 夹取：越界会让片元的色相搬运算出负的饱和度。
+    #[test]
+    fn set_color_clamps_to_unit_range() {
+        let mut zone = Zone {
+            center: Vector::new(0., 0.),
+            half: Vector::new(0.5, 0.5),
+            angle: 0.,
+            invert: false,
+            active: true,
+            ready: false,
+            before_enable: false,
+            opacity: 1.,
+            index: 0,
+            judge_cover: 0,
+            color: None,
+        };
+        zone.set_color(Some([-1., 2., 0.5]));
+        assert_eq!(zone.color, Some([0., 1., 0.5]));
+    }
+}

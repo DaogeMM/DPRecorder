@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    core::{BadNote, Chart, NOTE_WIDTH_RATIO_BASE, Note, NoteKind, Point, Resource, Vector},
+    core::{BadNote, Chart, NOTE_WIDTH_RATIO_BASE, Note, NoteKind, Point, Resource, Vector, block_touch_blocked},
     ext::{NotNanExt, get_viewport},
 };
 use macroquad::prelude::{
@@ -9,7 +9,7 @@ use macroquad::prelude::{
 };
 use miniquad::{EventHandler, MouseButton};
 use once_cell::sync::Lazy;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use sasa::{PlaySfxParams, Sfx};
 use serde::Serialize;
 use std::{cell::RefCell, collections::HashMap, num::FpCategory};
@@ -279,6 +279,24 @@ mod inner;
 #[cfg(feature = "closed")]
 use inner::*;
 
+/// 「噪域吞触摸」的挡标记维护：返回这根手指这一帧是否算被噪域挡着。
+///
+/// 官方的语义是「按下时在噪域里 → 一直挡到松手」：中途滑出噪域也不解除，
+/// 抬起 / 取消才清掉。所以除了 `inside`（这一帧真的落在噪域里）之外还要看历史。
+fn finger_blocked(blocked_finger_ids: &mut FxHashSet<u64>, id: u64, phase: TouchPhase, inside: bool) -> bool {
+    if matches!(phase, TouchPhase::Started | TouchPhase::Ended | TouchPhase::Cancelled) {
+        // 手指 id 会被系统立刻复用，上一次触摸的挡标记不能跨生命周期带过来
+        blocked_finger_ids.remove(&id);
+    }
+    if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+        return false;
+    }
+    if inside {
+        blocked_finger_ids.insert(id);
+    }
+    blocked_finger_ids.contains(&id)
+}
+
 #[repr(C)]
 pub struct Judge {
     // notes of each line in order
@@ -286,6 +304,8 @@ pub struct Judge {
     pub notes: Vec<(Vec<u32>, usize)>,
     pub trackers: FxHashMap<u64, FlickTracker>,
     pub last_time: f64,
+    /// 「噪域吞触摸」：当前被噪域挡住的触点 id（按下时落在噪域里 → 挡到松手）。
+    blocked_finger_ids: FxHashSet<u64>,
 
     key_down_count: u32,
 
@@ -312,6 +332,7 @@ impl Judge {
         Self {
             notes,
             trackers: FxHashMap::with_capacity_and_hasher(16, Default::default()),
+            blocked_finger_ids: FxHashSet::default(),
             last_time: 0.,
 
             key_down_count: 0,
@@ -324,8 +345,14 @@ impl Judge {
     pub fn reset(&mut self) {
         self.notes.iter_mut().for_each(|it| it.1 = 0);
         self.trackers.clear();
+        self.blocked_finger_ids.clear();
         self.inner.reset();
         self.judgements.borrow_mut().clear();
+    }
+
+    /// 暂停 / 回放时调用：忘掉「哪些手指正被噪域挡着」，恢复播放后重新按当前位置判定。
+    pub fn clear_blocked_fingers(&mut self) {
+        self.blocked_finger_ids.clear();
     }
 
     pub fn commit(&mut self, t: f64, what: Judgement, line_id: u32, note_id: u32, diff: f64) {
@@ -522,7 +549,7 @@ impl Judge {
                 }
             }
         }
-        let touches: Vec<Touch> = touches
+        let mut touches: Vec<Touch> = touches
             .into_values()
             .map(|mut it| {
                 it.time = if it.time.is_infinite() {
@@ -533,6 +560,35 @@ impl Judge {
                 it
             })
             .collect();
+        // 「噪域吞触摸」：落在 `Active` 相位噪域里的手指直接从触点列表里摘掉 ——
+        // 下面的按键因此打不中（官方语义：噪域是一层禁止打击的区域），同时把它记进
+        // `chart.blocked_touches`，噪域渲染会在触点位置点亮 hover 光晕。
+        //
+        // 官方一旦判定这根手指被噪域挡住，就一直挡到松手：中途滑出噪域也不会解除，
+        // 光晕跟着手指走。所以挡住的触点是**持续**的，不能只看当前位置。
+        chart.blocked_touches.clear();
+        if !chart.block_areas.is_empty() || !chart.next_block_areas.is_empty() {
+            let aspect = res.aspect_ratio;
+            let areas = &chart.block_areas;
+            let next = &chart.next_block_areas;
+            let live: Vec<u64> = touches.iter().map(|touch| touch.id).collect();
+            // 已经抬起来的触摸不会再走到下面那趟 retain，这里顺手清掉它的挡标记
+            self.blocked_finger_ids.retain(|id| live.contains(id));
+            let mut blocked = Vec::new();
+            touches.retain(|touch| {
+                // 触点 y 轴与 chart 相反（触摸是屏幕坐标，chart 的 y 向上）
+                let p = Vector::new(touch.position.x, -touch.position.y);
+                // 已经被挡住的触点不再重复测试（它可能已经滑出噪域），仍然算挡着
+                let inside = !self.blocked_finger_ids.contains(&touch.id) && block_touch_blocked(areas, next, p, t, aspect);
+                if finger_blocked(&mut self.blocked_finger_ids, touch.id, touch.phase, inside) {
+                    blocked.push((touch.id, p));
+                    false
+                } else {
+                    true
+                }
+            });
+            chart.blocked_touches = blocked;
+        }
         // pos[line][touch]
         let mut pos = Vec::<Vec<Option<Point>>>::with_capacity(chart.lines.len());
         for id in 0..chart.lines.len() {
@@ -1292,5 +1348,26 @@ pub fn icon_index(score: u32, full_combo: bool) -> usize {
         (x, _) if x < 920000 => 4,
         (x, _) if x < 960000 => 3,
         (_, false) => 2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 「噪域挡住一根手指就挡到松手」：滑出噪域不解除，抬起 / 取消才解除；
+    /// 复用的手指 id 不带旧标记。
+    #[test]
+    fn blocked_finger_persists_until_release() {
+        use TouchPhase::*;
+        let mut blocked = FxHashSet::default();
+        assert!(finger_blocked(&mut blocked, 7, Started, true), "按下时落在噪域里");
+        assert!(finger_blocked(&mut blocked, 7, Stationary, false), "滑出噪域仍然挡着");
+        assert!(finger_blocked(&mut blocked, 7, Moved, false), "继续按着仍然挡着");
+        assert!(!finger_blocked(&mut blocked, 8, Started, false), "另一根手指没被挡");
+        assert!(!finger_blocked(&mut blocked, 7, Ended, true), "抬起解除");
+        assert!(!finger_blocked(&mut blocked, 7, Started, false), "复用的 id 不带旧标记");
+        assert!(finger_blocked(&mut blocked, 7, Moved, true), "重新按进噪域又挡住");
+        assert!(!finger_blocked(&mut blocked, 7, Cancelled, true), "取消解除");
     }
 }

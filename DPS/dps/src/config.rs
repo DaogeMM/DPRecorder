@@ -131,6 +131,13 @@ pub struct Config {
     pub render_bg_dim: bool,
     /// Phigros 4.0 `blockAreaList` 剧情遮挡区域（默认开启）
     pub render_block_area: bool,
+    /// 「噪域打击效果」：按键命中时，在噪域上亮起一圈官方的触摸光晕
+    /// （`TouchHover` 的 SDF + 微光 + 位移），位置取命中那一帧的按键位置。
+    /// 关掉就完全不喂触摸点，噪域只按谱面本身显隐。默认开启。
+    pub block_area_hover: bool,
+    /// 「噪域打击光晕半径」：上面那圈光晕的半径倍率（官方 `_TouchPosRadius`，默认 0.5）。
+    /// 只在 `block_area_hover` 打开时有意义。
+    pub block_area_hover_radius: f32,
     /// 简化噪域：只把方块自己的矩形铺成纯色，不含噪点 / 描边 / 火花
     /// （`enable` 前淡红、`enable` 后红），默认关闭
     pub simplified_block_area: bool,
@@ -453,6 +460,8 @@ impl Default for Config {
             render_bg: true,
             render_bg_dim: true,
             render_block_area: true,
+            block_area_hover: true,
+            block_area_hover_radius: 0.5,
             simplified_block_area: false,
             simplified_block_area_text: false,
             simplified_block_area_text_color: [1., 0.3765, 0.5804],

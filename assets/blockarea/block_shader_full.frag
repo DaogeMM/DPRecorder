@@ -14,6 +14,13 @@ varying highp vec2 noiseUV;
 varying highp vec4 screenPos;
 varying highp float clipHalfWidth;
 uniform int uLayer;
+uniform int uColored;
+uniform float uReadyExtra;
+// 本仓库新增（官方原件没有）：「噪域扭曲」里 snapshot 的降采样尺度（官方写死 6.0）。
+uniform mediump float _SnapshotPixelScale;
+uniform mediump sampler2D uActiveColors;
+uniform mediump sampler2D uDisabledColors;
+vec3 blockPalette(vec3 nativeColor, vec3 rgb);
 uniform mediump sampler2D uDisplaceTex;
 uniform mediump sampler2D uSparkTex;
 uniform mediump sampler2D uMasks;
@@ -57,7 +64,6 @@ uniform 	float _TouchPosRadius;
 uniform 	float _TouchPosSDFSmoothness;
 uniform 	float _TouchPosSDFFalloff;
 uniform 	mediump float _BackgroundPixelScale;
-uniform 	mediump float _SnapshotPixelScale;
 uniform 	float _ShineSpeed;
 uniform 	float _ShineBrightness;
 uniform 	vec4 _ShineColor;
@@ -134,6 +140,7 @@ mediump float u_xlat16_51;
 float u_xlat52;
 mediump float u_xlat16_56;
 vec4 disabledColor(mediump float mask) {
+    vec3 rgb = uColored == 0 ? vec3(1.0, 84.0 / 255.0, 84.0 / 255.0) : texture2D(uDisabledColors, fieldUV).rgb;
     vec4 result;
 mediump float u_xlat16_0;
 mediump vec3 u_xlat16_1;
@@ -168,10 +175,10 @@ mediump float u_xlat16_13;
     u_xlat4.xy = u_xlat16_1.xy * vec2(u_xlat16_3) + u_xlat2.xy;
     u_xlat4.xy = u_xlat4.xy * vec2(uDisabledSparkIntensity) + sparkUV.xy;
     u_xlat16_4 = texture2D(uSparkTex, u_xlat4.xy).x;
-    u_xlat4.xyz = vec3(u_xlat16_4) * uDisabledSparkTint.xyz;
+    u_xlat4.xyz = vec3(u_xlat16_4) * blockPalette(uDisabledSparkTint.xyz, rgb);
     u_xlat4.xyz = vec3(u_xlat16_13) * u_xlat4.xyz;
     if (_LavaMode < 0.5) {
-        u_xlat16_1.xyz = uDisabledFillColor.xyz * vec3(uDisabledFillOpacity);
+        u_xlat16_1.xyz = blockPalette(uDisabledFillColor.xyz, rgb) * vec3(uDisabledFillOpacity);
     } else {
         vec2 u_lavaUV = sceneUV * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y), _LavaScale);
         u_xlat16_1.xyz = texture2D(_LavaTex, u_lavaUV).xyz * vec3(uDisabledFillOpacity);
@@ -183,6 +190,7 @@ mediump float u_xlat16_13;
 
 }
 vec4 fullActive() {
+    vec3 rgb = uColored == 0 ? vec3(1.0, 84.0 / 255.0, 84.0 / 255.0) : texture2D(uActiveColors, fieldUV).rgb;
     vec4 result;
 
     u_xlat0.x = fieldUV.x + -0.5;
@@ -250,7 +258,7 @@ vec4 fullActive() {
         u_xlat16.xy = u_xlat1.xy * vec2(vec2(_DisplaceStrength, _DisplaceStrength)) + u_xlat16.xy;
         u_xlat33.xy = u_xlat1.xy * vec2(vec2(_SparkDisplaceIntensity, _SparkDisplaceIntensity)) + sparkUV.xy;
         u_xlat16_33 = texture2D(uSparkTex, u_xlat33.xy).x;
-        u_xlat4.xyz = vec3(u_xlat16_33) * _SparkTint.xyz;
+        u_xlat4.xyz = vec3(u_xlat16_33) * blockPalette(_SparkTint.xyz, rgb);
         u_xlat6.xyz = snapshotSample(u_xlat16.xy).xyz;
         u_xlatb16 = 0<_TouchPosCount;
         if(u_xlatb16){
@@ -317,7 +325,12 @@ vec4 fullActive() {
         u_xlat49 = u_xlat16_21.x + 1.00000001e-10;
         u_xlat49 = u_xlat16_8.x / u_xlat49;
         u_xlat16_5.x = u_xlat1.x * _SparkHueShiftAmount + abs(u_xlat32.x);
-        u_xlat16_37 = u_xlat1.y * _SparkHueShiftAmount + u_xlat49;
+        // White/gray sparks can brighten the snapshot without adding the
+        // native red material's saturation. Keep its native path when uncolored.
+        float paletteHigh = max(rgb.r, max(rgb.g, rgb.b));
+        float paletteLow = min(rgb.r, min(rgb.g, rgb.b));
+        float paletteSaturation = uColored == 0 ? 1.0 : (paletteHigh - paletteLow) / max(paletteHigh, 0.00001) / (1.0 - 84.0 / 255.0);
+        u_xlat16_37 = u_xlat1.y * _SparkHueShiftAmount * paletteSaturation + u_xlat49;
         u_xlat16_21.x = u_xlat1.z * _SparkHueShiftAmount + u_xlat16_21.x;
         u_xlat16_8.xyz = u_xlat16_5.xxx + vec3(1.0, 0.666666687, 0.333333343);
         u_xlat16_8.xyz = fract(u_xlat16_8.xyz);
@@ -342,15 +355,15 @@ vec4 fullActive() {
         u_xlat1.xyz = u_xlat6.xyz * u_xlat1.xyz + u_xlat16_10.xyz;
         u_xlat1.xyz = clamp(u_xlat1.xyz, 0.0, 1.0);
         if (_LavaMode < 0.5) {
-            u_xlat16_3.xyz = (-vec3(u_xlat16_35)) * vec3(vec3(_DisplaceBlendIntensity, _DisplaceBlendIntensity, _DisplaceBlendIntensity)) + _FillColor.xyz;
+            u_xlat16_3.xyz = (-vec3(u_xlat16_35)) * vec3(vec3(_DisplaceBlendIntensity, _DisplaceBlendIntensity, _DisplaceBlendIntensity)) + blockPalette(_FillColor.xyz, rgb);
         } else {
             vec2 u_lavaUV = sceneUV * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y), _LavaScale);
             u_xlat16_3.xyz = texture2D(_LavaTex, u_lavaUV).xyz;
         }
         u_xlat16_5.xyz = u_xlat1.xyz + (-u_xlat16_3.xyz);
         u_xlat16_3.xyz = vec3(_FillStrength) * u_xlat16_5.xyz + u_xlat16_3.xyz;
-        u_xlat16_5.xyz = vec3(u_xlat16_50) * _GlowColor.xyz;
-        u_xlat16_5.xyz = _EdgeColor.xyz * u_xlat16_2.xxx + u_xlat16_5.xyz;
+        u_xlat16_5.xyz = vec3(u_xlat16_50) * blockPalette(_GlowColor.xyz, rgb);
+        u_xlat16_5.xyz = blockPalette(_EdgeColor.xyz, rgb) * u_xlat16_2.xxx + u_xlat16_5.xyz;
         u_xlat16_3.xyz = u_xlat16_3.xyz * vec3(u_xlat16_0) + u_xlat16_5.xyz;
         u_xlat16_50 = u_xlat16.x * _TouchPosShine + 1.0;
         u_xlat16_3.xyz = vec3(u_xlat16_50) * u_xlat16_3.xyz;
@@ -516,7 +529,7 @@ vec4 fullActive() {
         u_xlat32.x = u_xlat16.x * -2.0 + 3.0;
         u_xlat16.x = u_xlat16.x * u_xlat16.x;
         u_xlat16.x = u_xlat16.x * u_xlat32.x;
-        u_xlat16_8.xyz = u_xlat16.xxx * _NoiseTint.xyz + u_xlat16.xxx;
+        u_xlat16_8.xyz = u_xlat16.xxx * blockPalette(_NoiseTint.xyz, rgb) + u_xlat16.xxx;
         u_xlat16_8.xyz = clamp(u_xlat16_8.xyz, 0.0, 1.0);
         u_xlat16_9.xyz = vec3(u_xlat48) * u_xlat16_8.xyz;
         u_xlat16_51 = u_xlat16_0;
@@ -524,12 +537,12 @@ vec4 fullActive() {
         u_xlat16_56 = u_xlat16_51 * -2.0 + 3.0;
         u_xlat16_51 = u_xlat16_51 * u_xlat16_51;
         u_xlat16_51 = u_xlat16_51 * u_xlat16_56;
-        u_xlat16_10.xyz = vec3(u_xlat16_51) * _TouchGlowColor.xyz;
+        u_xlat16_10.xyz = vec3(u_xlat16_51) * blockPalette(_TouchGlowColor.xyz, rgb);
         u_xlat16_13.xyz = u_xlat16_9.xyz * u_xlat16_10.xyz;
         u_xlat16_14.xyz = u_xlat16_13.xyz + u_xlat16_13.xyz;
         u_xlat16_8.xyz = (-u_xlat16_8.xyz) * vec3(u_xlat48) + vec3(1.0, 1.0, 1.0);
         u_xlat16_8.xyz = u_xlat16_8.xyz + u_xlat16_8.xyz;
-        u_xlat16_15.xyz = (-vec3(u_xlat16_51)) * _TouchGlowColor.xyz + vec3(1.0, 1.0, 1.0);
+        u_xlat16_15.xyz = (-vec3(u_xlat16_51)) * blockPalette(_TouchGlowColor.xyz, rgb) + vec3(1.0, 1.0, 1.0);
         u_xlat16_8.xyz = (-u_xlat16_8.xyz) * u_xlat16_15.xyz + vec3(1.0, 1.0, 1.0);
         u_xlatb0.xyz = greaterThanEqual(u_xlat16_9.xyzx, vec4(0.5, 0.5, 0.5, 0.0)).xyz;
         u_xlat0.x = u_xlatb0.x ? float(1.0) : 0.0;
@@ -545,24 +558,43 @@ vec4 fullActive() {
         u_xlat16_8.y = float(0.0);
         u_xlat16_8.z = float(0.0);
     }
-    u_xlat16_2.xyz = u_xlat16_2.xzw * vec3(u_xlat16_18) + u_xlat16_3.xyz;
+    u_xlat16_2.xyz = u_xlat16_2.xzw * vec3(u_xlat16_18 + uReadyExtra) + u_xlat16_3.xyz;
     result.xyz = u_xlat16_8.xyz + u_xlat16_2.xyz;
     return result;
 
 }
 
+// Transfer native red material saturation/value to the requested edge RGB.
+// Default red takes the original arithmetic path exactly; white and black are
+// valid colors. The scene snapshot itself is never multiplied by this tint.
+vec3 blockPalette(vec3 nativeColor, vec3 rgb) {
+    if (uColored == 0 || all(lessThan(abs(rgb - vec3(1.0, 84.0 / 255.0, 84.0 / 255.0)), vec3(0.001)))) return nativeColor;
+    float high = max(rgb.r, max(rgb.g, rgb.b));
+    float low = min(rgb.r, min(rgb.g, rgb.b));
+    float delta = high - low;
+    if (delta < 0.00001) return vec3(nativeColor.r * high);
+    vec3 hue = (rgb - low) / delta;
+    float saturation = (1.0 - nativeColor.g / max(nativeColor.r, 0.00001)) * (delta / max(high, 0.00001)) / (1.0 - 84.0 / 255.0);
+    return nativeColor.r * high * mix(vec3(1.0), hue, clamp(saturation, 0.0, 1.0));
+}
+
 vec2 basePixelUV(vec2 uv) {
-    vec2 size = _EffectRT_TexelSize.zw * 0.5;
+    vec2 size = _EffectRT_TexelSize.zw;
     return (floor(uv * size) + 0.5) / size;
 }
 float composeSample(vec2 uv) { return texture2D(uMasks, basePixelUV(uv)).r; }
 vec2 effectSample(vec2 uv) { return texture2D(uMasks, uv).gb; }
 vec4 auxSample(vec2 uv) { return texture2D(uAuxMasks, basePixelUV(uv)); }
-float hoverSample(vec2 uv) { return texture2D(uAuxMasks, basePixelUV(uv)).a; }
+float hoverSample(vec2 uv) {
+    // Hover retains the native 1/8 grid; refined Compose uses the effect grid.
+    vec2 size = _EffectRT_TexelSize.zw * 0.5;
+    return texture2D(uAuxMasks, (floor(uv * size) + 0.5) / size).a;
+}
 vec4 snapshotSample(vec2 uv) {
-    // 本仓库改动（官方原件里这里是硬编码的 3.0）：场景快照的降采样倍率改成
+    // BlockRender.Start uses signed integer division by SIX (0x2aaaaaab).
+    // 官方把 snapshot 按 1/6 像素降采样。这里改成由 Rust 侧的
     // uniform `_SnapshotPixelScale`，默认 3.0 ⇒ 与官方逐位一致；「噪域扭曲」
-    // 关闭时 Rust 侧置 1.0，快照按 1:1 采样，后面的画面（字 / 按键）不再发虚。
+    // 调到更小的值就能拿到更细的场景快照。
     vec2 size = max(floor(_ScreenParams.xy / max(_SnapshotPixelScale, 1.0)), vec2(1.0));
     uv = (floor(clamp(uv, 0.0, 1.0) * size) + 0.5) / size;
     return texture2D(uScene, uv);

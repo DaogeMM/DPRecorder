@@ -219,6 +219,10 @@ export interface RenderConfig {
   offset: number;
   renderBlockArea: boolean;
   simplifiedBlockArea: boolean;
+  /** 噪域打击光晕：按键被判中时在噪域上点亮一圈光晕（官方游玩时的触摸效果，默认开） */
+  blockAreaHover: boolean;
+  /** 噪域打击光晕半径：光晕作用半径（官方默认 0.5） */
+  blockAreaHoverRadius: number;
   /** 简化噪域文字：在简化噪域正中间印上噪域编号（disable 白字 / enable 文字色，默认 #FF6094） */
   simplifiedBlockAreaText: boolean;
   /** 噪域复用：把几何与动画形状相同的噪域条目认成同一个噪域的多次出现，编号共享 */
@@ -425,6 +429,8 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   offset: 0,
   renderBlockArea: true,
   simplifiedBlockArea: false,
+  blockAreaHover: true,
+  blockAreaHoverRadius: 0.5,
   simplifiedBlockAreaText: false,
   blockAreaReuse: false,
   blockAreaLava: false,

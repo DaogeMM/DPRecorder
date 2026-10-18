@@ -252,6 +252,11 @@ pub struct RPEChart {
     #[serde(rename = "BPMList")]
     bpm_list: Vec<RPEBpmItem>,
     judge_line_list: Vec<RPEJudgeLine>,
+    /// rpe-next v220 的噪域表。与官方格式的 `blockAreaList` 同名但字段不同：这一份里
+    /// `bottomLeft` / `topRight` 是 next 条目、`bottomLeftPercentage` / `topRightPercentage`
+    /// 是原生条目，两类可能混在同一个数组里，解析时逐条判别。
+    #[serde(default, alias = "BlockAreaList")]
+    block_area_list: Option<Vec<serde_json::Value>>,
 }
 
 fn parse_events<T: Tweenable, V: Clone + Into<T>>(
@@ -809,6 +814,7 @@ fn get_bezier_map(rpe: &RPEChart) -> BezierMap {
 pub async fn parse_rpe(source: &str, fs: &mut dyn FileSystem, extra: ChartExtra) -> Result<Chart> {
     let rpe: RPEChart = serde_json::from_str(source).with_context(|| ptl!("json-parse-failed"))?;
     let bezier_map = get_bezier_map(&rpe);
+    let block_area_list = rpe.block_area_list;
     let bpm_list = rpe.bpm_list;
     let mut r = BpmList::new(bpm_list.clone().into_iter().map(|it| (it.start_time.beats(), it.bpm)).collect());
     fn vec<T>(v: &Option<Vec<T>>) -> impl Iterator<Item = &T> {
@@ -859,5 +865,34 @@ pub async fn parse_rpe(source: &str, fs: &mut dyn FileSystem, extra: ChartExtra)
         );
     }
     process_lines(&mut lines);
-    Ok(Chart::new(rpe.meta.offset as f64 / 1000.0, lines, r, ChartSettings::default(), extra, hitsounds, fonts))
+    let mut chart = Chart::new(rpe.meta.offset as f64 / 1000.0, lines, r, ChartSettings::default(), extra, hitsounds, fonts);
+    // 噪域：`blockAreaList` 里可能混着两套字段的条目 —— rpe-next v220（`bottomLeft` /
+    // `topRight`，时间单位是全局 beat、坐标是 RPE 画布单位）与本仓库原生的百分比块
+    //（`bottomLeftPercentage` / `topRightPercentage`，时间单位是秒）。逐条判别后分别解析。
+    if let Some(list) = block_area_list {
+        let mut native = Vec::new();
+        let mut next = Vec::new();
+        for value in list {
+            let is_next = crate::core::is_next_block_area(&value);
+            let is_native = crate::core::is_native_block_area(&value);
+            match (is_next, is_native) {
+                // 两套坐标字段都带说明这条数据本身有问题，两边都不收。
+                (true, true) => tracing::warn!("blockAreaList: 噪域条目同时带了原生与 rpe-next 两套字段，已忽略"),
+                (true, false) => next.push(value),
+                // 认不出的条目照样交给原生解析器，它解析不出来就自己跳过（与改造前一致）。
+                (false, _) => native.push(value),
+            }
+        }
+        let mut block_areas = crate::core::parse_block_areas(Some(&serde_json::Value::Array(native)));
+        chart.block_groups = crate::core::group_block_areas(&mut block_areas);
+        chart.block_areas = block_areas;
+        if !next.is_empty() {
+            // 这条换算要**原始 bpm**：判定线自己的 BPM 是除过 `bpmFactor` 的，噪域不能用那份。
+            match crate::core::NextTempo::new(bpm_list.iter().map(|it| (it.start_time.beats(), it.bpm))) {
+                Ok(tempo) => chart.next_block_areas = crate::core::parse_next_block_areas(&next, &tempo),
+                Err(error) => tracing::warn!("blockAreaList: BPMList 无法用于 rpe-next 噪域，已忽略：{error:#}"),
+            }
+        }
+    }
+    Ok(chart)
 }

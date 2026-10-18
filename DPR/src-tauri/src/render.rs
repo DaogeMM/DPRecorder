@@ -180,6 +180,10 @@ pub struct RenderConfig {
 
     pub render_block_area: bool,
     pub simplified_block_area: bool,
+    /// 「噪域打击光晕」：按键被判中时在噪域上点亮一圈光晕（官方游玩时的触摸 hover 效果）
+    pub block_area_hover: bool,
+    /// 「噪域打击光晕半径」：光晕作用半径，基准与官方一致（0.5）
+    pub block_area_hover_radius: f32,
     /// 「简化噪域文字」：简化噪域时把噪域编号印在每个方块正中心
     pub simplified_block_area_text: bool,
     /// 「噪域优化」：把几何与动画形状相同的噪域条目认成**同一个噪域的多次出现**，编号共享
@@ -370,6 +374,8 @@ impl RenderConfig {
             render_bg_dim: self.render_bg_dim,
             render_block_area: self.render_block_area,
             simplified_block_area: self.simplified_block_area,
+            block_area_hover: self.block_area_hover,
+            block_area_hover_radius: self.block_area_hover_radius,
             simplified_block_area_text: self.simplified_block_area_text,
             block_area_reuse: self.block_area_reuse,
             block_area_force_position: self.block_area_force_position,
@@ -542,6 +548,8 @@ impl Default for RenderConfig {
             offset: 0.,
             render_block_area: true,
             simplified_block_area: false,
+            block_area_hover: true,
+            block_area_hover_radius: 0.5,
             simplified_block_area_text: false,
             block_area_reuse: false,
             block_area_force_position: false,

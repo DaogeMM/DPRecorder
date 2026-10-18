@@ -21,6 +21,7 @@
 //! `FD_Noise_00000.png` 两个素材在本仓库里没有，已按「缺失即退化」处理，见
 //! [`HOVER_ASSET`] 与 [`crate::core::block_area::native::shader`]。
 
+use super::next::NextArea;
 use super::Resource;
 use crate::core::{BlockArea, BlockPhase, Matrix, Vector};
 use macroquad::prelude::{draw_rectangle, get_internal_gl, Color, Vec2};
@@ -29,14 +30,10 @@ use once_cell::sync::Lazy;
 
 /// 官方 `TouchHover.png` 是否随仓库一起提供。
 ///
-/// 这个 PNG 在本仓库里缺失（`Phira-Pro-main` 的 `prpr/assets/` 是空的），没有它就是没有
-/// 触摸 hover 光影的贴图。`false` 时：
-/// * 材质只建 2 张（disabled / enabled），不再建第 3 张 hover 专用材质；
-/// * `_TouchPosCount` 恒为 0、`hoverSample` 走特化后的 `0.0` 分支。
-///
-/// 想真正打开 hover：把官方 `TouchHover.png` 放到 `assets/blockarea/TouchHover.png`（仓库根 assets）
-/// 再把这里改成 `true` 即可，其余代码无需改动。
-const HOVER_ASSET: bool = false;
+/// 仓库里的 `assets/blockarea/TouchHover.png` 是自生成的近似替身（44x44 白色径向衰减，
+/// 见该目录 README），官方原图不在备份里。`true` 时才建第 3 张 hover 专用材质、
+/// 上传 `_TouchPosCount` 并让 `hoverSample` 真正采样；`false` 时 hover 恒为 0。
+const HOVER_ASSET: bool = true;
 
 /// 官方噪域缓动枚举（0..=14）：`0` Linear、`1..=12` In/Out/InOut Quad..Quint、
 /// `13` HoldStart、`14` JumpToEnd。
@@ -287,8 +284,12 @@ fn inset_local(size: f32, inset_world: f32) -> f32 {
 /// 与官方 `JudgeControl.TryGetBlockingBlock` 等价的奇偶规则：点被遮挡
 /// ⟺ 完整矩形与内缩矩形上，「有普通块」与「减算块个数为奇」都成立。
 ///
-/// 判定吞触摸（游玩交互）按既定范围**不接**，这个函数只是把原生语义一起搬过来备用。
-pub fn block_touch_blocked(areas: &[BlockArea], p: Vector, t: f64, aspect: f32) -> bool {
+/// `p` 用 chart 坐标（x 右为正、y 上为正，见 `core::judge` 里把触点 y 取负的那一步）；
+/// `core::judge` 每帧用它把落在 `Active` 相位噪域里的触摸从触点列表里摘掉。
+///
+/// `next` 是 rpe-next v220 噪域（见 [`super::next`]），它自己那套 beat / 画布单位判定
+/// 已经解算成同一空间的矩形，所以这里只需在原生结果上再或一次。
+pub fn block_touch_blocked(areas: &[BlockArea], next: &[NextArea], p: Vector, t: f64, aspect: f32) -> bool {
     let inset = touch_inset_world(aspect);
     let mut orig_non = false;
     let mut orig_sub = 0u32;
@@ -313,7 +314,8 @@ pub fn block_touch_blocked(areas: &[BlockArea], p: Vector, t: f64, aspect: f32) 
             }
         }
     }
-    (orig_non as u32) != (orig_sub & 1) && (ins_non as u32) != (ins_sub & 1)
+    let native = (orig_non as u32) != (orig_sub & 1) && (ins_non as u32) != (ins_sub & 1);
+    native || super::next::blocked(next, p, t, aspect)
 }
 
 mod mask;
@@ -338,9 +340,24 @@ pub use shader::{judge_paint_view, reset_block_effects, Zone};
 /// `reuse` 是「噪域优化」：只换「简化噪域文字」印的那个号——印**噪域编号**
 ///（同一个噪域的多次出现共享它）而不是条目序号。画面逐像素不变。界面开关走
 /// `res.config.block_area_reuse`，API 走 `BlockAreaStyle::reuse`，两者任一为真都算。
-pub fn render_all(res: &mut Resource, blocks: &[BlockArea], time: f64, flip_x: bool, simplified: bool, reuse: bool) {
+///
+/// `next` 是 rpe-next v220 噪域（[`super::next`]）。它们解算出来的 `Zone` 与原生那批**同层同趟**
+/// 画，编号取 `usize::MAX`（不参与「简化噪域文字」的编号）。
+pub fn render_all(
+    res: &mut Resource,
+    blocks: &[BlockArea],
+    next: &[NextArea],
+    time: f64,
+    flip_x: bool,
+    simplified: bool,
+    reuse: bool,
+    touches: &[(u64, Vector)],
+) {
     let aspect = res.aspect_ratio;
     let mut zones = collect(blocks, time, aspect, reuse);
+    // rpe-next 的块必须并进同一趟：早退条件只看 `zones`，单独渲染会让「只有 rpe-next 噪域的
+    // 谱面」整层画不出来。
+    zones.extend(super::next::zones(next, time, aspect));
     // 「反向强制定位」：上游（`Chart::render_block_area`）此时传的是**空**列表 —— 不铺全屏
     // 噪域；屏幕上唯一该出现噪域的地方就是每个按键周围那圈矩形，于是把它们当成**真方块**
     // 推进 `zones`（`judge_cover = 0` ⇒ 照常进层、照常被绘制；编号取 `usize::MAX` ⇒ 不印号）。
@@ -381,7 +398,10 @@ pub fn render_all(res: &mut Resource, blocks: &[BlockArea], time: f64, flip_x: b
     }
     res.force_position_quads.borrow_mut().clear();
     draw_disabled_zones(res, aspect, &zones);
-    draw_zones_with_touches(res, aspect, &zones, &[], flip_x);
+    // 「噪域打击效果」：把这一帧被噪域吞掉的触点交给 hover SDF 画光晕
+    //（`block_area_hover` 关掉时上游传空列表，这里自然什么都不画）。
+    let touches = if res.config.block_area_hover { touches } else { &[] };
+    draw_zones_with_touches(res, aspect, &zones, touches, flip_x);
     if simplified && res.config.simplified_block_area_text {
         draw_zone_numbers(
             aspect,
@@ -441,6 +461,8 @@ fn push_quad_zones(quads: &[([[f32; 2]; 4], f32)], zones: &mut Vec<Zone>, cover:
             // 淡入时 `alpha` 会趋近 0（`judge_range_alpha` 的 `base * (show - dt) / (show - fade)`，
             // 默认参数下 `dt > 0.9863`），取整成 0 会让整条四边形被当成**普通方块**画成噪域。
             judge_cover: if cover && *alpha > 0. { 255 } else { 0 },
+            // 合成块只挖洞、不绘制，没有颜色可言。
+            color: None,
         });
     }
 }

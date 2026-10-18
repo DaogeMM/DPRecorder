@@ -171,6 +171,7 @@ const {
   blockAreaForceTime, blockAreaForceDelay, blockAreaForceInvert, blockAreaColor,
   blockAreaNormalColor, simplifiedBlockAreaTextColor, simplifiedBlockAreaTextPaleColor,
   blockAreaAlpha, blockAreaDensity, blockAreaSpark, blockAreaNoiseBlotch, blockAreaDisplaceStrength,
+  blockAreaHover, blockAreaHoverRadius,
   blockAreaPixelScale, blockAreaDisplaceSpeed, blockAreaNoiseRadius, blockAreaNoiseSmoothness,
   blockAreaEdgeNoise, directBlockHollow, blockAreaDistort, renderJudgeRange, judgeRangeWidth,
   judgeRangeWidthFlick, judgeRangeNoiseOcclusion,
@@ -844,6 +845,7 @@ defineExpose({
           <CfgSwitch :label="t('block-area-noise-blotch')" v-model="blockAreaNoiseBlotch" :disabled="!renderBlockArea" :tip="t('block-area-noise-blotch-tip')" />
           <CfgSwitch :label="t('block-area-distort')" v-model="blockAreaDistort" :disabled="!renderBlockArea" :tip="t('block-area-distort-tip')" />
           <CfgSwitch :label="t('block-area-spark')" v-model="blockAreaSpark" :disabled="!renderBlockArea" :tip="t('block-area-spark-tip')" />
+          <CfgSwitch :label="t('block-area-hover')" v-model="blockAreaHover" :disabled="!renderBlockArea" :tip="t('block-area-hover-tip')" />
           <PhiSubMenu id="sec3-simplified-block-area" :label="t('simplified-block-area')" :tip="t('simplified-block-area-tips')" :disabled="!renderBlockArea" v-model="simplifiedBlockArea">
             <div class="cfg-grid">
               <CfgSwitch :label="t('direct-block-hollow')" v-model="directBlockHollow" :disabled="!renderBlockArea" :tip="t('direct-block-hollow-tip')" />
@@ -861,6 +863,7 @@ defineExpose({
           <CfgField :label="t('block-area-pixel-scale')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-pixel-scale-tip')" v-model="blockAreaPixelScale" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
           <CfgField :label="t('block-area-displace-speed')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-displace-speed-tip')" v-model="blockAreaDisplaceSpeed" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
           <CfgField :label="t('block-area-noise-radius')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-noise-radius-tip')" v-model="blockAreaNoiseRadius" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+          <CfgField :label="t('block-area-hover-radius')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea || !blockAreaHover" :title="t('block-area-hover-radius-tip')" v-model="blockAreaHoverRadius" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
           <CfgField :label="t('block-area-noise-smoothness')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-noise-smoothness-tip')" v-model="blockAreaNoiseSmoothness" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
           <CfgField :label="t('block-area-edge-noise')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-edge-noise-tip')" v-model="blockAreaEdgeNoise" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
         </div>

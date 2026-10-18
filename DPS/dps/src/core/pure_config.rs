@@ -262,7 +262,8 @@ fn height_at(time: f64, speed: f64) -> f64 {
 /// 记数），所以判定范围让位、模板遮挡这些语义都与正常渲染一致。传进来的 `(x, y)` 已经是 chart
 /// 空间的坐标（纵向在 [`bake_line`] 里就折过 `1 / aspect`），方块几何正是那个空间里解算的。
 fn in_noise(noise: &Noise, time: f64, x: f32, y: f32, aspect: f32) -> bool {
-    !noise.areas.is_empty() && crate::core::block_touch_blocked(noise.areas, Vector::new(x, y), time, aspect)
+    // 「纯配置谱面」只处理原生百分比噪域，rpe-next 噪域（第二个参数）这里不参与。
+    !noise.areas.is_empty() && crate::core::block_touch_blocked(noise.areas, &[], Vector::new(x, y), time, aspect)
 }
 
 /// 一条判定线在任意时刻的取值器：按「按键自己的时刻」求判定线的横向位移、旋转与缩放。
