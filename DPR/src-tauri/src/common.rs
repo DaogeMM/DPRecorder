@@ -273,7 +273,7 @@ impl Default for AppConfig {
             ffmpeg_path: None,
             print_stderr: false,
             show_detailed_log: true,
-            enable_play_button: false,
+            enable_play_button: true,
             preview_fullscreen: true,
             // 默认关闭：默认渲染流程与从前逐字节一致
             // （「高性能模式」只让渲染进程更偏向 GPU，不该在用户没勾的时候改变行为）

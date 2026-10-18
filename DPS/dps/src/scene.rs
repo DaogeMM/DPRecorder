@@ -704,8 +704,17 @@ impl Main {
         Ok(())
     }
 
-    pub fn pause(&mut self) -> Result<()> {
-        self.paused = true;
+    /// 当前播放时刻（游戏内时间，秒）。
+    pub fn time(&self) -> f64 {
+        self.tm.now()
+    }
+
+    /// 把播放时刻拨到 `time`：分屏的副窗口靠它跟着主窗口走。
+    pub fn seek_time(&mut self, time: f64) {
+        self.tm.seek_to(time);
+    }
+
+    pub fn pause(&mut self) -> Result<()> {        self.paused = true;
         self.scenes.last_mut().unwrap().pause(&mut self.tm)
     }
 

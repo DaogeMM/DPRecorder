@@ -112,6 +112,12 @@ impl Chart {
         }
     }
 
+    /// 「定轨谱面」转换（见 `core::fixed_lane`）：把所有判定线拍平成一条横向基准线，按键按判定时刻
+    /// 吸附到固定的轨道上。这个转换**不新增**判定线，所以不用动 `order`。
+    pub fn apply_fixed_lane(&mut self, lanes: super::fixed_lane::Lanes, aspect: f32) {
+        super::fixed_lane::apply(&mut self.lines, &lanes, aspect);
+    }
+
     /// 设置剧情遮挡区域的外观参数。
     pub fn with_block_area_style(self, f: impl FnOnce(&mut super::BlockAreaStyle)) -> Self {
         f(&mut self.block_area_renderer.borrow_mut().style);
@@ -304,6 +310,14 @@ impl Chart {
         // 噪域整个关掉时它就一直保持 None，判定范围恢复原样。
         res.block_area_paint = None;
         res.judge_range_mat = None;
+        // 「定轨谱面」不画噪域：谱面拍平到轨道之后，方块与「强制定位」的挖洞都失去几何意义，判定范围
+        // 也一并让开（它要 `block_area_paint` / `judge_range_mat` 两个都非空才画）。开关只看配置，所以
+        // 与是否真的转换过无关 —— 两者同时打开时同样不画。按键那边照样会往
+        // `force_position_quads` 里推矩形，这里顺手清掉，免得越攒越多。
+        if res.config.fixed_lane_chart {
+            res.force_position_quads.borrow_mut().clear();
+            return;
+        }
         // 「强制定位」：**不理谱面自带的 `blockAreaList`**（谱面一条噪域都没有也照样生效），
         // 改铺一块合成的全屏噪域，再由每个按键周围的长方形把它挖出洞来。
         //

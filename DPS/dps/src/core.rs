@@ -35,6 +35,8 @@ pub use note::{BadNote, HitSound, Note, NoteKind, RenderConfig};
 mod object;
 pub use object::{CtrlObject, Object};
 
+pub mod fixed_lane;
+
 pub mod pure_config;
 
 mod render;

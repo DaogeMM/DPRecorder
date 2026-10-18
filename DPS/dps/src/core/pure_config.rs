@@ -118,49 +118,17 @@ fn bake_line(
     side_notes: &mut [Vec<Note>; 2],
     aspect: f32,
 ) {
-    // `Anim` 自带游标，从原动画上按任意时刻取值会把游标推到别处，所以先克隆出来再问值；克隆同时
-    // 保留了 `next` 叠加链（RPE 的嵌套事件就靠它）。`AnimVector` 没有实现 `Clone`，缩放只能拆成
-    // 两个 `AnimFloat` 各自克隆。
-    let mut line_x = line.object.translation.0.clone();
-    let mut line_y_anim = line.object.translation.1.clone();
-    let mut line_rotation = line.object.rotation.clone();
-    let mut line_scale_x = line.object.scale.0.clone();
-    let mut line_scale_y = line.object.scale.1.clone();
-    let mut line_incline = line.incline.clone();
+    let mut evaluator = LineEvaluator::new(line);
     let mut kept = Vec::with_capacity(line.notes.len());
     for mut note in line.notes.drain(..) {
         let time = note.time;
-        line_x.set_time(time);
-        line_y_anim.set_time(time);
-        line_rotation.set_time(time);
-        line_scale_x.set_time(time);
-        line_scale_y.set_time(time);
-        line_incline.set_time(time);
-        let angle = line_rotation.now();
-        let radians = angle.to_radians();
-        let (cos, sin) = (radians.cos(), radians.sin());
         let mut off_x = note.object.translation.0.clone();
         let mut off_y = note.object.translation.1.clone();
         off_x.set_time(time);
         off_y.set_time(time);
-        let off = off_x.now();
-        let off_v = off_y.now();
-        // 按键在自己时刻的 chart 空间坐标。判定线这一步的矩阵是 `R(θ)·T(pos)` 之后叠一层
-        // `Object::now_scale`（见 `JudgeLine::render`），按键自己那一步是 `S(note.scale)·T(tr)`；
-        // 判定时刻 `base` 正好为 0，所以 `tr = (off * incline_val * ctrl_obj.pos, off_v / aspect)`
-        //（`ctrl_obj.pos` / `size` 这些动画没人写过，恒等于 `unwrap_or(1.)`）。
-        //
-        // 三个容易漏的量：
-        // - 判定线的缩放 `line.object.scale`：谱面会拿它做整条线的放大缩小，漏了竖线位置就按倍率偏；
-        // - `translation.1 / aspect`：纵向在 `Object::now_translation` 里是折过纵横比的；
-        // - `incline_val`：RPE 的旧特性，判定线带倾角时按键的横向偏移按它在判定线上方的高度收窄，
-        //   只有 `translation.1`（RPE 的 `yOffset`）不是 0 时才起作用。
-        let incline_sin = line_incline.now_opt().map(|it| it.to_radians().sin()).unwrap_or_default();
-        let incline_val = 1. - incline_sin * off_v * crate::parse::RPE_HEIGHT / 2. / 360.;
-        let local_x = off * incline_val * line_scale_x.now_opt().unwrap_or(1.);
-        let local_y = off_v / aspect * line_scale_y.now_opt().unwrap_or(1.);
-        let x = line_x.now() + local_x * cos - local_y * sin;
-        let y = line_y_anim.now() / aspect + local_x * sin + local_y * cos;
+        let (x, y, angle) = evaluator.eval(time, off_x.now(), off_y.now(), aspect);
+        // 侧别只用到落点朝哪个方向的那一份，也就是 `sinθ`。
+        let sin = angle.to_radians().sin();
         if let Some(noise) = noise {
             note.pure_config_noise = in_noise(noise, time, x, y, aspect);
         }
@@ -184,8 +152,7 @@ fn bake_line(
             continue;
         }
         // 横判定线上的按键只要横向坐标：判定线已经拍平、转角归零，位移直接就是屏幕横坐标。
-        note.object.translation.0 = AnimFloat::fixed(x);
-        finish_note(&mut note, speed);
+        flatten_note(&mut note, x, speed);
         kept.push(note);
     }
     line.notes = kept;
@@ -193,6 +160,8 @@ fn bake_line(
     // 世界坐标里 1 单位 = 半个屏幕宽（横向）/ 半个屏幕高（纵向），`(0., 0.)` 是屏幕正中央。
     line.object.translation = AnimVector::fixed(Vector::new(0., -1. + line_y * 2.));
     line.object.rotation = AnimFloat::fixed(0.);
+    // 缩放也归 1：它会把按键相对判定线的位移再乘一遍，固化下来的横向坐标就不落在该在的位置上。
+    line.object.scale = AnimVector::fixed(Vector::new(1., 1.));
     // 恒定 1：空动画同样会被 `now_alpha()` 取成 1.0，但写死一个关键帧可以避开那条回落分支。
     line.object.alpha = AnimFloat::fixed(1.);
     line.height = speed_curve(end_time, speed);
@@ -201,6 +170,12 @@ fn bake_line(
     line.rotate_with_parent = false;
     // `above` 与按键流速全变过，缓存里按 `above` / `speed` 分的桶全部失效，必须重建。
     line.cache = JudgeLineCache::new(&mut line.notes);
+}
+
+/// 把按键钉在横向坐标 `x` 上，纵向按共用的速度积分拍平（「定轨谱面」也走这一份）。
+pub(crate) fn flatten_note(note: &mut Note, x: f32, speed: f64) {
+    note.object.translation.0 = AnimFloat::fixed(x);
+    finish_note(note, speed);
 }
 
 /// 按键离开所属判定线的那一份距离：与判定线共用同一条常量速度积分。
@@ -254,7 +229,7 @@ fn side_line(x: f32, rotation: f32, notes: Vec<Note>, end_time: f64, speed: f64)
 /// 判定线高度积分：只有一条常量速度事件时就是 `height(t) = t * speed / HEIGHT_RATIO`，与
 /// `parse::pgr::parse_speed_events` 对单条速度事件的算法逐字一致（中点取线性补间，末帧的补间函数
 /// 用不上）。
-fn speed_curve(end_time: f64, speed: f64) -> AnimFloatF64 {
+pub(crate) fn speed_curve(end_time: f64, speed: f64) -> AnimFloatF64 {
     AnimFloatF64::new(vec![Keyframe::new(0., 0., 2), Keyframe::new(end_time, height_at(end_time, speed), 0)])
 }
 
@@ -288,4 +263,61 @@ fn height_at(time: f64, speed: f64) -> f64 {
 /// 空间的坐标（纵向在 [`bake_line`] 里就折过 `1 / aspect`），方块几何正是那个空间里解算的。
 fn in_noise(noise: &Noise, time: f64, x: f32, y: f32, aspect: f32) -> bool {
     !noise.areas.is_empty() && crate::core::block_touch_blocked(noise.areas, Vector::new(x, y), time, aspect)
+}
+
+/// 一条判定线在任意时刻的取值器：按「按键自己的时刻」求判定线的横向位移、旋转与缩放。
+///
+/// `Anim` 自带游标，从原动画上按任意时刻取值会把游标推到别处，所以先把要用到的动画克隆出来；克隆
+/// 同时保留了 `next` 叠加链（RPE 的嵌套事件就靠它）。`AnimVector` 没有实现 `Clone`，缩放只能拆成
+/// 两个 `AnimFloat` 各自克隆。
+pub(crate) struct LineEvaluator {
+    x: AnimFloat,
+    y: AnimFloat,
+    rotation: AnimFloat,
+    scale_x: AnimFloat,
+    scale_y: AnimFloat,
+    incline: AnimFloat,
+}
+
+impl LineEvaluator {
+    pub(crate) fn new(line: &JudgeLine) -> Self {
+        Self {
+            x: line.object.translation.0.clone(),
+            y: line.object.translation.1.clone(),
+            rotation: line.object.rotation.clone(),
+            scale_x: line.object.scale.0.clone(),
+            scale_y: line.object.scale.1.clone(),
+            incline: line.incline.clone(),
+        }
+    }
+
+    /// 按键在 `time` 时刻的 chart 空间坐标 `(x, y)`，以及那一刻判定线的角度（度）。
+    ///
+    /// 判定线这一步的矩阵是 `R(θ)·T(pos)` 之后叠一层 `Object::now_scale`（见 `JudgeLine::render`），
+    /// 按键自己那一步是 `S(note.scale)·T(tr)`；判定时刻 `base` 正好为 0，所以
+    /// `tr = (off * incline_val * ctrl_obj.pos, off_v / aspect)`（`ctrl_obj.pos` / `size` 这些动画
+    /// 没人写过，恒等于 `unwrap_or(1.)`）。三个容易漏的量：
+    ///
+    /// - 判定线的缩放 `line.object.scale`：谱面会拿它做整条线的放大缩小，漏了位置就按倍率偏；
+    /// - `translation.1 / aspect`：纵向在 `Object::now_translation` 里是折过纵横比的；
+    /// - `incline_val`：RPE 的旧特性，判定线带倾角时按键的横向偏移按它在判定线上方的高度收窄，
+    ///   只有 `translation.1`（RPE 的 `yOffset`）不是 0 时才起作用。
+    pub(crate) fn eval(&mut self, time: f64, off: f32, off_v: f32, aspect: f32) -> (f32, f32, f32) {
+        self.x.set_time(time);
+        self.y.set_time(time);
+        self.rotation.set_time(time);
+        self.scale_x.set_time(time);
+        self.scale_y.set_time(time);
+        self.incline.set_time(time);
+        let angle = self.rotation.now();
+        let radians = angle.to_radians();
+        let (cos, sin) = (radians.cos(), radians.sin());
+        let incline_sin = self.incline.now_opt().map(|it| it.to_radians().sin()).unwrap_or_default();
+        let incline_val = 1. - incline_sin * off_v * crate::parse::RPE_HEIGHT / 2. / 360.;
+        let local_x = off * incline_val * self.scale_x.now_opt().unwrap_or(1.);
+        let local_y = off_v / aspect * self.scale_y.now_opt().unwrap_or(1.);
+        let x = self.x.now() + local_x * cos - local_y * sin;
+        let y = self.y.now() / aspect + local_x * sin + local_y * cos;
+        (x, y, angle)
+    }
 }

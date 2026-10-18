@@ -61,6 +61,10 @@ impl Scene for BaseScene {
 pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
     let (fs, _, config, info) = generate_resource(cmd, false).await?;
 
+    // 分屏游玩时这个进程是主窗口还是副窗口；不是分屏就是 `None`。
+    let split = crate::split::Role::from_env();
+    let secondary = split.as_ref().is_some_and(|role| role.secondary);
+
     set_pc_assets_folder(ASSET_PATH.get().unwrap().to_str().unwrap());
     let mut prpr_config: Config = config.to_config();
     // 资源包：跟着 config 里选的那份走，没设置就用 assets/respack/new
@@ -75,6 +79,11 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
         prpr_config.mods |= Mods::AUTOPLAY;
     }
     prpr_config.volume_bgm = prpr_config.volume_music;
+    if secondary {
+        // 副窗口只负责画面：声音由主窗口放，两个都放会叠成重音。
+        prpr_config.volume_music = 0.;
+        prpr_config.volume_bgm = 0.;
+    }
     // 谱面信息里的「预览开始时间 / 结束时间」原来只喂选歌列表那 15 秒试听，试玩一律从 0 开始；
     // 这里把它落到播放参数上：从开始时间起播，到结束时间收尾（结束时间为 0 就播到谱面结尾）。
     // 引擎侧只有 `play_start_time` / `play_end_time` 两个入口（`GameScene::new` 的试玩区间、
@@ -90,12 +99,33 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
     let preview_fullscreen = crate::common::read_config()
         .map(|config| config.preview_fullscreen)
         .unwrap_or(true);
-    macroquad::window::set_fullscreen(preview_fullscreen);
+    match &split {
+        // 分屏要两个窗口并排：位置和大小由 `crate::split::place_window` 指定，这里先退全屏。
+        Some(role) => {
+            macroquad::window::set_fullscreen(false);
+            crate::split::place_window(role.secondary);
+        }
+        None => macroquad::window::set_fullscreen(preview_fullscreen),
+    }
 
     let font = FontArc::try_from_vec(load_file("font.ttf").await?)?;
     let mut painter = TextPainter::new(font);
 
-    let player = build_player(&config).await?;
+    let player = if secondary {
+        None
+    } else {
+        Some(build_player(&config).await?)
+    };
+
+    // 主窗口每帧把播放时刻发给副窗口，副窗口每帧把时刻拨过去。
+    let mut time_sender = split
+        .as_ref()
+        .filter(|role| !role.secondary)
+        .and_then(|role| crate::split::TimeSender::new(role.port));
+    let mut time_receiver = split
+        .as_ref()
+        .filter(|role| role.secondary)
+        .and_then(|role| crate::split::TimeReceiver::new(role.port));
 
     let tm = TimeManager::default();
     let ctm = TimeManager::from_config(&prpr_config); // strange variable name...
@@ -113,7 +143,7 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
                     info,
                     &prpr_config,
                     fs,
-                    Some(player),
+                    player,
                     None,
                     None,
                 )
@@ -133,10 +163,25 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
     'app: loop {
         let frame_start = tm.real_time();
 
+        // 副窗口：把时刻对齐到主窗口，主窗口关掉就跟着退。
+        if let Some(receiver) = time_receiver.as_mut() {
+            if let Some(time) = receiver.latest() {
+                main.seek_time(time);
+            }
+            if receiver.closed() {
+                break 'app;
+            }
+        }
+
         main.update()?;
         main.render(&mut painter)?;
         if main.should_exit() {
             break 'app;
+        }
+
+        // 主窗口：把这一刻发出去，副窗口下一帧跟到这个时刻。
+        if let Some(sender) = time_sender.as_mut() {
+            sender.send(main.time());
         }
 
         let frame_end = tm.real_time();

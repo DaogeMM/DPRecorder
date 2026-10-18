@@ -10,7 +10,7 @@ import { event } from '@tauri-apps/api';
 
 import { toastError, RULES, toast, anyFilter, isString } from './common';
 import { DEFAULT_APP_CONFIG } from './model';
-import { useLvlField } from './lvl';
+import { formatLvl, useLvlField } from './lvl';
 import type { AppConfig, ChartInfo, FileDropEvent, RenderConfig } from './model';
 import type { WorkingState } from './config/types';
 import { chartSideOf } from './config/chartSide';
@@ -58,6 +58,19 @@ const { text: lvlText, normalize: normalizeLvl } = useLvlField(
   () => chartInfo.value?.lvl,
   (value) => {
     if (chartInfo.value) chartInfo.value.lvl = value;
+  },
+);
+
+// 「难度」整串默认由「难度标识」+「定数」拼出来（`AT` + `18.0` → `AT Lv.18.0`）。
+// 只在两者变化时覆盖，手改过的「难度」会一直留到下一次改动它们为止。
+watch(
+  [() => chartInfo.value?.diff, () => chartInfo.value?.lvl],
+  ([diff, lvl]) => {
+    if (!chartInfo.value) return;
+    const tier = String(diff ?? '').trim();
+    const lvlValue = formatLvl(lvl);
+    const parts = [tier, lvlValue ? `Lv.${lvlValue}` : ''].filter(Boolean);
+    if (parts.length) chartInfo.value.difficulty = parts.join(' ');
   },
 );
 
@@ -483,8 +496,9 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
             <CfgField :label="t('info.illustrator')">
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.illustrator"></v-textarea>
             </CfgField>
-            <!-- 谱面文件 / 音乐文件 / 曲绘文件 + 难度 / 定数：紧接在上面那四个后面，同属**一个**网格
-                 （判定线长度在「谱面-判定线」，总分在「渲染-参数」） -->
+            <!-- 谱面文件 / 音乐文件 / 曲绘文件 + 难度标识 / 定数 / 难度：紧接在上面那四个后面，同属**一个**网格
+                 （判定线长度在「谱面-判定线」，总分在「渲染-参数」）。
+                 「难度」是整串（`AT Lv.18.0`），默认由难度标识 + 定数拼出来，也能手改。 -->
             <CfgField :label="t('info.chart')">
               <v-text-field type="text" density="compact" hide-details="auto" v-model="chartInfo.chart"></v-text-field>
             </CfgField>
@@ -494,11 +508,14 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
             <CfgField :label="t('info.illustration')">
               <v-text-field type="text" density="compact" hide-details="auto" v-model="chartInfo.illustration"></v-text-field>
             </CfgField>
-            <CfgField :label="t('info.difficulty')">
-              <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.difficulty"></v-textarea>
+            <CfgField :label="t('info.diff')">
+              <v-text-field type="text" density="compact" hide-details="auto" v-model="chartInfo.diff"></v-text-field>
             </CfgField>
             <CfgField :label="t('info.lvl')">
               <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" v-model="lvlText" @blur="normalizeLvl"></v-text-field>
+            </CfgField>
+            <CfgField :label="t('info.difficulty')">
+              <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.difficulty"></v-textarea>
             </CfgField>
           </div>
 

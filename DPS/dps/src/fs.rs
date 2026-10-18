@@ -411,11 +411,54 @@ fn bytes_to_text_auto(data: &[u8]) -> String {
     s.into_owned()
 }
 
+/// YAML 里标量可能是字符串、数字或布尔，统一取成文本。
+fn yaml_scalar_text(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(it) => Some(it.clone()),
+        serde_yaml::Value::Number(it) => Some(it.to_string()),
+        serde_yaml::Value::Bool(it) => Some(it.to_string()),
+        _ => None,
+    }
+}
+
+/// 读 `:info` / `info.yml`。
+///
+/// 这两种文件的约定与其它来源不同：`difficulty` 是**定数**（`18.0` 这种数字），
+/// `level` 是**难度文本**（`AT Lv.18.0`）。ChartInfo 那边只认字符串，所以先在 YAML 层
+/// 把定数搬到 `lvl`、把难度文本搬到 `difficulty`，再交给 serde 解析。
+fn info_from_yaml(bytes: &[u8]) -> Result<ChartInfo> {
+    let text = bytes_to_text_auto(bytes);
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&text)?;
+    if let serde_yaml::Value::Mapping(map) = &mut value {
+        let rating = map.get(serde_yaml::Value::String("difficulty".to_string())).and_then(yaml_scalar_text);
+        let level = map.get(serde_yaml::Value::String("level".to_string())).and_then(yaml_scalar_text);
+        if let Some(rating) = rating {
+            if let Ok(rating_value) = rating.trim().parse::<f64>() {
+                map.insert(
+                    serde_yaml::Value::String("lvl".to_string()),
+                    serde_yaml::Value::Number(serde_yaml::Number::from(rating_value)),
+                );
+            }
+            map.insert(
+                serde_yaml::Value::String("difficulty".to_string()),
+                serde_yaml::Value::String(rating),
+            );
+        }
+        if let Some(level) = level.filter(|it| !it.trim().is_empty()) {
+            map.insert(
+                serde_yaml::Value::String("difficulty".to_string()),
+                serde_yaml::Value::String(level),
+            );
+        }
+    }
+    Ok(serde_yaml::from_value(value)?)
+}
+
 pub async fn load_info(fs: &mut dyn FileSystem) -> Result<ChartInfo> {
     let mut info = if let Ok(bytes) = fs.load_file(":info").await {
-        serde_yaml::from_str(&bytes_to_text_auto(&bytes))?
+        info_from_yaml(&bytes)?
     } else if let Ok(bytes) = fs.load_file("info.yml").await {
-        serde_yaml::from_str(&bytes_to_text_auto(&bytes))?
+        info_from_yaml(&bytes)?
     } else if let Ok(bytes) = fs.load_file("info.txt").await {
         info_from_txt(&bytes_to_text_auto(&bytes))?
     } else if let Ok(bytes) = fs.load_file("info.csv").await {
@@ -455,4 +498,30 @@ pub fn fs_from_file(path: &Path) -> Result<Box<dyn FileSystem + Send + Sync + 's
 
 pub fn fs_from_assets(name: impl Into<String>) -> Result<Box<dyn FileSystem + Send + Sync + 'static>> {
     Ok(Box::new(AssetsFileSystem(name.into())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `:info` / `info.yml` 里 `difficulty` 是定数（数字）、`level` 是难度文本。
+    #[test]
+    fn yaml_info_takes_difficulty_as_rating() {
+        let info = info_from_yaml(
+            "name: テスト\ndifficulty: 18.0\nlevel: AT Lv.18.0\ncharter: 名無し\n".as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(info.lvl, 18.0);
+        assert_eq!(info.difficulty, "AT Lv.18.0");
+        assert_eq!(info.level, "AT Lv.18.0");
+        assert_eq!(info.name, "テスト");
+    }
+
+    /// `difficulty` 写成字符串时同样当定数；没有 `level` 就保留原串。
+    #[test]
+    fn yaml_info_accepts_text_rating() {
+        let info = info_from_yaml("name: Test\ndifficulty: \"15.6\"\n".as_bytes()).unwrap();
+        assert_eq!(info.lvl, 15.6);
+        assert_eq!(info.difficulty, "15.6");
+    }
 }

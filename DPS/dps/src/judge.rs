@@ -1150,6 +1150,72 @@ impl Handler {
     }
 }
 
+/// 操作键（空格、方向键、回车 / 退格 / Esc / Tab、修饰键、F1~F25、编辑与锁定键）不算打击输入。
+///
+/// 引擎把任意按键的按下都计进「手指按下数」（`Handler.1` / `Handler.2`），判定那边就当成一次
+/// 全屏触摸：游玩时按空格暂停、按方向键跳转，都会顺带打中按键。这些键只用来操作，按下不该
+/// 产生触摸，所以在按下 / 松开两处一起跳过（两处必须一致，否则按下数会算错）。
+fn is_function_key(keycode: KeyCode) -> bool {
+    use KeyCode::*;
+    matches!(
+        keycode,
+        Space
+            | Escape
+            | Enter
+            | KpEnter
+            | Tab
+            | Backspace
+            | Insert
+            | Delete
+            | Right
+            | Left
+            | Down
+            | Up
+            | PageUp
+            | PageDown
+            | Home
+            | End
+            | CapsLock
+            | ScrollLock
+            | NumLock
+            | PrintScreen
+            | Pause
+            | F1
+            | F2
+            | F3
+            | F4
+            | F5
+            | F6
+            | F7
+            | F8
+            | F9
+            | F10
+            | F11
+            | F12
+            | F13
+            | F14
+            | F15
+            | F16
+            | F17
+            | F18
+            | F19
+            | F20
+            | F21
+            | F22
+            | F23
+            | F24
+            | F25
+            | LeftShift
+            | LeftControl
+            | LeftAlt
+            | LeftSuper
+            | RightShift
+            | RightControl
+            | RightAlt
+            | RightSuper
+    )
+}
+
 fn button_to_id(button: MouseButton) -> u64 {
     u64::MAX
         - match button {
@@ -1190,15 +1256,17 @@ impl EventHandler for Handler {
         });
     }
 
-    fn key_down_event(&mut self, _ctx: &mut miniquad::Context, _keycode: KeyCode, _keymods: miniquad::KeyMods, repeat: bool) {
-        if !repeat {
+    fn key_down_event(&mut self, _ctx: &mut miniquad::Context, keycode: KeyCode, _keymods: miniquad::KeyMods, repeat: bool) {
+        if !repeat && !is_function_key(keycode) {
             self.1 += 1;
             self.2 += 1;
         }
     }
 
-    fn key_up_event(&mut self, _ctx: &mut miniquad::Context, _keycode: KeyCode, _keymods: miniquad::KeyMods) {
-        self.1 -= 1;
+    fn key_up_event(&mut self, _ctx: &mut miniquad::Context, keycode: KeyCode, _keymods: miniquad::KeyMods) {
+        if !is_function_key(keycode) {
+            self.1 -= 1;
+        }
     }
 }
 

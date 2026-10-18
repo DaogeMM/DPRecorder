@@ -310,6 +310,22 @@ export interface RenderConfig {
   pureConfigChartNoiseTime: number;
   /** 「纯配置谱面 · 按键噪域」延后视窗（秒）：判定完成后矩形再停留这么久才消失（默认 0.3） */
   pureConfigChartNoiseDelay: number;
+  /** 「定轨谱面」：把所有判定线拍平成一条横向基准线，按键按判定时刻吸附到固定轨道（谱面文件不受影响） */
+  fixedLaneChart: boolean;
+  /** 「定轨谱面」相邻轨道间隔：屏宽的几成，0.14 = 屏宽 14% */
+  fixedLaneGap: number;
+  /** 「定轨谱面」按键流速：越大落得越快 */
+  fixedLaneSpeed: number;
+  /** 「定轨谱面」判定线高度：0 是屏幕底边、1 是屏幕顶边、0.5 是正中 */
+  fixedLaneLineY: number;
+  /** 「定轨谱面」同一轨道上两个按键之间至少留几秒（长按按尾巴算） */
+  fixedLaneInterval: number;
+  /** 「定轨谱面」是否按原谱面画长条（Hold）的长度：关掉只画头部 */
+  fixedLaneHoldLength: boolean;
+  /** 「定轨谱面」是否启用单侧第 3 条轨道：关掉时排不下的按键会叠在最近的轨道上 */
+  fixedLaneThird: boolean;
+  /** 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对纯配置 / 定轨谱面生效） */
+  playSplitView: boolean;
   bgBlurriness: number;
 
   maxParticles: number;
@@ -473,6 +489,15 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   pureConfigChartNoiseWidth: 1.1,
   pureConfigChartNoiseTime: 0.13,
   pureConfigChartNoiseDelay: 0,
+  // 定轨谱面：默认关闭
+  fixedLaneChart: false,
+  fixedLaneGap: 0.14,
+  fixedLaneSpeed: 2.8,
+  fixedLaneLineY: 0.1,
+  fixedLaneInterval: 0.2,
+  fixedLaneHoldLength: true,
+  fixedLaneThird: false,
+  playSplitView: false,
   bgBlurriness: 80,
 
   maxParticles: 5000,
@@ -508,7 +533,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   ffmpegPath: null,
   printStderr: false,
   showDetailedLog: true,
-  enablePlayButton: false,
+  enablePlayButton: true,
   previewFullscreen: true,
   // 高性能模式默认关闭：默认渲染流程保持与从前一致
   highPerformance: false,

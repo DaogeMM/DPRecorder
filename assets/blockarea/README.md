@@ -57,7 +57,7 @@ vec2 u_lavaUV = sceneUV * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y),
 ```
 
 * `sceneUV`（`block_shader_full.vert:22`）= 屏幕 UV ⇒ 贴图**锚定屏幕**、噪域移动时从它下面滑过。
-* 素材取自 `assets/Minecraft/{netherrack.png, lava.gif}`（仓库根唯一一份资源目录；16×16 / 32×32×16 帧），
+* 素材取自 `assets/Minecraft/{netherrock.png, lava.gif}`（仓库根唯一一份资源目录；16×16 / 32×32×16 帧），
   由 `native/shader.rs:109` / `:111` 用 `include_bytes!` 打进二进制，不走 `assets/blockarea`。
 * 这一处的详细行为、分趟原因与验证记录没有随仓库分发（属于开发时的本机笔记），需要时向作者索取。
 * 本仓库改动后的完整 MD5 `785B422FBFC838295ADB5D24A90B1AC3`（580 行）。

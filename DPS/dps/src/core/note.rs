@@ -500,6 +500,10 @@ impl Note {
     /// 而纯配置模式把那一层关掉了、只把四边形本身当噪域画（见 `Chart::render_block_area`），两个开关叠在
     /// 一起就会让每个按键周围都糊上一块噪域。
     fn force_position_drawn(&self, res: &Resource) -> bool {
+        // 「定轨谱面」不画噪域，四边形也跟着不推（`Chart::render_block_area` 会把已经攒下的清掉）。
+        if res.config.fixed_lane_chart {
+            return false;
+        }
         if res.config.pure_config_chart {
             self.pure_config_noise
         } else {
@@ -885,7 +889,13 @@ impl Note {
                     let ratio = style.hold_ratio();
                     let is_negative_length = top - bottom < 0.;
                     let flip_y = res.info.negative_length_hold && (config.draw_below || !is_covered) && is_negative_length;
-                    let body_h = if flip_y { bottom - top } else { top - bottom } as f32;
+                    let real_h = if flip_y { bottom - top } else { top - bottom } as f32;
+                    // 「定轨谱面」关掉「长条长度」时只留一小截身体：高度按头部（hold 的头那一片）
+                    // 自身的显示高度来算，看上去就是个点按，判定时长不变。
+                    let short = res.config.fixed_lane_chart && !res.config.fixed_lane_hold_length;
+                    let head = style.hold_head_rect();
+                    let head_h = head.h / head.w * scale * ratio * 2.;
+                    let body_h = if short { real_h.min(head_h) } else { real_h };
                     let body_y = if flip_y { bottom as f32 - body_h } else { bottom as f32 };
                     // body：溺水死亡的动画期间叠 4 遍 —— 条身贴图本身带半透明（单画一遍时红色
                     // 看着发灰、像半透明），叠 4 遍后不透明度约 97%，是一条实心的红条；活着时只画一遍。
@@ -941,8 +951,8 @@ impl Note {
                         );
                     }
                     // tail
-                    if !flip_y && is_negative_length {
-                        // only render head
+                    if short || (!flip_y && is_negative_length) {
+                        // only render a short body
                         return;
                     }
                     let r = style.hold_tail_rect();

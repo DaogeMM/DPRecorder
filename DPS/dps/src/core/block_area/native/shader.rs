@@ -30,7 +30,7 @@ pub struct Zone {
     pub ready: bool,
     /// 这一帧处在 `appearTime..enableTime`（「还没生效」那一段）。
     ///
-    /// 「岩浆噪域」用它决定这块该印 netherrack 还是 lava：`Disabled` 与 `DisabledOut`
+    /// 「岩浆噪域」用它决定这块该印 netherrock 还是 lava：`Disabled` 与 `DisabledOut`
     /// 两段喂的是**同一个** disabled 掩码通道，只能在 Rust 侧按 zone 拆成两趟画。
     pub before_enable: bool,
     /// 初始 `DisabledBlockShow` 会把精灵掩码在 0.5 秒内渐显出来。
@@ -99,15 +99,15 @@ static EMPTY_TEX: Lazy<Texture2D> = Lazy::new(|| Texture2D::from_rgba8(4, 4, &[0
 
 /// 「岩浆噪域」用的两张 Minecraft 贴图（随仓库分发，在 `assets/Minecraft/`）。
 ///
-/// `netherrack.png` 16×16 单帧；`lava.gif` 32×32、16 帧、每帧 160ms —— 这里把 16 帧各解成
+/// `netherrock.png` 16×16 单帧；`lava.gif` 32×32、16 帧、每帧 160ms —— 这里把 16 帧各解成
 /// 一张纹理，按 [`LAVA_FRAME_SECONDS`] 在 Rust 侧选帧（采样器一次只认一张纹理，换帧就是换绑定，
 /// 也不需要在绘制中途上传纹理）。两张都按「屏幕高 1/16 一格」平铺、点采样 ⇒ MC 的颗粒感。
 ///
 /// 采样是**屏幕空间**的（`sceneUV`），所以噪域移动/缩放时贴图从它下面滑过，不会跟着变形。
 const LAVA_CELLS_PER_SCREEN_HEIGHT: f32 = 16.;
 const LAVA_FRAME_SECONDS: f32 = 0.16;
-static NETHERRACK_TEX: Lazy<Texture2D> =
-    Lazy::new(|| tex(include_bytes!("../../../../../../assets/Minecraft/netherrack.png"), TextureWrap::Repeat));
+static NETHERROCK_TEX: Lazy<Texture2D> =
+    Lazy::new(|| tex(include_bytes!("../../../../../../assets/Minecraft/netherrock.png"), TextureWrap::Repeat));
 static LAVA_FRAMES: Lazy<Vec<Texture2D>> = Lazy::new(|| {
     use image::AnimationDecoder;
     let bytes: &[u8] = include_bytes!("../../../../../../assets/Minecraft/lava.gif");
@@ -478,7 +478,7 @@ pub fn draw_disabled_zones(res: &mut Resource, aspect: f32, zones: &[Zone]) {
     draw_phases(res, aspect, zones, time, true, &[]);
 }
 
-/// 这一趟该给 `zone` 贴哪张贴图：0 = 不贴（纯色）、1 = netherrack、2 = lava。
+/// 这一趟该给 `zone` 贴哪张贴图：0 = 不贴（纯色）、1 = netherrock、2 = lava。
 ///
 /// 「还没生效」（`appearTime..enableTime`）印石头，「生效中」与「生效结束后」印岩浆。
 /// `index == usize::MAX` 是强制定位/反向强制定位合成的方块（不印号的那些），
@@ -778,9 +778,9 @@ fn draw_layer_at(
         m.set_texture("uAuxMasks", frame.aux.unwrap());
         m.set_texture("uNoiseTex", *NOISE_TEX);
         // 「岩浆噪域」：`lava` 0 = 关闭（绑空纹理并把 `_LavaMode` 归零 ⇒ 官方原样），
-        // 1 = netherrack（还没生效那一段），2 = lava 的当前动画帧。只有简化噪域会传非 0。
+        // 1 = netherrock（还没生效那一段），2 = lava 的当前动画帧。只有简化噪域会传非 0。
         match lava {
-            1 => m.set_texture("_LavaTex", *NETHERRACK_TEX),
+            1 => m.set_texture("_LavaTex", *NETHERROCK_TEX),
             2 => m.set_texture("_LavaTex", lava_frame(time)),
             _ => m.set_texture("_LavaTex", *EMPTY_TEX),
         }

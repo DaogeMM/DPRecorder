@@ -578,10 +578,9 @@ const forkedDeps = [
                    想改直接编辑 `config.toml`。要恢复就把下面的 v-if="false" 去掉。 -->
               <CfgSwitch v-if="false" :label="t('print-stderr')" :tip="t('print-stderr-tip')" v-model="config.printStderr"></CfgSwitch>
               <CfgSwitch v-if="false" :label="t('show-detailed-log')" :tip="t('show-detailed-log-tip')" v-model="config.showDetailedLog"></CfgSwitch>
-              <!-- 「开启『游玩』按钮」这一项**暂时隐藏**：那枚按钮先不放出来。
-                   代码与该配置项（`config.enablePlayButton`）原样留着 —— 旧配置里存过 true 也不会被改写，
-                   要恢复就把 v-if 去掉（开关本身没有任何依赖）。 -->
-              <CfgSwitch v-if="false" :label="t('enable-play-button')" :tip="t('enable-play-button-tip')" v-model="config.enablePlayButton"></CfgSwitch>
+              <!-- 「开启『游玩』按钮」：打开后「渲染」页那一排按钮里会多出「游玩」，用它直接进
+                   游戏里试谱（后端 `preview_play`）。 -->
+              <CfgSwitch :label="t('enable-play-button')" :tip="t('enable-play-button-tip')" v-model="config.enablePlayButton"></CfgSwitch>
               <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
               <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
               <!-- 「高性能模式」：它跟上面那个「默认展开侧边栏」是两回事：那一个是纯界面偏好（存

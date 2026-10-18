@@ -8,6 +8,7 @@ mod icon;
 mod ipc;
 mod preview;
 mod render;
+mod split;
 mod task;
 
 use anyhow::{bail, Context, Result};
@@ -63,8 +64,15 @@ fn resolve_asset_dir(exe_dir: &Path) -> PathBuf {
 }
 
 pub fn build_conf(headless: bool) -> macroquad::window::Conf {
+    // 分屏游玩的两个进程要各自按标题找到自己的窗口（见 `split::place_window`），
+    // 所以标题带角色后缀；不分屏时仍是 `DPRecorder`。
+    let window_title = match std::env::var("DPR_SPLIT_ROLE").as_deref() {
+        Ok("secondary") => split::window_title(true),
+        Ok("main") => split::window_title(false),
+        _ => "DPRecorder",
+    };
     macroquad::window::Conf {
-        window_title: "DPRecorder".to_string(),
+        window_title: window_title.to_string(),
         window_width: 1280,
         window_height: 720,
         icon: Some(macroquad::miniquad::conf::Icon {
@@ -1008,20 +1016,72 @@ async fn preview_play(mut params: RenderParams) -> Result<(), InvokeError> {
         params.config.high_performance = app.high_performance;
     }
     wrap_async(async move {
-        let mut child = cmd_hidden(std::env::current_exe()?)
-            .arg("play")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+        // 临时排查用：把这次试玩的开关状态记到 exe 旁的 tmp/split-debug.txt。
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let tmp = dir.join("tmp");
+                let _ = std::fs::create_dir_all(&tmp);
+                let _ = std::fs::write(
+                    tmp.join("split-debug.txt"),
+                    format!(
+                        "playSplitView={} pure={} fixed={}\n",
+                        params.config.play_split_view,
+                        params.config.pure_config_chart,
+                        params.config.fixed_lane_chart
+                    ),
+                );
+            }
+        }
+        // 「游玩分屏」：主窗口放原谱面，副窗口放改过的谱面。
+        // 两个窗口必须是两个进程（macroquad 一个进程只能开一个窗口）。
+        // 不看纯配置 / 定轨有没有开：开关打开就分屏，两个窗口显示不同内容由配置决定。
+        if !params.config.play_split_view {
+            spawn_play_child(&params, None).await?;
+            return Ok(());
+        }
 
-        let mut stdin = child.stdin.take().unwrap();
-        let info = format!("{}\n", serde_json::to_string(&params)?);
-        info!("preview play: {}", info);
-        stdin.write_all(info.as_bytes()).await?;
+        // 端口由父进程挑：绑 0 让系统分配，拿到号就放掉，两个子进程谁先起都能重试着连上。
+        let port = {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+            listener.local_addr()?.port()
+        };
+        let mut plain = params.clone();
+        plain.config.pure_config_chart = false;
+        plain.config.fixed_lane_chart = false;
+        plain.config.play_split_view = false;
+        let mut changed = params;
+        changed.config.play_split_view = false;
+
+        spawn_play_child(&plain, Some(("main", port))).await?;
+        spawn_play_child(&changed, Some(("secondary", port))).await?;
         Ok(())
     })
     .await
+}
+
+/// 起一个试玩进程，把谱面信息与配置 JSON 从 stdin 递进去。
+///
+/// `split` 是 `(角色, 端口)`：分屏时两个子进程靠这两个环境变量认出自己的角色，
+/// 主进程监听端口发播放时刻，副进程连上去跟时刻（见 `split` 模块）。
+async fn spawn_play_child(params: &RenderParams, split: Option<(&str, u16)>) -> Result<()> {
+    let mut command = cmd_hidden(std::env::current_exe()?);
+    command
+        .arg("play")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if let Some((role, port)) = split {
+        command
+            .env("DPR_SPLIT_ROLE", role)
+            .env("DPR_SPLIT_PORT", port.to_string());
+    }
+    let mut child = command.spawn()?;
+
+    let mut stdin = child.stdin.take().unwrap();
+    let info = format!("{}\n", serde_json::to_string(params)?);
+    info!("preview play: {}", info);
+    stdin.write_all(info.as_bytes()).await?;
+    Ok(())
 }
 
 #[tauri::command]

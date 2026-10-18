@@ -154,6 +154,8 @@ const {
   forceAspectRatio, foldAnimation, pureConfigChart, pureConfigChartLineY, pureConfigChartSpeed,
   pureConfigChartSideLines, pureConfigChartSideX, pureConfigChartAngle, pureConfigChartNoise,
   pureConfigChartNoiseHeight, pureConfigChartNoiseWidth, pureConfigChartNoiseTime, pureConfigChartNoiseDelay,
+  fixedLaneChart, fixedLaneGap, fixedLaneSpeed, fixedLaneLineY, fixedLaneInterval,
+  fixedLaneHoldLength, fixedLaneThird, playSplitView,
   aspectRatio, noteUniformScale, holdPartialCover,
   negativeLengthHold, holdParticleIntervalRatio, lineLength, scoreTotal, previewStart,
   previewEnd, offset,
@@ -859,6 +861,7 @@ defineExpose({
             <div class="cfg-grid">
               <CfgSwitch :label="t('pure-config-chart-side-lines')" v-model="pureConfigChartSideLines" :tip="t('pure-config-chart-side-lines-tip')" />
               <CfgSwitch :label="t('pure-config-chart-noise')" v-model="pureConfigChartNoise" :tip="t('pure-config-chart-noise-tip')" />
+              <CfgSwitch :label="t('play-split-view')" v-model="playSplitView" :tip="t('play-split-view-tip')" />
               <CfgField :label="t('pure-config-chart-line-y')" :tip="t('pure-config-chart-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
               <CfgField :label="t('pure-config-chart-speed')" :tip="t('pure-config-chart-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('pure-config-chart-side-x')" :tip="t('pure-config-chart-side-x-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartSideX" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
@@ -867,6 +870,20 @@ defineExpose({
               <CfgField :label="t('pure-config-chart-noise-width')" :tip="t('pure-config-chart-noise-width-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseWidth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
               <CfgField :label="t('pure-config-chart-noise-time')" :tip="t('pure-config-chart-noise-time-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseTime" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
               <CfgField :label="t('pure-config-chart-noise-delay')" :tip="t('pure-config-chart-noise-delay-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseDelay" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <!-- 「定轨谱面」：把整张谱面拍平成一条横向基准线 + 若干条固定轨道，按键按判定时刻吸附到
+               轨道上（正中那条固定给 Flick / Drag，常规单侧两条、拥挤时才启用第三条）。
+               开关与四个参数同处这一个齿轮弹窗里。 -->
+          <PhiSubMenu id="sec3-fixed-lane" :label="t('fixed-lane-chart')" :tip="t('fixed-lane-chart-tip')" v-model="fixedLaneChart">
+            <div class="cfg-grid">
+              <CfgField :label="t('fixed-lane-gap')" :tip="t('fixed-lane-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('fixed-lane-speed')" :tip="t('fixed-lane-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('fixed-lane-line-y')" :tip="t('fixed-lane-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('fixed-lane-interval')" :tip="t('fixed-lane-interval-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneInterval" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgSwitch :label="t('fixed-lane-hold-length')" :tip="t('fixed-lane-hold-length-tip')" v-model="fixedLaneHoldLength" />
+              <CfgSwitch :label="t('fixed-lane-third')" :tip="t('fixed-lane-third-tip')" v-model="fixedLaneThird" />
+              <CfgSwitch :label="t('play-split-view')" v-model="playSplitView" :tip="t('play-split-view-tip')" />
             </div>
           </PhiSubMenu>
           <PhiSubMenu id="sec3-chart-water" :label="t('title.chart-water')" :tip="t('water-screen-tip')" v-model="waterScreen">

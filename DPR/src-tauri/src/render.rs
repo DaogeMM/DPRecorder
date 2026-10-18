@@ -199,7 +199,7 @@ pub struct RenderConfig {
     /// 「反向强制定位」：把强制定位的矩形本身当噪域画出来，其余地方不铺噪域（默认关闭）
     pub block_area_force_invert: bool,
     /// 「岩浆噪域」：把完整噪域的填充换成按屏幕平铺的 MC 贴图 —— 还没生效（appear..enable）
-    /// 印 netherrack，生效中与生效结束后印 lava（16 帧、每帧 160ms 循环）。
+    /// 印 netherrock，生效中与生效结束后印 lava（16 帧、每帧 160ms 循环）。
     /// 只在**没打开**「简化噪域」时生效，且只贴谱面里真实的普通噪域；打开时会把
     /// 「噪声斑点 / 噪域扭曲 / 噪域火花」当成关闭（默认关闭）
     pub block_area_lava: bool,
@@ -284,6 +284,24 @@ pub struct RenderConfig {
     pub pure_config_chart_noise_time: f32,
     /// 「纯配置谱面 · 按键噪域」延后视窗（秒）：判定完成后矩形再停留这么久才消失（默认 0.3）
     pub pure_config_chart_noise_delay: f32,
+    /// 「定轨谱面」：把所有判定线拍平成一条横向基准线，按键按判定时刻吸附到固定轨道
+    /// （见 dps 的 `core::fixed_lane`）。与「纯配置谱面」互不影响，谱面文件不受影响，默认关闭。
+    pub fixed_lane_chart: bool,
+    /// 「定轨谱面」相邻轨道间隔：屏宽的几成，`0.14` 就是屏宽的 14%
+    pub fixed_lane_gap: f32,
+    /// 「定轨谱面」按键流速：越大落得越快
+    pub fixed_lane_speed: f64,
+    /// 「定轨谱面」判定线高度：`0` 是屏幕底边、`1` 是屏幕顶边、`0.5` 是正中
+    pub fixed_lane_line_y: f32,
+    /// 「定轨谱面」同一轨道上两个按键之间至少留几秒（长按按尾巴算）
+    pub fixed_lane_interval: f64,
+    /// 「定轨谱面」是否按原谱面画长条（Hold）的长度：关掉只画头部，判定时长不受影响
+    pub fixed_lane_hold_length: bool,
+    /// 「定轨谱面」是否启用单侧第 3 条轨道：关掉时排不下的按键会叠在最近的轨道上
+    pub fixed_lane_third: bool,
+    /// 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对
+    /// 「纯配置谱面」「定轨谱面」生效）。只影响试玩入口，不影响渲染成片。
+    pub play_split_view: bool,
     pub bg_blurriness: f32,
 
     pub max_particles: usize,
@@ -411,6 +429,13 @@ impl RenderConfig {
             pure_config_chart_noise_width: self.pure_config_chart_noise_width,
             pure_config_chart_noise_time: self.pure_config_chart_noise_time,
             pure_config_chart_noise_delay: self.pure_config_chart_noise_delay,
+            fixed_lane_chart: self.fixed_lane_chart,
+            fixed_lane_gap: self.fixed_lane_gap,
+            fixed_lane_speed: self.fixed_lane_speed,
+            fixed_lane_line_y: self.fixed_lane_line_y,
+            fixed_lane_interval: self.fixed_lane_interval,
+            fixed_lane_hold_length: self.fixed_lane_hold_length,
+            fixed_lane_third: self.fixed_lane_third,
             bg_blurriness: self.bg_blurriness,
 
             max_particles: self.max_particles,
@@ -580,6 +605,15 @@ impl Default for RenderConfig {
             pure_config_chart_noise_width: 1.1,
             pure_config_chart_noise_time: 0.13,
             pure_config_chart_noise_delay: 0.,
+            // 定轨谱面：默认关闭（与前端 DEFAULT_RENDER_CONFIG、config.toml 一致）
+            fixed_lane_chart: false,
+            fixed_lane_gap: 0.14,
+            fixed_lane_speed: 2.8,
+            fixed_lane_line_y: 0.1,
+            fixed_lane_interval: 0.2,
+            fixed_lane_hold_length: true,
+            fixed_lane_third: false,
+            play_split_view: false,
             bg_blurriness: 80.,
 
             max_particles: 5000,

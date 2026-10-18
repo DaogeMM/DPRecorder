@@ -143,8 +143,10 @@ const RESPACK = {
 } satisfies Partial<FieldTable>;
 
 /* =========================== 谱面信息 =============================
- * 这一区的控件由 RenderView 通过 `chart-info` 插槽填进来（解析谱面后才有）。
- * lvl / diff 都是谱面带来的值，用户改不了。 */
+ * 这一区的控件由 RenderView 通过 `chart-info` 插槽填进来（解析谱面后才有）：
+ *   - `diff` 难度标识（`AT`）、`lvl` 定数（`18.0`）都能手改；
+ *   - `difficulty` 难度整串（`AT Lv.18.0`）默认随上面两项拼出来（见 RenderView 的 watch）。
+ * 三者的值都不会被配置覆盖（不在 `config/chartSide.ts` 的名单里）。 */
 const CHART_INFO = {
   lvl: {
     widget: 'number',
@@ -223,6 +225,16 @@ const CHART = {
   pureConfigChartNoiseWidth: { widget: 'number' },
   pureConfigChartNoiseTime: { widget: 'number' },
   pureConfigChartNoiseDelay: { widget: 'number' },
+  // 「定轨谱面」：一个开关 + 四个参数，与纯配置谱面同族（同样不能写 `uiValue: 'number'`）。
+  fixedLaneChart: { widget: 'checkbox' },
+  fixedLaneGap: { widget: 'number' },
+  fixedLaneSpeed: { widget: 'number' },
+  fixedLaneLineY: { widget: 'number' },
+  fixedLaneInterval: { widget: 'number' },
+  fixedLaneHoldLength: { widget: 'checkbox' },
+  fixedLaneThird: { widget: 'checkbox' },
+  // 「游玩分屏」：只影响试玩入口（开两个窗口），面板开关放在纯配置 / 定轨谱面那一栏里。
+  playSplitView: { widget: 'checkbox' },
   forceAspectRatio: { widget: 'checkbox' },
   foldAnimation: { widget: 'checkbox' },
   aspectRatio: {

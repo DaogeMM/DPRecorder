@@ -472,6 +472,21 @@ impl GameScene {
                 aspect,
             );
         }
+        // 「定轨谱面」：同样与格式无关，也放在这里。与「纯配置谱面」互不影响；两个都开时定轨在后一层
+        // 接手（先把按键拍平到基准线，再吸附到轨道），所以不会互相打架。
+        if config.fixed_lane_chart {
+            let aspect = config.aspect_ratio.unwrap_or(info.aspect_ratio);
+            chart.apply_fixed_lane(
+                crate::core::fixed_lane::Lanes {
+                    gap: config.fixed_lane_gap,
+                    line_y: config.fixed_lane_line_y,
+                    speed: config.fixed_lane_speed,
+                    interval: config.fixed_lane_interval,
+                    third: config.fixed_lane_third,
+                },
+                aspect,
+            );
+        }
         Ok((chart, format))
     }
 

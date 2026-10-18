@@ -20,7 +20,7 @@
         "name": "曲名",
         "difficulty": "难度",
         "level": "显示难度",
-        "diff": "难度",
+        "diff": "难度标识",
         "lvl": "定数",
         "charter": "谱师",
         "composer": "曲师",
