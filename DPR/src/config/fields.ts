@@ -270,6 +270,27 @@ const CHART = {
     toConfig: (ui) => Number(ui.offset),
     note: '控件在谱面信息里（界面单位毫秒），值存在内部槽 ui.offset（秒）',
   },
+  // ---------------- 「雪降SP」特殊演出的调试参数 ----------------
+  // 演出由输入谱面的文件名强制开启（没有开关），这几个只调观感，控件按「谱面 → 调试」摆放
+  // （见 ConfigView.vue 的 `sec-chart-debug`）：`section` 只决定配置族，不决定界面位置。
+  // 同样不能写 `uiValue: 'number'`：文本框的校验规则要拿字符串。
+  xuejiangSpFakeNotes: { widget: 'number' },
+  xuejiangSpFakeBarSeconds: { widget: 'number' },
+  xuejiangSpBurstCombo: { widget: 'number' },
+  xuejiangSpRollScale: { widget: 'number' },
+  xuejiangSpDiffFake: { widget: 'text' },
+  xuejiangSpDiffReal: { widget: 'text' },
+  xuejiangSpVolumePercentile: { widget: 'number' },
+  xuejiangSpVolumeGamma: { widget: 'number' },
+  xuejiangSpVolumeSmooth: { widget: 'number' },
+  xuejiangSpFaceHitStart: { widget: 'number' },
+  xuejiangSpFacePeriod: { widget: 'number' },
+  xuejiangSpFaceRounds: { widget: 'number' },
+  xuejiangSpFaceLeadShow: { widget: 'number' },
+  xuejiangSpFaceLeadRoll: { widget: 'number' },
+  xuejiangSpFaceTextShow: { widget: 'text' },
+  xuejiangSpFaceTextRoll: { widget: 'text' },
+  xuejiangSpFaceTextHit: { widget: 'text' },
 } satisfies Partial<FieldTable>;
 
 /* ========================= 判定 / 染色 =========================== */

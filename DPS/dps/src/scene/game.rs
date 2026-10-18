@@ -26,7 +26,7 @@ use anyhow::{bail, Context, Result};
 use concat_string::concat_string;
 use lyon::path::Path;
 use macroquad::{prelude::*, window::InternalGlContext};
-use sasa::{Music, MusicParams};
+use sasa::{AudioClip, Music, MusicParams};
 use serde::{Deserialize, Serialize};
 use std::{
     io::Cursor,
@@ -220,6 +220,30 @@ pub struct PauseRewind {
     dim: bool,
 }
 
+/// 「雪降SP」特殊演出：连击数位置这一刻换成哪个表情
+#[derive(Clone, Copy)]
+enum XuejiangSpFace {
+    /// 音符刚出现
+    Show,
+    /// 音符开始滚动
+    Roll,
+    /// 音符被判定
+    Hit,
+}
+
+/// 「雪降SP」特殊演出这一帧要显示的值；`score` 为 `None` 处表示沿用正常谱面的画法。
+#[derive(Clone, Copy)]
+struct XuejiangSpFrame {
+    /// 右下角难度文本用伪装的那一份（`false` = 揭开伪装后的那一份）
+    fake_diff: bool,
+    /// 分数（`score_total` 域内）；`None` 表示直接用真实判定分数
+    score: Option<u32>,
+    /// 进度条填充比例（0~1，1 表示填满整条）
+    bar: f32,
+    /// 连击数位置这一帧要显示的表情；`None` 表示照常显示连击数
+    face: Option<XuejiangSpFace>,
+}
+
 pub struct GameScene {
     should_exit: bool,
     next_scene: Option<NextScene>,
@@ -251,6 +275,19 @@ pub struct GameScene {
     update_fn: Option<UpdateFn>,
 
     pub touch_points: Vec<(f32, f32)>,
+
+    /// 「雪降SP」特殊演出：开始把分数滚回真实值的游戏时间；`None` 表示还没到揭开伪装的 COMBO
+    xuejiang_sp_burst: Option<f64>,
+    /// 「雪降SP」特殊演出：全部可判定音符的判定时刻（升序）。
+    /// 伪装阶段的进度条按「已判定的音符数 + 到下一个音符的进度」连续推进，
+    /// 倒滚窗口也取这里相邻两个音符的间隔，所以只在开这个模式时才收集。
+    xuejiang_sp_note_times: Vec<f64>,
+    /// 「雪降SP」特殊演出：音量进度条当前的平滑值（0~1）
+    xuejiang_sp_volume: f32,
+    /// 「雪降SP」特殊演出：上次算音量进度条的游戏时间，用来做与帧率无关的平滑
+    xuejiang_sp_volume_time: f64,
+    /// 「雪降SP」特殊演出：高响度分位的响度，音量进度条按它归一化
+    xuejiang_sp_volume_ref: f32,
 }
 
 macro_rules! reset {
@@ -265,6 +302,9 @@ macro_rules! reset {
         $tm.reset();
         $self.last_update_time = $tm.now();
         $self.state = State::Starting;
+        $self.xuejiang_sp_burst = None;
+        $self.xuejiang_sp_volume = 0.;
+        $self.xuejiang_sp_volume_time = 0.;
         $self.pause_rewind = PauseRewind {
             time: None,
             duration: None,
@@ -554,6 +594,18 @@ impl GameScene {
         res.fonts = std::mem::take(&mut chart.fonts);
 
         let music = Self::new_music(&mut res)?;
+
+        // 「雪降SP」特殊演出：收一份全曲音符时刻表（伪装阶段的进度条与倒滚窗口都要用），
+        // 音量进度条按整曲响度的高分位归一化。没开这个模式就都省掉。
+        let (xuejiang_sp_note_times, xuejiang_sp_volume_ref) = if res.config.xuejiang_sp_mode {
+            (
+                Self::xuejiang_sp_note_times(&chart),
+                Self::xuejiang_sp_volume_ref(&res.music, res.config.xuejiang_sp_volume_percentile),
+            )
+        } else {
+            (Vec::new(), 1.)
+        };
+
         Ok(Self {
             should_exit: false,
             next_scene: None,
@@ -589,6 +641,12 @@ impl GameScene {
             update_fn,
 
             touch_points: Vec::new(),
+
+            xuejiang_sp_burst: None,
+            xuejiang_sp_note_times,
+            xuejiang_sp_volume: 0.,
+            xuejiang_sp_volume_time: 0.,
+            xuejiang_sp_volume_ref,
         })
     }
 
@@ -602,6 +660,206 @@ impl GameScene {
                 ..Default::default()
             },
         )
+    }
+
+    /// 「雪降SP」特殊演出：全曲可判定音符的判定时刻（升序）。
+    ///
+    /// 伪装阶段的进度条要在两次判定之间连续推进、倒滚窗口要取揭开伪装处相邻两个音符的间隔，
+    /// 所以整张谱面的时刻表一次收好（假音符不参与）。
+    fn xuejiang_sp_note_times(chart: &Chart) -> Vec<f64> {
+        let mut times = Vec::with_capacity(1024);
+        for line in &chart.lines {
+            for note in &line.notes {
+                if !note.fake {
+                    times.push(note.time);
+                }
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        times
+    }
+
+    /// 「雪降SP」特殊演出：一段双声道采样的 RMS
+    fn xuejiang_sp_rms(frames: &[sasa::Frame]) -> f32 {
+        let mut sum = 0f64;
+        for it in frames {
+            sum += (it.0 as f64) * (it.0 as f64) + (it.1 as f64) * (it.1 as f64);
+        }
+        ((sum / (frames.len() as f64 * 2.)).sqrt()) as f32
+    }
+
+    /// 「雪降SP」特殊演出：整首音乐的高响度分位值，用来把音量进度条归一化到 0~1。
+    ///
+    /// 按 100 ms 窗、50 ms 步长算 RMS 后取 `percentile` 分位：只有最响的几处能顶到满条，
+    /// 其余段落按比例伸缩；分位取低了会让进度条长期贴在满格上，取高了则会一直很细。
+    fn xuejiang_sp_volume_ref(music: &AudioClip, percentile: f32) -> f32 {
+        let frames = music.frames();
+        let sample_rate = music.sample_rate() as usize;
+        if frames.is_empty() || sample_rate == 0 {
+            return 1.;
+        }
+        let window = (sample_rate / 10).max(1);
+        let hop = (sample_rate / 20).max(1);
+        let mut windows = Vec::with_capacity(frames.len() / hop + 1);
+        let mut start = 0;
+        while start + window <= frames.len() {
+            windows.push(Self::xuejiang_sp_rms(&frames[start..start + window]));
+            start += hop;
+        }
+        if windows.is_empty() {
+            return 1.;
+        }
+        windows.sort_by(f32::total_cmp);
+        let index = ((windows.len() - 1) as f32 * percentile.clamp(0., 1.)) as usize;
+        windows[index].max(1e-4)
+    }
+
+    /// 「雪降SP」特殊演出：音乐播放到 `time`（秒）附近 60 ms 的 RMS
+    fn xuejiang_sp_loudness(music: &AudioClip, time: f64) -> f32 {
+        let frames = music.frames();
+        let sample_rate = music.sample_rate() as f64;
+        if frames.is_empty() || sample_rate <= 0. {
+            return 0.;
+        }
+        let center = (time * sample_rate).round() as i64;
+        let half = (sample_rate * 0.03) as i64;
+        let len = frames.len() as i64;
+        let mut sum = 0f64;
+        let mut count = 0u32;
+        for index in (center - half).max(0)..(center + half + 1).min(len) {
+            let frame = frames[index as usize];
+            sum += (frame.0 as f64) * (frame.0 as f64) + (frame.1 as f64) * (frame.1 as f64);
+            count += 1;
+        }
+        if count == 0 {
+            return 0.;
+        }
+        ((sum / (count as f64 * 2.)).sqrt()) as f32
+    }
+
+    /// 「雪降SP」特殊演出：伪装阶段进度条的填充比例。
+    ///
+    /// 按音乐时间匀速走满：伪装成一张总长 `xuejiang_sp_fake_bar_seconds` 秒的谱面，
+    /// 条自己一直往前流，与判定了几个键无关，不是打一个键跳一步。
+    fn xuejiang_sp_fake_bar(&self) -> f32 {
+        let seconds = self.res.config.xuejiang_sp_fake_bar_seconds.max(1e-3) as f64;
+        ((self.res.time / seconds).clamp(0., 1.)) as f32
+    }
+
+    /// 「雪降SP」特殊演出：分数倒滚的时长（秒），0 表示直接跳到真实分数。
+    ///
+    /// 取揭开伪装处相邻两个音符的间隔（即两个 FLICK 到四连 HOLD 之间），
+    /// 数字滚完正好接上真实的判定分数。
+    fn xuejiang_sp_roll_window(&self, burst_combo: u32) -> f64 {
+        let index = burst_combo as usize;
+        let prev = index.checked_sub(1).and_then(|it| self.xuejiang_sp_note_times.get(it));
+        let interval = match (prev, self.xuejiang_sp_note_times.get(index)) {
+            (Some(&prev), Some(&next)) => next - prev,
+            _ => 1.,
+        };
+        (interval * self.res.config.xuejiang_sp_roll_scale.clamp(0., 10.) as f64).max(0.)
+    }
+
+    /// 「雪降SP」特殊演出：连击数位置这一帧要显示的表情。
+    ///
+    /// 每轮都以判定时刻为锚点往前推算：提前 `lead_show` 秒开始展示、提前 `lead_roll` 秒开始滚动、
+    /// 判定那一刻换成欢呼，欢呼一直持续到下一轮的展示（`period - lead_show`），
+    /// 四轮走完就回到正常连击数。
+    fn xuejiang_sp_face(&self) -> Option<XuejiangSpFace> {
+        let config = &self.res.config;
+        if config.xuejiang_sp_face_rounds == 0 {
+            return None;
+        }
+        let period = config.xuejiang_sp_face_period.max(1e-3);
+        let lead_show = config.xuejiang_sp_face_lead_show.clamp(0., period);
+        let lead_roll = config.xuejiang_sp_face_lead_roll.clamp(0., lead_show);
+        let offset = self.res.time - (config.xuejiang_sp_face_hit_start - lead_show);
+        if offset < 0. {
+            return None;
+        }
+        let index = (offset / period).floor();
+        if index < 0. || index as u32 >= config.xuejiang_sp_face_rounds {
+            return None;
+        }
+        let local = offset - index * period;
+        Some(if local < lead_show - lead_roll {
+            XuejiangSpFace::Show
+        } else if local < lead_show {
+            XuejiangSpFace::Roll
+        } else {
+            XuejiangSpFace::Hit
+        })
+    }
+
+    /// 「雪降SP」特殊演出这一帧要显示什么；没开这个模式就返回 `None`（一切按正常谱面画）。
+    ///
+    /// 三个阶段：
+    /// - 揭开伪装的 COMBO 之前：分数按伪装音符数折算，难度文本伪装成低难度，
+    ///   进度条按音乐时间连续走到 1；
+    /// - 揭开伪装那一帧起：难度文本换成另一个，并在倒滚窗口内把分数从伪装值滚回真实判定分数；
+    /// - 之后：分数用真实判定分数，进度条改按音乐响度伸缩。
+    fn xuejiang_sp_frame(&mut self) -> Option<XuejiangSpFrame> {
+        if !self.res.config.xuejiang_sp_mode {
+            return None;
+        }
+        let face = self.xuejiang_sp_face();
+        let total = self.res.info.score_total as f64;
+        let fake_notes = self.res.config.xuejiang_sp_fake_notes.max(1.);
+        let burst_combo = self.res.config.xuejiang_sp_burst_combo;
+        let combo = self.judge.combo();
+        if combo < burst_combo {
+            let score = (combo as f64 / fake_notes * total).round() as u32;
+            let bar = self.xuejiang_sp_fake_bar();
+            return Some(XuejiangSpFrame {
+                fake_diff: true,
+                score: Some(score),
+                bar,
+                face,
+            });
+        }
+
+        let now = self.res.time;
+        // 揭开伪装的时刻取第一次看到 COMBO 达标的那一帧，倒滚从这一帧开始算
+        let burst = match self.xuejiang_sp_burst {
+            Some(it) => it,
+            None => {
+                self.xuejiang_sp_burst = Some(now);
+                // 音量条从伪装进度的当前位置起步，免得揭开伪装那一帧凭空缩回当前音量
+                let bar = self.xuejiang_sp_fake_bar();
+                self.xuejiang_sp_volume = bar;
+                self.xuejiang_sp_volume_time = now;
+                now
+            }
+        };
+        let window = self.xuejiang_sp_roll_window(burst_combo);
+        let real = self.judge.score() / 1_000_000. * total;
+        let score = if window > 0. && now < burst + window {
+            let p = ((now - burst) / window).clamp(0., 1.);
+            // 先快后缓：数字一路滚下来，正好在下一个音符判定时落到真实分数
+            let p = 1. - (1. - p) * (1. - p);
+            let start = burst_combo as f64 / fake_notes * total;
+            Some((start + (real - start) * p).max(0.).round() as u32)
+        } else {
+            None
+        };
+
+        // 音频播放位置：res.time 是游戏时间，音乐按谱面 offset 提前或延后
+        let audio_time = now + self.chart.offset + self.info_offset + self.res.config.offset;
+        let loudness = Self::xuejiang_sp_loudness(&self.res.music, audio_time) / self.xuejiang_sp_volume_ref;
+        // 响度按指数放大：线性响度的条会长年贴在 0.8 以上，像根没在动的横条
+        let target = loudness.clamp(0., 1.).powf(self.res.config.xuejiang_sp_volume_gamma.max(0.01));
+        let dt = (now - self.xuejiang_sp_volume_time).clamp(0., 0.2) as f32;
+        self.xuejiang_sp_volume_time = now;
+        // 指数趋近：时间常数越大越跟手慢，与帧率无关
+        let k = 1. - (-dt / self.res.config.xuejiang_sp_volume_smooth.max(1e-3)).exp();
+        self.xuejiang_sp_volume += (target - self.xuejiang_sp_volume) * k;
+        let bar = self.xuejiang_sp_volume.clamp(0., 1.);
+        Some(XuejiangSpFrame {
+            fake_diff: false,
+            score,
+            bar,
+            face,
+        })
     }
 
     fn touch_scale(&self) -> f32 {
@@ -626,6 +884,8 @@ impl GameScene {
             }
         };
         let c = Color::new(1., 1., 1., self.res.alpha);
+        // 「雪降SP」特殊演出这一帧的伪装值；必须在借用 `res` 之前算好（它要读 `res` 和 `judge`）
+        let xuejiang_sp = self.xuejiang_sp_frame();
         let res = &mut self.res;
         let aspect_ratio = res.aspect_ratio;
         let screen_aspect = screen_aspect();
@@ -665,7 +925,10 @@ impl GameScene {
             ui.fill_circle(pause_center.x, pause_center.y, 0.05 * scale_ratio, Color::new(1., 1., 1., 0.5));
         }
 
-        let score = (self.judge.score() / 1_000_000. * res.info.score_total as f64).round() as u32;
+        let score = match xuejiang_sp.and_then(|it| it.score) {
+            Some(score) => score,
+            None => (self.judge.score() / 1_000_000. * res.info.score_total as f64).round() as u32,
+        };
         let score = if res.config.roman {
             Self::int_to_roman(score)
         } else if res.config.chinese {
@@ -715,14 +978,22 @@ impl GameScene {
                 ui.fill_rect(r, c);
             });
         }
-        if self.judge.combo() >= 3 && res.config.render_ui_combo {
-            let combo = if res.config.roman {
-                Self::int_to_roman(self.judge.combo())
-            } else if res.config.chinese {
-                Self::int_to_chinese(self.judge.combo())
-            }
-            else {
-                self.judge.combo().to_string()
+        // 「雪降SP」特殊演出：这几轮把连击数换成表情，表情不受「显示连击数」开关影响
+        let face = xuejiang_sp.and_then(|it| it.face);
+        if (self.judge.combo() >= 3 && res.config.render_ui_combo) || face.is_some() {
+            let combo = match face {
+                Some(XuejiangSpFace::Show) => res.config.xuejiang_sp_face_text_show.clone(),
+                Some(XuejiangSpFace::Roll) => res.config.xuejiang_sp_face_text_roll.clone(),
+                Some(XuejiangSpFace::Hit) => res.config.xuejiang_sp_face_text_hit.clone(),
+                None => {
+                    if res.config.roman {
+                        Self::int_to_roman(self.judge.combo())
+                    } else if res.config.chinese {
+                        Self::int_to_chinese(self.judge.combo())
+                    } else {
+                        self.judge.combo().to_string()
+                    }
+                }
             };
             let mut text_size = 0.98 * scale_ratio;
             let max_width = 0.55 * aspect_ratio;
@@ -778,10 +1049,17 @@ impl GameScene {
                 draw_text_aligned_opt_width(ui, &res.info.name, lf, bt, (0., 1.), 0.505 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.9 * aspect_ratio);
             });
         }
-        if res.config.render_ui_difficulty {
-            let diff_text = match res.config.render_ui_level {
-                true => &res.info.difficulty,
-                false => &res.info.diff,
+        // 「雪降SP」特殊演出自己会提供难度文本，所以模式下即使关掉了难度显示也照画
+        if res.config.render_ui_difficulty || xuejiang_sp.is_some() {
+            let diff_text = match xuejiang_sp {
+                Some(it) => match it.fake_diff {
+                    true => res.config.xuejiang_sp_diff_fake.as_str(),
+                    false => res.config.xuejiang_sp_diff_real.as_str(),
+                },
+                None => match res.config.render_ui_level {
+                    true => res.info.difficulty.as_str(),
+                    false => res.info.diff.as_str(),
+                },
             };
             self.chart.with_element(ui, res, UIElement::Dif, Some((-lf, bt)), Some((-lf, bt)), |ui, color| {
                 draw_text_aligned_opt_width(ui, diff_text, -lf, bt, (1., 1.), 0.505 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.9 * aspect_ratio);
@@ -796,9 +1074,16 @@ impl GameScene {
         let hw = 0.003;
         let height = eps * 1.0;
         let offset = self.chart.offset + self.info_offset + res.config.offset;
-        let dest = (res.time - self.exercise_range.start + offset) / (self.exercise_range.end - self.exercise_range.start);
-        let dest = (aspect_ratio * 2. * dest as f32).max(0.).min(aspect_ratio * 2.);
-        if res.config.render_ui_bar {
+        let dest = match xuejiang_sp {
+            // 「雪降SP」特殊演出：进度条不再表示谱面进度，改按音乐响度伸缩
+            Some(it) => aspect_ratio * 2. * it.bar,
+            None => {
+                let dest = (res.time - self.exercise_range.start + offset) / (self.exercise_range.end - self.exercise_range.start);
+                (aspect_ratio * 2. * dest as f32).max(0.).min(aspect_ratio * 2.)
+            }
+        };
+        // 同上：模式下的进度条是演出的一部分，关掉也照画
+        if res.config.render_ui_bar || xuejiang_sp.is_some() {
             self.chart.with_element(ui, res, UIElement::Bar, Some((-aspect_ratio, top + height / 2.)), Some((-aspect_ratio, top + height / 2.)), |ui, color| {
                 //let ct = Vector::new(0., top + height / 2.);
                 ui.fill_rect(

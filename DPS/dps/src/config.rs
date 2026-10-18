@@ -127,6 +127,51 @@ pub struct Config {
     pub render_ui_score: bool,
     pub render_ui_combo: bool,
     pub render_ui_bar: bool,
+    /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启，**不暴露成配置项**（配置文件里留空即可）。
+    ///
+    /// 打开后右下角难度文本与分数改成伪装值、240 COMBO 处把分数滚回真实值、
+    /// 之后的进度条改按音乐响度伸缩。下面 `xuejiang_sp_*` 那组是它的调试参数，
+    /// 只影响这个演出的观感，正常出片不用动。
+    pub xuejiang_sp_mode: bool,
+    /// 「雪降SP」特殊演出：伪装谱面的音符数。分数按 `combo / 这个数 × score_total` 算，
+    /// 240 COMBO 时正好是 240/305 的伪装分。
+    pub xuejiang_sp_fake_notes: f64,
+    /// 「雪降SP」特殊演出：伪装阶段进度条按音乐时间匀速走满所需的秒数。
+    /// 伪装成一张这么长的谱面，与判定了几个键无关；120 秒时 240 COMBO 处约在 0.72。
+    pub xuejiang_sp_fake_bar_seconds: f32,
+    /// 「雪降SP」特殊演出：揭开伪装的 COMBO 数（谱面上这一处是两个 FLICK）
+    pub xuejiang_sp_burst_combo: u32,
+    /// 「雪降SP」特殊演出：分数倒滚窗口的倍率。1 = 滚到下一个音符判定的那一刻，
+    /// 0.5 = 提前一半结束，0 = 立刻跳到真实分数。
+    pub xuejiang_sp_roll_scale: f32,
+    /// 「雪降SP」特殊演出：伪装阶段右下角的难度文本
+    pub xuejiang_sp_diff_fake: String,
+    /// 「雪降SP」特殊演出：揭开伪装后右下角的难度文本
+    pub xuejiang_sp_diff_real: String,
+    /// 「雪降SP」特殊演出：音量进度条的归一化分位（0~1）。
+    /// 取整首音乐各窗口响度的这个分位当满条，太高会让条一直很细、太低会长期贴满。
+    pub xuejiang_sp_volume_percentile: f32,
+    /// 「雪降SP」特殊演出：音量进度条响应的指数。1 = 线性（条长期在 0.8 以上），2 = 平方。
+    pub xuejiang_sp_volume_gamma: f32,
+    /// 「雪降SP」特殊演出：音量进度条的平滑时间常数（秒），越小越跟手、越大越抖不动
+    pub xuejiang_sp_volume_smooth: f32,
+    /// 「雪降SP」特殊演出：连击数换成表情的第一次判定时刻（秒）。这一处是第 1888 个音符，
+    /// 四轮之间间隔 4.1026 秒（234 BPM 的 16 拍）。
+    pub xuejiang_sp_face_hit_start: f64,
+    /// 「雪降SP」特殊演出：表情轮次的间隔（秒）
+    pub xuejiang_sp_face_period: f64,
+    /// 「雪降SP」特殊演出：表情一共几轮，0 表示不显示表情
+    pub xuejiang_sp_face_rounds: u32,
+    /// 「雪降SP」特殊演出：每轮从「展示」到判定要提前多少秒开始（3.5897 秒）
+    pub xuejiang_sp_face_lead_show: f64,
+    /// 「雪降SP」特殊演出：每轮从「开始滚动」到判定要提前多少秒开始（2.8205 秒）
+    pub xuejiang_sp_face_lead_roll: f64,
+    /// 「雪降SP」特殊演出：音符刚出现时连击数位置的表情
+    pub xuejiang_sp_face_text_show: String,
+    /// 「雪降SP」特殊演出：音符开始滚动时连击数位置的表情
+    pub xuejiang_sp_face_text_roll: String,
+    /// 「雪降SP」特殊演出：音符被判定时连击数位置的表情
+    pub xuejiang_sp_face_text_hit: String,
     pub render_bg: bool,
     pub render_bg_dim: bool,
     /// Phigros 4.0 `blockAreaList` 剧情遮挡区域（默认开启）
@@ -457,6 +502,24 @@ impl Default for Config {
             render_ui_score: true,
             render_ui_combo: true,
             render_ui_bar: true,
+            xuejiang_sp_mode: false,
+            xuejiang_sp_fake_notes: 305.,
+            xuejiang_sp_fake_bar_seconds: 120.,
+            xuejiang_sp_burst_combo: 240,
+            xuejiang_sp_roll_scale: 0.75,
+            xuejiang_sp_diff_fake: "IN Lv.l2".to_owned(),
+            xuejiang_sp_diff_real: "SP Lv.?".to_owned(),
+            xuejiang_sp_volume_percentile: 0.99,
+            xuejiang_sp_volume_gamma: 1.05,
+            xuejiang_sp_volume_smooth: 0.07,
+            xuejiang_sp_face_hit_start: 170.7692,
+            xuejiang_sp_face_period: 4.1026,
+            xuejiang_sp_face_rounds: 4,
+            xuejiang_sp_face_lead_show: 3.5897,
+            xuejiang_sp_face_lead_roll: 2.8205,
+            xuejiang_sp_face_text_show: "(⊙o⊙)".to_owned(),
+            xuejiang_sp_face_text_roll: "(⊙ω⊙)".to_owned(),
+            xuejiang_sp_face_text_hit: "Ｏ(≧▽≦)Ｏ".to_owned(),
             render_bg: true,
             render_bg_dim: true,
             render_block_area: true,

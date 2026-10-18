@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -174,10 +174,19 @@ async fn restore_queue(tasks: &Arc<Mutex<Vec<Arc<Task>>>>, next_id: &AtomicU32) 
     save_tasks(tasks).await;
 }
 
-pub fn generate_filename(info: &ChartInfo, config: &RenderConfig) -> String {
+pub fn generate_filename(info: &ChartInfo, config: &RenderConfig, source: Option<&Path>) -> String {
     let re = Regex::new(r"%([^%]+)%").unwrap();
     let input = config.file_name_format.as_str();
     let mut output = input.to_string();
+
+    // 原文件的文件名（不含扩展名）：文件取去掉最后一段扩展名的名字（`a.100.SP.pez` → `a.100.SP`），
+    // 目录（解包出来的谱面）本来就带点，`.file_stem()` 会把 `.SP` 当扩展名切掉，所以按目录名取。
+    let source_name = source
+        .map(|it| {
+            let name = if it.is_dir() { it.file_name() } else { it.file_stem() };
+            name.map(|it| it.to_string_lossy().into_owned()).unwrap_or_default()
+        })
+        .unwrap_or_default();
 
     let match_config = |key: &str| -> String {
         match key {
@@ -308,6 +317,7 @@ pub fn generate_filename(info: &ChartInfo, config: &RenderConfig) -> String {
                 "date" => Local::now().format("%Y-%m-%d").to_string(),
                 "time" => Local::now().format("%H-%M-%S").to_string(),
                 "level_prefix" => info.diff.clone(),
+                "file" => source_name.clone(),
                 _ => whole.to_string(),
             }
         };
@@ -345,7 +355,7 @@ impl Task {
         let mut cover = NamedTempFile::new()?;
         cover.write_all(&fs.load_file(&info.illustration).await?)?;
 
-        let file_name = generate_filename(&info, &params.config);
+        let file_name = generate_filename(&info, &params.config, Some(params.path.as_path()));
 
         let output = get_output_dir()?.join(file_name);
 

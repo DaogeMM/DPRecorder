@@ -114,6 +114,21 @@ const primaryNav = [
 // 「设置」固定在左栏最下面（和上面几个一级区域分开，中间用弹性空白撑开）
 const settingsNav = [{ name: 'settings', icon: 'mdi-cog' }];
 
+/**
+ * 设置页里「显示调试」那一条的入口开关：默认藏着，只有 **Ctrl+Shift+点击左栏的「设置」** 才切换。
+ * 键与 `SettingsView.vue` 共用。两处各自持有一份 `useStorage` 引用、互相不同步，
+ * 所以这里以 localStorage 里的值为准来取反（设置页是导航后才挂载的，挂载时读到的就是新值）。
+ */
+const debugRevealed = useStorage<boolean>('phi.debug.revealed', false);
+function onSettingsClick(name: string, event: MouseEvent) {
+  if (event.ctrlKey && event.shiftKey) {
+    const next = localStorage.getItem('phi.debug.revealed') !== 'true';
+    localStorage.setItem('phi.debug.revealed', String(next));
+    debugRevealed.value = next;
+  }
+  routerPush(name);
+}
+
 /*
  * 渲染页左栏分两级：
  *   一级 = renderGroups 里的组，对应 ConfigView 里的 <PhiGroup>，DOM id 就是 grp-xxx；
@@ -166,6 +181,7 @@ const renderGroups: RenderGroup[] = [
       { id: 'sec-block-area', label: 'title.block-area', icon: 'mdi-blur' },
       // 「判定」与「谱面进水」都在本组末尾的「更多」分区里，不单列
       { id: 'sec-more-chart', label: 'more', icon: 'mdi-dots-horizontal' },
+      // 本组最后的「谱面·调试」不列进左栏：它默认整块关着（纯界面总开关），只在页面上留一行标题。
     ],
   },
 ];
@@ -501,7 +517,7 @@ onUnmounted(() => {
             :class="{ 'phi-nav__item--active': route.name === item.name }"
             type="button"
             :title="t(item.name)"
-            @click="routerPush(item.name)"
+            @click="onSettingsClick(item.name, $event)"
           >
             <i class="mdi" :class="item.icon"></i>
             <span class="phi-nav__label">{{ t(item.name) }}</span>

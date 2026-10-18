@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, toRefs, watch } from 'vue';
+import { useStorage } from '@vueuse/core';
 
 import { useI18n } from 'vue-i18n';
 const { t } = useI18n();
@@ -68,6 +69,16 @@ const NOTE_DEBUG_FIELDS = ['line', 'time', 'height', 'base', 'angle', 'speed', '
 //    （本仓库没有测试套件；模板也会一起被检查，所以改完 .vue 必须跑这个）。
 
 const form = ref<VForm>();
+/**
+ * 「谱面 · 调试」整块显不显示：设置页里那条「显示调试」（`phi.debug.enabled`，纯界面偏好）。
+ * 它的入口本身是藏起来的，见 `App.vue` 的 `onSettingsClick`（Ctrl+Shift+点击左栏「设置」）。
+ */
+const debugEnabled = useStorage<boolean>('phi.debug.enabled', false);
+/**
+ * 「谱面 · 调试」里那一行「雪降SP」三级菜单的开关。
+ * 纯界面状态、不进配置：它只是齿轮弹窗的入口（演出本身由输入谱面的文件名强制开启）。
+ */
+const xuejiangSpDebug = ref(true);
 const fileNameFormatDialog = ref(false);
 /**
  * 「文件名格式」说明弹窗的宽度 —— 与齿轮弹窗（`PhiSubMenu.vue` 的 `dialogWidth`）同一算法：
@@ -177,6 +188,13 @@ const {
   judgeRangeWidthFlick, judgeRangeNoiseOcclusion,
   judgeRangeLength, judgeRangeTime, judgeRangeAlpha, judgeRangeColor, preserveFramebuffer,
   renderExtra, bgBlurriness, playStartTime, playEndTime, fade, alphaTint,
+  // 「雪降SP」特殊演出的调试参数（谱面 → 调试）
+  xuejiangSpFakeNotes, xuejiangSpFakeBarSeconds, xuejiangSpBurstCombo, xuejiangSpRollScale,
+  xuejiangSpDiffFake, xuejiangSpDiffReal, xuejiangSpVolumePercentile, xuejiangSpVolumeGamma,
+  xuejiangSpVolumeSmooth,
+  xuejiangSpFaceHitStart, xuejiangSpFacePeriod, xuejiangSpFaceRounds,
+  xuejiangSpFaceLeadShow, xuejiangSpFaceLeadRoll,
+  xuejiangSpFaceTextShow, xuejiangSpFaceTextRoll, xuejiangSpFaceTextHit,
   // 界面独占的槽位
   hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
 } = toRefs(ui);
@@ -980,6 +998,35 @@ defineExpose({
           <!-- 速度与上/下隐在本分区（谱面组的「更多」），取值与校验规则见下。 -->
           <CfgField :label="t('speed')" :tip="t('speed-tip')"><v-combobox density="compact" hide-details="auto" v-model="speed" type="number" :items="speedList" :rules="[RULES.notEmpty, RULES.positive, RULES.less100, RULES.greater0_01]"></v-combobox></CfgField>
           <CfgField :label="t('fade')"><v-text-field density="compact" hide-details="auto" :title="t('fade-tip')" v-model="fade" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+        </div>
+      </PhiSection>
+
+      <!-- 「谱面 · 调试」：整块只在设置页勾了「显示调试」时出现（`phi.debug.enabled`，
+           入口由 Ctrl+Shift+点击左栏「设置」露出）。里面每个调试项各占一行三级菜单
+           （参数收进齿轮弹窗），以后再加别的调试就再摆一行。 -->
+      <PhiSection v-if="debugEnabled" id="sec-chart-debug" :title="t('title.xuejiang-sp-debug')">
+        <div class="cfg-grid">
+          <PhiSubMenu id="sec3-xuejiang-sp" :label="t('xuejiang-sp-group')" :tip="t('xuejiang-sp-group-tip')" v-model="xuejiangSpDebug">
+            <div class="cfg-grid">
+              <CfgField :label="t('xuejiang-sp-burst-combo')" :tip="t('xuejiang-sp-burst-combo-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpBurstCombo" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-fake-notes')" :tip="t('xuejiang-sp-fake-notes-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFakeNotes" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-fake-bar-seconds')" :tip="t('xuejiang-sp-fake-bar-seconds-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFakeBarSeconds" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-roll-scale')" :tip="t('xuejiang-sp-roll-scale-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpRollScale" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-volume-percentile')" :tip="t('xuejiang-sp-volume-percentile-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumePercentile" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-volume-gamma')" :tip="t('xuejiang-sp-volume-gamma-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumeGamma" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-volume-smooth')" :tip="t('xuejiang-sp-volume-smooth-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumeSmooth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-diff-fake')" :tip="t('xuejiang-sp-diff-fake-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpDiffFake" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-diff-real')" :tip="t('xuejiang-sp-diff-real-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpDiffReal" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-hit-start')" :tip="t('xuejiang-sp-face-hit-start-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceHitStart" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-period')" :tip="t('xuejiang-sp-face-period-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFacePeriod" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-rounds')" :tip="t('xuejiang-sp-face-rounds-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceRounds" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-lead-show')" :tip="t('xuejiang-sp-face-lead-show-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceLeadShow" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-lead-roll')" :tip="t('xuejiang-sp-face-lead-roll-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceLeadRoll" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-text-show')" :tip="t('xuejiang-sp-face-text-show-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextShow" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-text-roll')" :tip="t('xuejiang-sp-face-text-roll-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextRoll" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-text-hit')" :tip="t('xuejiang-sp-face-text-hit-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextHit" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
         </div>
       </PhiSection>
     </PhiGroup>

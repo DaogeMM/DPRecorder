@@ -143,6 +143,44 @@ pub struct RenderConfig {
     pub render_ui_score: bool,
     pub render_ui_combo: bool,
     pub render_ui_bar: bool,
+    /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启（见 `is_xuejiang_sp_chart`），
+    /// 不是配置项 —— 前端不传，配置文件里写了也会在 `generate_resource` 里按文件名覆盖。
+    /// `to_config()` 把它透传成 `dps::config::Config::xuejiang_sp_mode`。
+    pub xuejiang_sp: bool,
+    /// 「雪降SP」特殊演出：伪装谱面的音符数（分数按 `combo / 这个数 × 总分` 算）
+    pub xuejiang_sp_fake_notes: f64,
+    /// 「雪降SP」特殊演出：伪装阶段进度条按音乐时间匀速走满所需的秒数（120 秒时 240 COMBO 处约 0.72）
+    pub xuejiang_sp_fake_bar_seconds: f32,
+    /// 「雪降SP」特殊演出：揭开伪装的 COMBO 数
+    pub xuejiang_sp_burst_combo: u32,
+    /// 「雪降SP」特殊演出：分数倒滚窗口的倍率（1 = 滚到下一个音符判定的那一刻）
+    pub xuejiang_sp_roll_scale: f32,
+    /// 「雪降SP」特殊演出：伪装阶段右下角的难度文本
+    pub xuejiang_sp_diff_fake: String,
+    /// 「雪降SP」特殊演出：揭开伪装后右下角的难度文本
+    pub xuejiang_sp_diff_real: String,
+    /// 「雪降SP」特殊演出：音量进度条的归一化分位（0~1）
+    pub xuejiang_sp_volume_percentile: f32,
+    /// 「雪降SP」特殊演出：音量进度条响应的指数（1 = 线性，2 = 平方）
+    pub xuejiang_sp_volume_gamma: f32,
+    /// 「雪降SP」特殊演出：音量进度条的平滑时间常数（秒）
+    pub xuejiang_sp_volume_smooth: f32,
+    /// 「雪降SP」特殊演出：连击数换成表情的第一次判定时刻（秒）
+    pub xuejiang_sp_face_hit_start: f64,
+    /// 「雪降SP」特殊演出：表情轮次的间隔（秒）
+    pub xuejiang_sp_face_period: f64,
+    /// 「雪降SP」特殊演出：表情一共几轮（0 = 不显示）
+    pub xuejiang_sp_face_rounds: u32,
+    /// 「雪降SP」特殊演出：每轮从「展示」到判定提前多少秒开始（3.5897）
+    pub xuejiang_sp_face_lead_show: f64,
+    /// 「雪降SP」特殊演出：每轮从「开始滚动」到判定提前多少秒开始（2.8205）
+    pub xuejiang_sp_face_lead_roll: f64,
+    /// 「雪降SP」特殊演出：音符刚出现时连击数位置的表情
+    pub xuejiang_sp_face_text_show: String,
+    /// 「雪降SP」特殊演出：音符开始滚动时连击数位置的表情
+    pub xuejiang_sp_face_text_roll: String,
+    /// 「雪降SP」特殊演出：音符被判定时连击数位置的表情
+    pub xuejiang_sp_face_text_hit: String,
     pub render_bg: bool,
     pub render_bg_dim: bool,
     /// 「背景暗淡」：黑色遮罩的不透明度（0~1）。作为渲染参数时会**覆盖**谱面信息里的同名值。
@@ -370,6 +408,24 @@ impl RenderConfig {
             render_ui_score: self.render_ui_score,
             render_ui_combo: self.render_ui_combo,
             render_ui_bar: self.render_ui_bar,
+            xuejiang_sp_mode: self.xuejiang_sp,
+            xuejiang_sp_fake_notes: self.xuejiang_sp_fake_notes,
+            xuejiang_sp_fake_bar_seconds: self.xuejiang_sp_fake_bar_seconds,
+            xuejiang_sp_burst_combo: self.xuejiang_sp_burst_combo,
+            xuejiang_sp_roll_scale: self.xuejiang_sp_roll_scale,
+            xuejiang_sp_diff_fake: self.xuejiang_sp_diff_fake.clone(),
+            xuejiang_sp_diff_real: self.xuejiang_sp_diff_real.clone(),
+            xuejiang_sp_volume_percentile: self.xuejiang_sp_volume_percentile,
+            xuejiang_sp_volume_gamma: self.xuejiang_sp_volume_gamma,
+            xuejiang_sp_volume_smooth: self.xuejiang_sp_volume_smooth,
+            xuejiang_sp_face_hit_start: self.xuejiang_sp_face_hit_start,
+            xuejiang_sp_face_period: self.xuejiang_sp_face_period,
+            xuejiang_sp_face_rounds: self.xuejiang_sp_face_rounds,
+            xuejiang_sp_face_lead_show: self.xuejiang_sp_face_lead_show,
+            xuejiang_sp_face_lead_roll: self.xuejiang_sp_face_lead_roll,
+            xuejiang_sp_face_text_show: self.xuejiang_sp_face_text_show.clone(),
+            xuejiang_sp_face_text_roll: self.xuejiang_sp_face_text_roll.clone(),
+            xuejiang_sp_face_text_hit: self.xuejiang_sp_face_text_hit.clone(),
             render_bg: self.render_bg,
             render_bg_dim: self.render_bg_dim,
             render_block_area: self.render_block_area,
@@ -512,7 +568,7 @@ impl Default for RenderConfig {
             difficulty: "".to_string(),
             player_avatar: None,
             judge_offset: 0.,
-            file_name_format: "%date% %time% %info.name%_%level_prefix%".to_string(),
+            file_name_format: "%date% %time% %file%.%level_prefix%".to_string(),
 
             render_line: true,
             render_line_extra: true,
@@ -527,6 +583,24 @@ impl Default for RenderConfig {
             render_ui_score: true,
             render_ui_combo: true,
             render_ui_bar: true,
+            xuejiang_sp: false,
+            xuejiang_sp_fake_notes: 305.,
+            xuejiang_sp_fake_bar_seconds: 120.,
+            xuejiang_sp_burst_combo: 240,
+            xuejiang_sp_roll_scale: 0.75,
+            xuejiang_sp_diff_fake: "IN Lv.l2".to_owned(),
+            xuejiang_sp_diff_real: "SP Lv.?".to_owned(),
+            xuejiang_sp_volume_percentile: 0.99,
+            xuejiang_sp_volume_gamma: 1.05,
+            xuejiang_sp_volume_smooth: 0.07,
+            xuejiang_sp_face_hit_start: 170.7692,
+            xuejiang_sp_face_period: 4.1026,
+            xuejiang_sp_face_rounds: 4,
+            xuejiang_sp_face_lead_show: 3.5897,
+            xuejiang_sp_face_lead_roll: 2.8205,
+            xuejiang_sp_face_text_show: "(⊙o⊙)".to_owned(),
+            xuejiang_sp_face_text_roll: "(⊙ω⊙)".to_owned(),
+            xuejiang_sp_face_text_hit: "Ｏ(≧▽≦)Ｏ".to_owned(),
             render_bg: true,
             render_bg_dim: true,
             background_dim: 0.1,
@@ -944,6 +1018,21 @@ fn round_to_step(v: f64, step: f64) -> f64 {
     (v / step).round() * step
 }
 
+/// 「雪降SP」特殊演出的谱面名（`.pez` 包去掉扩展名后的文件名，也是解包目录的目录名）。
+const XUEJIANG_SP_CHART_STEM: &str = "今年も「雪降り、メリクリ」目指して頑張ります！！.100.SP";
+
+/// 判断输入路径是不是「雪降SP」特殊演出的那一份谱面。
+///
+/// 只认路径最后一段的名字：输入可以是 `.pez` 包，也可以是解包出来的目录，两种都认
+/// （目录名本身就是 `XUEJIANG_SP_CHART_STEM`，而包名多一个 `.pez`，所以两者都要比）。
+/// 一致就强制开启该模式，不提供配置项。
+fn is_xuejiang_sp_chart(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
+        return false;
+    };
+    name == XUEJIANG_SP_CHART_STEM || name.strip_suffix(".pez") == Some(XUEJIANG_SP_CHART_STEM)
+}
+
 pub async fn generate_resource(
     is_cli: bool,
     generate_output: bool,
@@ -957,7 +1046,7 @@ pub async fn generate_resource(
         let (args_input, args_output, args_config, args_info) =
             parse_args(std::env::args().collect());
 
-        let config: RenderConfig = if let Some(config) = &args_config {
+        let mut config: RenderConfig = if let Some(config) = &args_config {
             match serde_json::from_str(config) {
                 Ok(config_json) => {
                     eprintln!("Using config from json");
@@ -980,6 +1069,7 @@ pub async fn generate_resource(
         };
 
         let path = args_input.unwrap();
+        config.xuejiang_sp = is_xuejiang_sp_chart(Path::new(&path));
 
         let mut fs = fs::fs_from_file(path.as_ref())?;
 
@@ -992,7 +1082,7 @@ pub async fn generate_resource(
         info.background_dim = config.background_dim;
 
         let output_path = if generate_output {
-            let file_name = generate_filename(&info, &config);
+            let file_name = generate_filename(&info, &config, Some(Path::new(&path)));
 
             let output_path = if let Some(output_string) = args_output {
                 let output_dir = PathBuf::from(output_string);
@@ -1030,7 +1120,8 @@ pub async fn generate_resource(
 
         let fs = fs::fs_from_file(&path)?;
 
-        let config = params.config;
+        let mut config = params.config;
+        config.xuejiang_sp = is_xuejiang_sp_chart(&path);
         let info = params.info;
 
         Ok((fs, output_path, config, info))

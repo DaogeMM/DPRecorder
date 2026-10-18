@@ -183,6 +183,43 @@ export interface RenderConfig {
   renderUiScore: boolean;
   renderUiCombo: boolean;
   renderUiBar: boolean;
+  /* ---------- 「雪降SP」特殊演出的调试参数 ----------
+   * 演出本身由输入谱面的文件名强制开启（不是配置项，这里没有对应的开关），
+   * 下面这些只影响观感，正常出片不用动。 */
+  /** 伪装谱面的音符数：分数按 `combo / 这个数 × 总分` 算 */
+  xuejiangSpFakeNotes: number;
+  /** 伪装阶段进度条按音乐时间匀速走满所需的秒数（120 秒时 240 COMBO 处约 0.72） */
+  xuejiangSpFakeBarSeconds: number;
+  /** 揭开伪装的 COMBO 数 */
+  xuejiangSpBurstCombo: number;
+  /** 分数倒滚窗口的倍率（1 = 滚到下一个音符判定的那一刻） */
+  xuejiangSpRollScale: number;
+  /** 伪装阶段右下角的难度文本 */
+  xuejiangSpDiffFake: string;
+  /** 揭开伪装后右下角的难度文本 */
+  xuejiangSpDiffReal: string;
+  /** 音量进度条的归一化分位（0~1） */
+  xuejiangSpVolumePercentile: number;
+  /** 音量进度条响应的指数（1 = 线性，2 = 平方） */
+  xuejiangSpVolumeGamma: number;
+  /** 音量进度条的平滑时间常数（秒） */
+  xuejiangSpVolumeSmooth: number;
+  /** 连击数换成表情的第一次判定时刻（秒） */
+  xuejiangSpFaceHitStart: number;
+  /** 表情轮次的间隔（秒） */
+  xuejiangSpFacePeriod: number;
+  /** 表情一共几轮（0 = 不显示） */
+  xuejiangSpFaceRounds: number;
+  /** 每轮从「展示」到判定提前多少秒开始 */
+  xuejiangSpFaceLeadShow: number;
+  /** 每轮从「开始滚动」到判定提前多少秒开始 */
+  xuejiangSpFaceLeadRoll: number;
+  /** 音符刚出现时连击数位置的表情 */
+  xuejiangSpFaceTextShow: string;
+  /** 音符开始滚动时连击数位置的表情 */
+  xuejiangSpFaceTextRoll: string;
+  /** 音符被判定时连击数位置的表情 */
+  xuejiangSpFaceTextHit: string;
   renderBg: boolean;
   renderBgDim: boolean;
   /** 背景暗淡：黑色遮罩的不透明度（0~1），覆盖谱面信息里的同名值，默认 0.1 */
@@ -397,7 +434,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   diff: '',
   difficulty: '',
   judgeOffset: 0,
-  fileNameFormat: '%date% %time% %info.name%_%level_prefix%',
+  fileNameFormat: '%date% %time% %file%.%level_prefix%',
   renderLine: true,
   renderLineExtra: true,
   renderNote: true,
@@ -411,6 +448,23 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   renderUiScore: true,
   renderUiCombo: true,
   renderUiBar: true,
+  xuejiangSpFakeNotes: 305,
+  xuejiangSpFakeBarSeconds: 120,
+  xuejiangSpBurstCombo: 240,
+  xuejiangSpRollScale: 0.75,
+  xuejiangSpDiffFake: 'IN Lv.l2',
+  xuejiangSpDiffReal: 'SP Lv.?',
+  xuejiangSpVolumePercentile: 0.99,
+  xuejiangSpVolumeGamma: 1.05,
+  xuejiangSpVolumeSmooth: 0.07,
+  xuejiangSpFaceHitStart: 170.7692,
+  xuejiangSpFacePeriod: 4.1026,
+  xuejiangSpFaceRounds: 4,
+  xuejiangSpFaceLeadShow: 3.5897,
+  xuejiangSpFaceLeadRoll: 2.8205,
+  xuejiangSpFaceTextShow: '(⊙o⊙)',
+  xuejiangSpFaceTextRoll: '(⊙ω⊙)',
+  xuejiangSpFaceTextHit: 'Ｏ(≧▽≦)Ｏ',
   renderBg: true,
   renderBgDim: true,
   backgroundDim: 0.1,

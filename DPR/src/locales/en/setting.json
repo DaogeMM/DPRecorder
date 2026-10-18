@@ -29,6 +29,8 @@
     "preview-fullscreen-tip": "Open the preview / play / offset-tweak window fullscreen. Turn off to run it windowed.",
     "list-expand": "Default Expand Sidebar",
     "list-expand-tip": "Right-click the sidebar to switch at any time",
+    "show-debug": "Show Debug",
+    "show-debug-tip": "Show the \"Chart · Debug\" section at the end of the render page, for tuning the special effect; off by default",
     "high-performance": "High Performance Mode",
     "high-performance-tip": "Let the GPU do as much of the work as possible while rendering: on multi-GPU machines the high-performance (discrete) GPU is preferred, and the vertical flip is done by the GPU instead of a whole CPU pass per frame before encoding. Only affects rendering speed, never the picture; off by default, and with it off everything is exactly as before",
     "strip-width": "Render Panel Width (%)",
