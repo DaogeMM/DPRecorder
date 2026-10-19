@@ -14,6 +14,7 @@ import { formatLvl, useLvlField } from './lvl';
 import type { AppConfig, ChartInfo, FileDropEvent, RenderConfig } from './model';
 import type { WorkingState } from './config/types';
 import { chartSideOf } from './config/chartSide';
+import { jumpToFirstError } from './formError';
 
 import { VForm } from 'vuetify/components';
 
@@ -421,7 +422,10 @@ if (!isString(chartInQuery)) {
 
 const tagEditor = ref(false);
 async function checkInfo() {
-  if (!(await form.value!.validate()).valid) {
+  const { valid, errors } = await form.value!.validate();
+  if (!valid) {
+    // 谱面信息在整页最下面，标红的小字用户看不到：把用户带到出错的控件上再提示
+    toast(jumpToFirstError(errors) ?? t('has-error'), 'error');
     return false;
   }
   // 「偏移」与「预览开始 / 结束」是配置项（`RenderConfig`，见 ../model.ts）：
@@ -434,8 +438,7 @@ async function checkInfo() {
 }
 
 async function saveInfo() {
-  let check = checkInfo();
-  if (!check) return;
+  if (!(await checkInfo())) return;
   let outputPath = await dialog.save({
     title: t('phira-chart-info'),
     filters: [
@@ -556,7 +559,8 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
               <v-text-field type="text" density="compact" hide-details="auto" v-model="chartInfo.diff"></v-text-field>
             </CfgField>
             <CfgField :label="t('info.lvl')">
-              <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" v-model="lvlText" @blur="normalizeLvl"></v-text-field>
+              <!-- 定数可以是 0 / 空（官谱里常见 `Lv.0.0`、也可能没写）：只拦负数和乱写，不拦空 -->
+              <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrNull]" v-model="lvlText" @blur="normalizeLvl"></v-text-field>
             </CfgField>
             <CfgField :label="t('info.difficulty')">
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.difficulty"></v-textarea>

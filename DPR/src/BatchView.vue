@@ -13,6 +13,7 @@ import { formatLvl, formatLvlInText, useLvlField } from './lvl';
 import { DEFAULT_RENDER_CONFIG, type ChartInfo, type RenderConfig, type RenderChart, type Preset, type FileDropEvent, type Task } from './model';
 import { sameRenderConfig } from './config/useRenderConfig';
 import { chartSideOf } from './config/chartSide';
+import { jumpToFirstError } from './formError';
 import { finishPageLoad } from './pageLoad';
 import router from './router';
 import { AnsiUp } from 'ansi_up';
@@ -315,8 +316,13 @@ async function previewChart(chart: RenderChart) {
 async function checkInfo(chartInfo: ChartInfo) {
   // 表单只在谱面信息弹窗里（弹窗没打开过时 form.value 是 undefined）——
   // 以前这里是 `form.value!.validate()`，弹窗没打开就直接抛错。
-  if (form.value && !(await form.value.validate()).valid) {
-    return false;
+  if (form.value) {
+    const { valid, errors } = await form.value.validate();
+    if (!valid) {
+      // 标红的小字在弹窗底部，用户看不到：把弹窗里的控件滚进视野再提示
+      toast(jumpToFirstError(errors) ?? t('has-error'), 'error');
+      return false;
+    }
   }
   // 「预览开始 / 结束时间」与「偏移」现在是配置项（`RenderConfig`），
   // 15 秒窗口那条校验搬到了 `buildParams()`（跟着配置走，见那边的注释），
@@ -843,7 +849,8 @@ function filterText(
                 <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="editingChart.chartInfo.difficulty"></v-textarea>
               </CfgField>
               <CfgField :label="t('info.lvl')">
-                <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" v-model="lvlText" @blur="normalizeLvl"></v-text-field>
+                <!-- 定数可以是 0 / 空（官谱里常见 `Lv.0.0`、也可能没写）：只拦负数和乱写，不拦空 -->
+                <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrNull]" v-model="lvlText" @blur="normalizeLvl"></v-text-field>
               </CfgField>
             </div>
             <!-- 简介 与 Tip：都是 `full` 条目 ⇒ 单开一个网格，`:has()` 规则会去掉栏间竖线 -->

@@ -29,6 +29,7 @@ import { VForm } from 'vuetify/components';
 import { RULES, toast, anyFilter, toastError } from '../common';
 import { DEFAULT_RENDER_CONFIG, type Preset, type RenderConfig } from '../model';
 import { useRenderConfig } from '../config/useRenderConfig';
+import { jumpToFirstError } from '../formError';
 import type { WorkingState } from '../config/types';
 
 import CfgField from './CfgField.vue';
@@ -276,7 +277,10 @@ refreshRespacks();
 //   - 预览片段窗口不超过 15 秒（预览开始 / 结束时间现在是配置项，校验自然也该跟着走）
 // 其余全部交给规格表生成的 buildConfigFromFields。
 async function buildConfig(): Promise<RenderConfig | null> {
-  if (!(await form.value!.validate()).valid) {
+  const { valid, errors } = await form.value!.validate();
+  if (!valid) {
+    // 渲染参数表很长：不把用户带到出错的那一栏，按钮看起来就像「按了没反应」
+    jumpToFirstError(errors);
     toast(t('has-error'), 'error');
     return null;
   }

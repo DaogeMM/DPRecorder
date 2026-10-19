@@ -2,7 +2,7 @@ use crate::{
     render::{build_player, generate_resource},
     ASSET_PATH,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use macroquad::prelude::*;
 use dps::{
     config::{Config, Mods},
@@ -59,7 +59,9 @@ impl Scene for BaseScene {
 }
 
 pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
-    let (fs, _, config, info) = generate_resource(cmd, false).await?;
+    let (fs, _, config, info) = generate_resource(cmd, false)
+        .await
+        .context("failed to prepare preview resources")?;
 
     // 分屏游玩时这个进程是主窗口还是副窗口；不是分屏就是 `None`。
     let split = crate::split::Role::from_env();
@@ -147,7 +149,8 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
                     None,
                     None,
                 )
-                .await?,
+                .await
+                .context("failed to load the chart")?,
             ))),
             false,
             Rc::clone(&offset),
@@ -155,7 +158,8 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
         ctm,
         None,
     )
-    .await?;
+    .await
+    .context("failed to create the preview window")?;
 
     let mut frame_times: VecDeque<(f64, u32)> = VecDeque::new(); // (time, fps)
     let mut fps_last_update_sec: u32 = 0;

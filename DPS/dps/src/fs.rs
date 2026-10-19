@@ -145,7 +145,9 @@ impl FileSystem for ZipFileSystem {
         let path = concat_string!(self.1, path);
         spawn_task(move || {
             let mut zip = arc.lock().unwrap();
-            let mut entry = zip.by_name(&path)?;
+            // 缺文件时 zip 只回一句「specified file not found in archive」，看不出是哪个路径；
+            // 这里带上实际查询的名字，否则压缩包内缺文件的报错没法定位。
+            let mut entry = zip.by_name(&path).with_context(|| format!("Failed to find {path} in archive"))?;
             let mut res = Vec::new();
             entry.read_to_end(&mut res)?;
             Ok(res)
