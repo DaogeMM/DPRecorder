@@ -199,6 +199,19 @@ impl NoteStyle {
     }
 }
 
+/// 「报应SP」界面用的手绘贴图：数字 0-9、`COMBO`、`LV.`、`SP`、`?`、`WOW!` 与曲名 logo。
+/// 只有带这批文件的资源包才有，其余包为 `None`，界面回退到普通文字。
+#[derive(Clone)]
+pub struct DigitStyle {
+    pub digits: [SafeTexture; 10],
+    pub combo: SafeTexture,
+    pub lv: SafeTexture,
+    pub sp: SafeTexture,
+    pub question: SafeTexture,
+    pub wow: SafeTexture,
+    pub title: SafeTexture,
+}
+
 pub struct ResourcePack {
     pub info: ResPackInfo,
     pub note_style: NoteStyle,
@@ -208,6 +221,7 @@ pub struct ResourcePack {
     pub sfx_flick: AudioClip,
     pub endings: [AudioClip; 8],
     pub hit_fx: SafeTexture,
+    pub digit_style: Option<DigitStyle>,
 }
 
 impl ResourcePack {
@@ -268,6 +282,30 @@ impl ResourcePack {
             get_body(&mut note_style_mh);
         }
         let hit_fx = image::load_from_memory(&fs.load_file("hit_fx.png").await.context("Missing hit_fx.png")?)?.into();
+
+        // 可选贴图：文件不存在（或不是图片）时返回 None，不当作错误
+        async fn load_tex_opt(fs: &mut dyn FileSystem, path: &str) -> Option<SafeTexture> {
+            let data = fs.load_file(path).await.ok()?;
+            let img = image::load_from_memory(&data).ok()?;
+            Some(SafeTexture::from(img).with_filter(GL_LINEAR))
+        }
+        let mut digits: [Option<SafeTexture>; 10] = Default::default();
+        for (index, slot) in digits.iter_mut().enumerate() {
+            *slot = load_tex_opt(fs, &format!("digits/Result_4.1_{}.png", index)).await;
+        }
+        let digit_style = match (
+            load_tex_opt(fs, "digits/Result_4.1_combo.png").await,
+            load_tex_opt(fs, "digits/Result_4.1_lv.png").await,
+            load_tex_opt(fs, "digits/Result_4.1_sp.png").await,
+            load_tex_opt(fs, "digits/Result_4.1_question_mark.png").await,
+            load_tex_opt(fs, "digits/Result_4.1_wow.png").await,
+            load_tex_opt(fs, "title/retribution sp.png").await,
+        ) {
+            (Some(combo), Some(lv), Some(sp), Some(question), Some(wow), Some(title)) if digits.iter().all(Option::is_some) => {
+                Some(DigitStyle { digits: digits.map(|it| it.unwrap()), combo, lv, sp, question, wow, title })
+            }
+            _ => None,
+        };
 
         macro_rules! load_clip {
             ($path:literal) => {
@@ -360,6 +398,7 @@ impl ResourcePack {
                 load_ending!(""),
             ],
             hit_fx,
+            digit_style,
         })
     }
 }

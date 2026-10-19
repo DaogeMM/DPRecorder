@@ -1,0 +1,37 @@
+# 资源包信息（当前格式，字段含义见 DPS/dps/src/core/resource.rs 的 ResPackInfo）
+# 资源包名称
+name: Phigros 1.0版本初期
+# 资源包作者
+author: PigeonGames
+# 资源包介绍
+description: 还原依据为 phigros Glaciaxion 异像
+# 打击特效的帧数：横 5 帧、竖 6 帧（hit_fx.png 为 1280×1536，单帧 256×256）
+hitFx: [5, 6]
+# 打击特效持续时间（秒）
+hitFxDuration: 0.5
+# 打击特效缩放比例
+hitFxScale: 1.8
+# 打击特效是否随 Note 旋转
+hitFxRotate: true
+# 打击特效是否按判定线颜色着色
+hitFxTinted: true
+# 打击时隐藏方形粒子
+hideParticles: true
+# Hold 贴图从上到下依次是尾部、中间和头部，这里给尾部与头部的高度（像素）
+# hold.png 高 150 ⇒ 尾部 50、头部 50、中间 50
+holdAtlas: [50, 50]
+# 多押 Hold 同上；hold_mh.png 高 193 ⇒ 尾部 50、头部 95、中间 48
+holdAtlasMH: [50, 95]
+# Hold 触线后不保留头部
+holdKeepHead: false
+# Hold 中间部分不采用重复式拉伸
+holdRepeat: false
+# Hold 头尾不与中间重叠
+holdCompact: false
+# 判定线颜色（AP 为 0xFFEB9D、FC 为 0xB9E2FF）：旧版的 colorPerfect / colorGood 已拆成「判定线」与「打击特效」两组
+lineTinted: true
+colorPerfectLine: [1.0, 0.922, 0.616, 1.0]
+colorGoodLine: [0.725, 0.886, 1.0, 1.0]
+# 打击特效颜色与判定线同色
+colorPerfectFx: [1.0, 0.922, 0.616, 1.0]
+colorGoodFx: [0.725, 0.886, 1.0, 1.0]

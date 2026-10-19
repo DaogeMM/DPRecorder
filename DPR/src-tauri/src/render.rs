@@ -143,6 +143,33 @@ pub struct RenderConfig {
     pub render_ui_score: bool,
     pub render_ui_combo: bool,
     pub render_ui_bar: bool,
+    /// 「报应SP」特殊演出：由输入谱面的文件名强制开启（见 `is_baoying_sp_chart`），
+    /// 不是配置项 —— 前端不传，配置里写了也会在 `generate_resource` 里按文件名覆盖。
+    /// 开启时界面上的分数、连击数、难度与曲名改用 `RetriSP` 资源包里的手绘贴图。
+    pub baoying_sp: bool,
+    /// 「报应SP」界面贴图的大小、偏移与间距：左上角 WOW!、左下角曲名、右上角分数、右下角难度
+    pub baoying_sp_wow_height: f32,
+    pub baoying_sp_wow_offset_x: f32,
+    pub baoying_sp_wow_offset_y: f32,
+    pub baoying_sp_title_height: f32,
+    pub baoying_sp_title_offset_y: f32,
+    pub baoying_sp_score_height: f32,
+    pub baoying_sp_score_gap: f32,
+    pub baoying_sp_score_squeeze: f32,
+    pub baoying_sp_combo_height: f32,
+    pub baoying_sp_combo_gap: f32,
+    pub baoying_sp_combo_squeeze: f32,
+    pub baoying_sp_combo_label_height: f32,
+    pub baoying_sp_combo_label_offset: f32,
+    pub baoying_sp_diff_height: f32,
+    pub baoying_sp_diff_gap_sp_lv: f32,
+    pub baoying_sp_diff_gap_lv_question: f32,
+    pub baoying_sp_diff_squeeze: f32,
+    pub baoying_sp_diff_offset_y: f32,
+    pub baoying_sp_digits_rtl: bool,
+    /// 「报应SP」打击特效：贴图缩放（小于等于 0 表示沿用资源包里的值）与粒子数（0 表示不画粒子）
+    pub baoying_sp_hit_fx_scale: f32,
+    pub baoying_sp_particle_count: u32,
     /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启（见 `is_xuejiang_sp_chart`），
     /// 不是配置项 —— 前端不传，配置文件里写了也会在 `generate_resource` 里按文件名覆盖。
     /// `to_config()` 把它透传成 `dps::config::Config::xuejiang_sp_mode`。
@@ -408,6 +435,28 @@ impl RenderConfig {
             render_ui_score: self.render_ui_score,
             render_ui_combo: self.render_ui_combo,
             render_ui_bar: self.render_ui_bar,
+            baoying_sp_mode: self.baoying_sp,
+            baoying_sp_wow_height: self.baoying_sp_wow_height,
+            baoying_sp_wow_offset_x: self.baoying_sp_wow_offset_x,
+            baoying_sp_wow_offset_y: self.baoying_sp_wow_offset_y,
+            baoying_sp_title_height: self.baoying_sp_title_height,
+            baoying_sp_title_offset_y: self.baoying_sp_title_offset_y,
+            baoying_sp_score_height: self.baoying_sp_score_height,
+            baoying_sp_score_gap: self.baoying_sp_score_gap,
+            baoying_sp_score_squeeze: self.baoying_sp_score_squeeze,
+            baoying_sp_combo_height: self.baoying_sp_combo_height,
+            baoying_sp_combo_gap: self.baoying_sp_combo_gap,
+            baoying_sp_combo_squeeze: self.baoying_sp_combo_squeeze,
+            baoying_sp_combo_label_height: self.baoying_sp_combo_label_height,
+            baoying_sp_combo_label_offset: self.baoying_sp_combo_label_offset,
+            baoying_sp_diff_height: self.baoying_sp_diff_height,
+            baoying_sp_diff_gap_sp_lv: self.baoying_sp_diff_gap_sp_lv,
+            baoying_sp_diff_gap_lv_question: self.baoying_sp_diff_gap_lv_question,
+            baoying_sp_diff_squeeze: self.baoying_sp_diff_squeeze,
+            baoying_sp_diff_offset_y: self.baoying_sp_diff_offset_y,
+            baoying_sp_digits_rtl: self.baoying_sp_digits_rtl,
+            baoying_sp_hit_fx_scale: self.baoying_sp_hit_fx_scale,
+            baoying_sp_particle_count: self.baoying_sp_particle_count,
             xuejiang_sp_mode: self.xuejiang_sp,
             xuejiang_sp_fake_notes: self.xuejiang_sp_fake_notes,
             xuejiang_sp_fake_bar_seconds: self.xuejiang_sp_fake_bar_seconds,
@@ -568,7 +617,7 @@ impl Default for RenderConfig {
             difficulty: "".to_string(),
             player_avatar: None,
             judge_offset: 0.,
-            file_name_format: "%date% %time% %file%.%level_prefix%".to_string(),
+            file_name_format: "%date% %time% %file%".to_string(),
 
             render_line: true,
             render_line_extra: true,
@@ -583,12 +632,34 @@ impl Default for RenderConfig {
             render_ui_score: true,
             render_ui_combo: true,
             render_ui_bar: true,
+            baoying_sp: false,
+            baoying_sp_wow_height: 0.043,
+            baoying_sp_wow_offset_x: 0.02,
+            baoying_sp_wow_offset_y: 0.005,
+            baoying_sp_title_height: 0.05,
+            baoying_sp_title_offset_y: 0.,
+            baoying_sp_score_height: 0.05,
+            baoying_sp_score_gap: 0.006,
+            baoying_sp_score_squeeze: 1.23,
+            baoying_sp_combo_height: 0.055,
+            baoying_sp_combo_gap: 0.,
+            baoying_sp_combo_squeeze: 1.23,
+            baoying_sp_combo_label_height: 0.06,
+            baoying_sp_combo_label_offset: 0.01,
+            baoying_sp_diff_height: 0.05,
+            baoying_sp_diff_gap_sp_lv: 0.08,
+            baoying_sp_diff_gap_lv_question: 0.02,
+            baoying_sp_diff_squeeze: 1.2,
+            baoying_sp_diff_offset_y: 0.,
+            baoying_sp_digits_rtl: true,
+            baoying_sp_hit_fx_scale: 0.5,
+            baoying_sp_particle_count: 1,
             xuejiang_sp: false,
             xuejiang_sp_fake_notes: 305.,
             xuejiang_sp_fake_bar_seconds: 120.,
             xuejiang_sp_burst_combo: 240,
             xuejiang_sp_roll_scale: 0.75,
-            xuejiang_sp_diff_fake: "IN Lv.l2".to_owned(),
+            xuejiang_sp_diff_fake: "IN Lv.I2".to_owned(),
             xuejiang_sp_diff_real: "SP Lv.?".to_owned(),
             xuejiang_sp_volume_percentile: 0.99,
             xuejiang_sp_volume_gamma: 1.05,
@@ -1027,10 +1098,37 @@ const XUEJIANG_SP_CHART_STEM: &str = "今年も「雪降り、メリクリ」目
 /// （目录名本身就是 `XUEJIANG_SP_CHART_STEM`，而包名多一个 `.pez`，所以两者都要比）。
 /// 一致就强制开启该模式，不提供配置项。
 fn is_xuejiang_sp_chart(path: &Path) -> bool {
+    matches_chart_stem(path, XUEJIANG_SP_CHART_STEM)
+}
+
+/// 「报应SP」特殊演出的谱面名（同样既可能是 `.pez`，也可能是解包目录）。
+const BAOYING_SP_CHART_STEM: &str = "Retribution~CycleofRedemption~.100.SP";
+
+/// 判断输入路径是不是「报应SP」特殊演出的那一份谱面。判定规则同 `is_xuejiang_sp_chart`。
+fn is_baoying_sp_chart(path: &Path) -> bool {
+    matches_chart_stem(path, BAOYING_SP_CHART_STEM)
+}
+
+/// 路径最后一段是否等于 `stem`，或者等于 `stem.pez`。
+fn matches_chart_stem(path: &Path, stem: &str) -> bool {
     let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
         return false;
     };
-    name == XUEJIANG_SP_CHART_STEM || name.strip_suffix(".pez") == Some(XUEJIANG_SP_CHART_STEM)
+    name == stem || name.strip_suffix(".pez") == Some(stem)
+}
+
+/// 「报应SP」谱面要用的资源包路径。
+///
+/// 这个演出的手绘数字、曲名 logo 与按键贴图都在 `RetriSP` 包里，跟着配置里选的材质包走会缺图，
+/// 所以该谱面直接钉在 `RetriSP` 上；优先用打包好的 zip，没有就指向解包目录。
+fn baoying_sp_respack_path() -> Option<String> {
+    let root = ASSET_PATH.get()?.join("respack");
+    let zip = root.join("RetriSP.zip");
+    if zip.exists() {
+        return Some(zip.to_string_lossy().into_owned());
+    }
+    let dir = root.join("RetriSP");
+    dir.exists().then(|| dir.to_string_lossy().into_owned())
 }
 
 pub async fn generate_resource(
@@ -1070,6 +1168,10 @@ pub async fn generate_resource(
 
         let path = args_input.unwrap();
         config.xuejiang_sp = is_xuejiang_sp_chart(Path::new(&path));
+        if is_baoying_sp_chart(Path::new(&path)) {
+            config.baoying_sp = true;
+            config.res_pack_path = baoying_sp_respack_path();
+        }
 
         let mut fs = fs::fs_from_file(path.as_ref())?;
 
@@ -1122,6 +1224,10 @@ pub async fn generate_resource(
 
         let mut config = params.config;
         config.xuejiang_sp = is_xuejiang_sp_chart(&path);
+        if is_baoying_sp_chart(&path) {
+            config.baoying_sp = true;
+            config.res_pack_path = baoying_sp_respack_path();
+        }
         let info = params.info;
 
         Ok((fs, output_path, config, info))

@@ -172,6 +172,51 @@ pub struct Config {
     pub xuejiang_sp_face_text_roll: String,
     /// 「雪降SP」特殊演出：音符被判定时连击数位置的表情
     pub xuejiang_sp_face_text_hit: String,
+    /// 「报应SP」界面：分数、连击数、难度、曲名改用资源包里的手绘贴图。
+    /// 由输入谱面文件名强制开启，不暴露成配置项。
+    pub baoying_sp_mode: bool,
+    /// 「报应SP」界面：左上角 WOW! 贴图的高度（界面单位，会再乘界面缩放）
+    pub baoying_sp_wow_height: f32,
+    /// 「报应SP」界面：WOW! 贴图向右的偏移（正值右移）
+    pub baoying_sp_wow_offset_x: f32,
+    /// 「报应SP」界面：WOW! 贴图向下的偏移（正值下移）
+    pub baoying_sp_wow_offset_y: f32,
+    /// 「报应SP」界面：左下角曲名贴图的高度
+    pub baoying_sp_title_height: f32,
+    /// 「报应SP」界面：曲名贴图向下的偏移（正值下移）
+    pub baoying_sp_title_offset_y: f32,
+    /// 「报应SP」界面：右上角分数单个数字的高度
+    pub baoying_sp_score_height: f32,
+    /// 「报应SP」界面：右上角分数相邻数字之间的间距
+    pub baoying_sp_score_gap: f32,
+    /// 「报应SP」界面：分数数字的横向挤压倍率（1 为原始比例，小于 1 变窄）
+    pub baoying_sp_score_squeeze: f32,
+    /// 「报应SP」界面：中上连击数单个数字的高度
+    pub baoying_sp_combo_height: f32,
+    /// 「报应SP」界面：中上连击数相邻数字之间的间距
+    pub baoying_sp_combo_gap: f32,
+    /// 「报应SP」界面：连击数字的横向挤压倍率
+    pub baoying_sp_combo_squeeze: f32,
+    /// 「报应SP」界面：连击数下方 `COMBO` 贴图的高度
+    pub baoying_sp_combo_label_height: f32,
+    /// 「报应SP」界面：`COMBO` 贴图与连击数字之间的间距
+    pub baoying_sp_combo_label_offset: f32,
+    /// 「报应SP」界面：右下角 `SP LV.?` 贴图的高度
+    pub baoying_sp_diff_height: f32,
+    /// 「报应SP」界面：`SP` 与 `LV.` 之间的间距
+    pub baoying_sp_diff_gap_sp_lv: f32,
+    /// 「报应SP」界面：`LV.` 与 `?` 之间的间距
+    pub baoying_sp_diff_gap_lv_question: f32,
+    /// 「报应SP」界面：难度贴图的横向挤压倍率
+    pub baoying_sp_diff_squeeze: f32,
+    /// 「报应SP」界面：难度贴图向下的偏移（正值下移）
+    pub baoying_sp_diff_offset_y: f32,
+    /// 「报应SP」界面：分数与连击数从右往左排（实机上这串数字是倒着写的）
+    pub baoying_sp_digits_rtl: bool,
+    /// 「报应SP」打击特效：贴图缩放的覆盖值（小于等于 0 表示沿用资源包里的设置）
+    pub baoying_sp_hit_fx_scale: f32,
+    /// 「报应SP」打击特效：粒子数（0 表示不画粒子）
+    pub baoying_sp_particle_count: u32,
     pub render_bg: bool,
     pub render_bg_dim: bool,
     /// Phigros 4.0 `blockAreaList` 剧情遮挡区域（默认开启）
@@ -507,7 +552,7 @@ impl Default for Config {
             xuejiang_sp_fake_bar_seconds: 120.,
             xuejiang_sp_burst_combo: 240,
             xuejiang_sp_roll_scale: 0.75,
-            xuejiang_sp_diff_fake: "IN Lv.l2".to_owned(),
+            xuejiang_sp_diff_fake: "IN Lv.I2".to_owned(),
             xuejiang_sp_diff_real: "SP Lv.?".to_owned(),
             xuejiang_sp_volume_percentile: 0.99,
             xuejiang_sp_volume_gamma: 1.05,
@@ -520,6 +565,28 @@ impl Default for Config {
             xuejiang_sp_face_text_show: "(⊙o⊙)".to_owned(),
             xuejiang_sp_face_text_roll: "(⊙ω⊙)".to_owned(),
             xuejiang_sp_face_text_hit: "Ｏ(≧▽≦)Ｏ".to_owned(),
+            baoying_sp_mode: false,
+            baoying_sp_wow_height: 0.043,
+            baoying_sp_wow_offset_x: 0.02,
+            baoying_sp_wow_offset_y: 0.005,
+            baoying_sp_title_height: 0.05,
+            baoying_sp_title_offset_y: 0.,
+            baoying_sp_score_height: 0.05,
+            baoying_sp_score_gap: 0.006,
+            baoying_sp_score_squeeze: 1.23,
+            baoying_sp_combo_height: 0.055,
+            baoying_sp_combo_gap: 0.,
+            baoying_sp_combo_squeeze: 1.23,
+            baoying_sp_combo_label_height: 0.06,
+            baoying_sp_combo_label_offset: 0.01,
+            baoying_sp_diff_height: 0.05,
+            baoying_sp_diff_gap_sp_lv: 0.08,
+            baoying_sp_diff_gap_lv_question: 0.02,
+            baoying_sp_diff_squeeze: 1.2,
+            baoying_sp_diff_offset_y: 0.,
+            baoying_sp_digits_rtl: true,
+            baoying_sp_hit_fx_scale: 0.5,
+            baoying_sp_particle_count: 1,
             render_bg: true,
             render_bg_dim: true,
             render_block_area: true,

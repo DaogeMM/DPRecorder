@@ -12,8 +12,8 @@ use super::{
 use crate::{
     bin::BinaryReader,
     config::{Config, Mods},
-    core::{BUFFER_SIZE, BadNote, Chart, ChartExtra, Effect, Point, Resource, UIElement},
-    ext::{RectExt, SafeTexture, draw_text_aligned, draw_text_aligned_opt_width, ease_in_out_quartic, get_latency, parse_time, push_frame_time, screen_aspect, semi_white, validate_combo},
+    core::{BUFFER_SIZE, BadNote, Chart, ChartExtra, DigitStyle, Effect, Point, Resource, UIElement},
+    ext::{RectExt, SafeTexture, ScaleType, draw_text_aligned, draw_text_aligned_opt_width, ease_in_out_quartic, get_latency, parse_time, push_frame_time, screen_aspect, semi_white, validate_combo},
     fs::FileSystem,
     gyro::GYRO,
     info::{ChartFormat, ChartInfo},
@@ -606,6 +606,15 @@ impl GameScene {
             (Vec::new(), 1.)
         };
 
+        // 「报应SP」打击特效：用配置里的值覆盖资源包自带的设置（0 或负数表示沿用资源包）
+        if res.config.baoying_sp_mode {
+            if res.config.baoying_sp_hit_fx_scale > 0. {
+                res.res_pack.info.hit_fx_scale = res.config.baoying_sp_hit_fx_scale;
+            }
+            res.res_pack.info.hide_particles = res.config.baoying_sp_particle_count == 0;
+            res.res_pack.info.particle_count = res.config.baoying_sp_particle_count as usize;
+        }
+
         Ok(Self {
             should_exit: false,
             next_scene: None,
@@ -791,7 +800,51 @@ impl GameScene {
         })
     }
 
-    /// 「雪降SP」特殊演出这一帧要显示什么；没开这个模式就返回 `None`（一切按正常谱面画）。
+    /// 「报应SP」界面：把一段数字按资源包里的手绘数字贴图画出来。
+    ///
+    /// - `x` / `y` 是整串数字的锚点，`anchor` 的取值与文字绘制一致（1.0 表示右对齐 / 上对齐）
+    /// - `height` 是单个数字的高度（界面单位），宽度按各自贴图的比例算
+    /// - `gap` 是相邻两个数字之间额外留的间距
+    /// - `right_to_left` 为真时从右往左排（实机上这串数字就是倒着写的）
+    /// - 只画数字字符，其它字符直接跳过
+    fn draw_digit_text(
+        ui: &mut Ui,
+        style: &DigitStyle,
+        text: &str,
+        x: f32,
+        y: f32,
+        anchor: (f32, f32),
+        height: f32,
+        gap: f32,
+        squeeze: f32,
+        right_to_left: bool,
+        color: Color,
+    ) {
+        let width_of = |digit: usize| height * style.digits[digit].width() / style.digits[digit].height() * squeeze;
+        let digits: Vec<usize> = text.chars().filter_map(|ch| ch.to_digit(10)).map(|it| it as usize).collect();
+        let gap = gap.max(0.);
+        let mut total = 0.;
+        for digit in &digits {
+            total += width_of(*digit);
+        }
+        total += gap * digits.len().saturating_sub(1) as f32;
+        let left = x - total * anchor.0;
+        let cy = y - height * anchor.1;
+        let mut offset = 0.;
+        for digit in digits {
+            let width = width_of(digit);
+            // 倒着写：串首那个数字落在整串的最右边，其余依次向左排
+            let gx = match right_to_left {
+                true => left + total - offset - width,
+                false => left + offset,
+            };
+            let rect = Rect::new(gx, cy, width, height);
+            ui.fill_rect(rect, (*style.digits[digit], rect, ScaleType::Fit, color));
+            offset += width + gap;
+        }
+    }
+
+    /// 「报应SP」特殊演出这一帧要显示什么；没开这个模式就返回 `None`（一切按正常谱面画）。
     ///
     /// 三个阶段：
     /// - 揭开伪装的 COMBO 之前：分数按伪装音符数折算，难度文本伪装成低难度，
@@ -887,6 +940,8 @@ impl GameScene {
         // 「雪降SP」特殊演出这一帧的伪装值；必须在借用 `res` 之前算好（它要读 `res` 和 `judge`）
         let xuejiang_sp = self.xuejiang_sp_frame();
         let res = &mut self.res;
+        // 「报应SP」界面的手绘贴图；模式没开或资源包里没有这批文件时为 None，回退到普通文字
+        let baoying = res.res_pack.digit_style.clone().filter(|_| res.config.baoying_sp_mode);
         let aspect_ratio = res.aspect_ratio;
         let screen_aspect = screen_aspect();
         let scale_ratio = 1.777777;
@@ -925,18 +980,18 @@ impl GameScene {
             ui.fill_circle(pause_center.x, pause_center.y, 0.05 * scale_ratio, Color::new(1., 1., 1., 0.5));
         }
 
-        let score = match xuejiang_sp.and_then(|it| it.score) {
+        let score_value = match xuejiang_sp.and_then(|it| it.score) {
             Some(score) => score,
             None => (self.judge.score() / 1_000_000. * res.info.score_total as f64).round() as u32,
         };
         let score = if res.config.roman {
-            Self::int_to_roman(score)
+            Self::int_to_roman(score_value)
         } else if res.config.chinese {
-            Self::int_to_chinese(score)
+            Self::int_to_chinese(score_value)
         }
         else {
             let width = res.info.score_total.to_string().len();
-            format!("{:0>width$}", score, width = width)
+            format!("{:0>width$}", score_value, width = width)
         };
         let score_top = top + eps * 2.8125 - (1. - p) * 0.4;
         let score_right = aspect_ratio - margin + 0.001;
@@ -950,12 +1005,34 @@ impl GameScene {
         }
         self.chart.with_element(ui, res, UIElement::Score, Some((score_right, score_top)), Some((score_right, score_top)), |ui, color| {
             if res.config.render_ui_score {
-                ui.text(score)
-                    .pos(score_right, score_top)
-                    .anchor(1., 0.)
-                    .size(text_size)
-                    .color(Color { a: color.a * c.a, ..color })
-                    .draw();
+                match &baoying {
+                    // 「报应SP」：分数用资源包里的手绘数字贴图，位数与文字版本一致（按总分位数补零）
+                    Some(style) => {
+                        let width = res.info.score_total.to_string().len();
+                        let text = format!("{:0>width$}", score_value, width = width);
+                        Self::draw_digit_text(
+                            ui,
+                            style,
+                            &text,
+                            score_right,
+                            score_top,
+                            (1., 0.),
+                            res.config.baoying_sp_score_height * scale_ratio,
+                            res.config.baoying_sp_score_gap * scale_ratio,
+                            res.config.baoying_sp_score_squeeze,
+                            res.config.baoying_sp_digits_rtl,
+                            Color { a: color.a * c.a, ..color },
+                        );
+                    }
+                    None => {
+                        ui.text(score)
+                            .pos(score_right, score_top)
+                            .anchor(1., 0.)
+                            .size(text_size)
+                            .color(Color { a: color.a * c.a, ..color })
+                            .draw();
+                    }
+                }
             }
             if res.config.show_acc {
                 ui.text(format!("{:05.2}%", self.judge.real_time_accuracy() * 100.))
@@ -968,9 +1045,19 @@ impl GameScene {
         });
         if res.config.render_ui_pause {
             self.chart.with_element(ui, res, UIElement::Pause, Some((pause_center.x - pause_w * 1.5, pause_center.y - pause_h * 0.5)), Some((pause_center.x - pause_w * 1.5, pause_center.y - pause_h * 0.5)), |ui, color| {
+                let c = Color { a: color.a * c.a, ..color };
+                // 「报应SP」：左上角原本的暂停图标换成手写的 WOW!（这个位置在实机上是这张图）
+                if let Some(style) = &baoying {
+                    let x = pause_center.x - pause_w * 0.5 + res.config.baoying_sp_wow_offset_x * scale_ratio;
+                    let y = pause_center.y - pause_h * 0.5 + res.config.baoying_sp_wow_offset_y * scale_ratio;
+                    let h = res.config.baoying_sp_wow_height * scale_ratio;
+                    let w = h * style.wow.width() / style.wow.height();
+                    let rect = Rect::new(x, y - h * 0.3, w, h);
+                    ui.fill_rect(rect, (*style.wow, rect, ScaleType::Fit, c));
+                    return;
+                }
                 let mut r = Rect::new(pause_center.x - pause_w / 2., pause_center.y - pause_h / 2., pause_w, pause_h);
                 //let ct = pause_center.coords;
-                let c = Color { a: color.a * c.a, ..color };
                 
                 r.x -= pause_w;
                 ui.fill_rect(r, c);
@@ -981,50 +1068,79 @@ impl GameScene {
         // 「雪降SP」特殊演出：这几轮把连击数换成表情，表情不受「显示连击数」开关影响
         let face = xuejiang_sp.and_then(|it| it.face);
         if (self.judge.combo() >= 3 && res.config.render_ui_combo) || face.is_some() {
-            let combo = match face {
-                Some(XuejiangSpFace::Show) => res.config.xuejiang_sp_face_text_show.clone(),
-                Some(XuejiangSpFace::Roll) => res.config.xuejiang_sp_face_text_roll.clone(),
-                Some(XuejiangSpFace::Hit) => res.config.xuejiang_sp_face_text_hit.clone(),
-                None => {
-                    if res.config.roman {
-                        Self::int_to_roman(self.judge.combo())
-                    } else if res.config.chinese {
-                        Self::int_to_chinese(self.judge.combo())
-                    } else {
-                        self.judge.combo().to_string()
+            if let Some(style) = &baoying {
+                // 「报应SP」：连击数用手绘数字贴图，下面那行字也换成资源包里的贴图。
+                // 数字与标签画在同一个 ComboNumber 闭包里，这样两者共用同一份判定线变换
+                let combo_number = self.judge.combo();
+                let combo_y = top + eps * 5.4 - (1. - p) * 0.4;
+                let digit_h = res.config.baoying_sp_combo_height * scale_ratio;
+                let label_h = res.config.baoying_sp_combo_label_height * scale_ratio;
+                self.chart.with_element(ui, res, UIElement::ComboNumber, Some((0., combo_y)), Some((0., combo_y)), |ui, color| {
+                    let color = Color { a: color.a * c.a, ..color };
+                    Self::draw_digit_text(
+                        ui,
+                        style,
+                        &combo_number.to_string(),
+                        0.,
+                        combo_y,
+                        (0.5, 0.5),
+                        digit_h,
+                        res.config.baoying_sp_combo_gap * scale_ratio,
+                        res.config.baoying_sp_combo_squeeze,
+                        res.config.baoying_sp_digits_rtl,
+                        color,
+                    );
+                    let label_w = label_h * style.combo.width() / style.combo.height();
+                    let label_y = combo_y + digit_h * 0.5 + res.config.baoying_sp_combo_label_offset * scale_ratio;
+                    let rect = Rect::new(-label_w / 2., label_y, label_w, label_h);
+                    ui.fill_rect(rect, (*style.combo, rect, ScaleType::Fit, color));
+                });
+            } else {
+                let combo = match face {
+                    Some(XuejiangSpFace::Show) => res.config.xuejiang_sp_face_text_show.clone(),
+                    Some(XuejiangSpFace::Roll) => res.config.xuejiang_sp_face_text_roll.clone(),
+                    Some(XuejiangSpFace::Hit) => res.config.xuejiang_sp_face_text_hit.clone(),
+                    None => {
+                        if res.config.roman {
+                            Self::int_to_roman(self.judge.combo())
+                        } else if res.config.chinese {
+                            Self::int_to_chinese(self.judge.combo())
+                        } else {
+                            self.judge.combo().to_string()
+                        }
                     }
-                }
-            };
-            let mut text_size = 0.98 * scale_ratio;
-            let max_width = 0.55 * aspect_ratio;
-            let mut text = ui.text(&combo)
-                .size(text_size)
-                .color(Color::new(0., 0., 0., 0.));
-            let ct = text.measure().center();
-            let text_width = text.measure().w;
-            if text_width > max_width {
-                text_size *= max_width / text_width
-            }
-            let combo_y = top + eps * 1.55 - (1. - p) * 0.4 + ct.y;
-            let btm = text.anchor(0.5, 0.5).pos(0., combo_y).draw().bottom() + 0.015;
-            self.chart.with_element(ui, res, UIElement::ComboNumber, Some((0., combo_y)), Some((0., combo_y)), |ui, color| {
-                ui.text(&combo)
-                    .pos(0., combo_y)
-                    .anchor(0.5, 0.5)
-                    .color(Color { a: color.a * c.a, ..color })
+                };
+                let mut text_size = 0.98 * scale_ratio;
+                let max_width = 0.55 * aspect_ratio;
+                let mut text = ui.text(&combo)
                     .size(text_size)
-                    .multiline()
-                    .draw();
-            });
-            let mut text = ui.text(&res.config.combo).size(0.34 * scale_ratio);
-            let ct = text.measure().center();
-            self.chart.with_element(ui, res, UIElement::Combo, Some((0., btm + ct.y)), Some((0., btm + ct.y)), |ui, color| {
-                if (cfg!(feature = "play") && res.config.autoplay()) || validate_combo(&res.config.combo) || res.config.combo.len() > 50 {
-                    draw_text_aligned(ui, "AUTOPLAY", 0., btm + ct.y, (0.5, 0.5), 0.34 * scale_ratio, Color { a: color.a * c.a, ..color });
-                    return;
+                    .color(Color::new(0., 0., 0., 0.));
+                let ct = text.measure().center();
+                let text_width = text.measure().w;
+                if text_width > max_width {
+                    text_size *= max_width / text_width
                 }
-                draw_text_aligned_opt_width(ui, &res.config.combo, 0., btm + ct.y, (0.5, 0.5), 0.34 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.55 * aspect_ratio);
-            });
+                let combo_y = top + eps * 1.55 - (1. - p) * 0.4 + ct.y;
+                let btm = text.anchor(0.5, 0.5).pos(0., combo_y).draw().bottom() + 0.015;
+                self.chart.with_element(ui, res, UIElement::ComboNumber, Some((0., combo_y)), Some((0., combo_y)), |ui, color| {
+                    ui.text(&combo)
+                        .pos(0., combo_y)
+                        .anchor(0.5, 0.5)
+                        .color(Color { a: color.a * c.a, ..color })
+                        .size(text_size)
+                        .multiline()
+                        .draw();
+                });
+                let mut text = ui.text(&res.config.combo).size(0.34 * scale_ratio);
+                let ct = text.measure().center();
+                self.chart.with_element(ui, res, UIElement::Combo, Some((0., btm + ct.y)), Some((0., btm + ct.y)), |ui, color| {
+                    if (cfg!(feature = "play") && res.config.autoplay()) || validate_combo(&res.config.combo) || res.config.combo.len() > 50 {
+                        draw_text_aligned(ui, "AUTOPLAY", 0., btm + ct.y, (0.5, 0.5), 0.34 * scale_ratio, Color { a: color.a * c.a, ..color });
+                        return;
+                    }
+                    draw_text_aligned_opt_width(ui, &res.config.combo, 0., btm + ct.y, (0.5, 0.5), 0.34 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.55 * aspect_ratio);
+                });
+            }
         }
         let lf = -aspect_ratio + margin;
         let bt = -top - eps * 3.5 + (1. - p) * 0.4;
@@ -1046,7 +1162,19 @@ impl GameScene {
         }
         if res.config.render_ui_name {
             self.chart.with_element(ui, res, UIElement::Name, Some((lf, bt)), Some((lf, bt)), |ui, color| {
-                draw_text_aligned_opt_width(ui, &res.info.name, lf, bt, (0., 1.), 0.505 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.9 * aspect_ratio);
+                match &baoying {
+                    // 「报应SP」：曲名换成资源包里的手绘 logo
+                    Some(style) => {
+                        let h = res.config.baoying_sp_title_height * scale_ratio;
+                        let w = h * style.title.width() / style.title.height();
+                        let dy = res.config.baoying_sp_title_offset_y * scale_ratio;
+                        let rect = Rect::new(lf, bt - h + dy, w, h);
+                        ui.fill_rect(rect, (*style.title, rect, ScaleType::Fit, Color { a: color.a * c.a, ..color }));
+                    }
+                    None => {
+                        draw_text_aligned_opt_width(ui, &res.info.name, lf, bt, (0., 1.), 0.505 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.9 * aspect_ratio);
+                    }
+                }
             });
         }
         // 「雪降SP」特殊演出自己会提供难度文本，所以模式下即使关掉了难度显示也照画
@@ -1062,7 +1190,30 @@ impl GameScene {
                 },
             };
             self.chart.with_element(ui, res, UIElement::Dif, Some((-lf, bt)), Some((-lf, bt)), |ui, color| {
-                draw_text_aligned_opt_width(ui, diff_text, -lf, bt, (1., 1.), 0.505 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.9 * aspect_ratio);
+                match &baoying {
+                    // 「报应SP」：难度换成「SP  LV.?」的手绘贴图，从右往左排
+                    Some(style) => {
+                        let h = res.config.baoying_sp_diff_height * scale_ratio;
+                        let squeeze = res.config.baoying_sp_diff_squeeze;
+                        let gap_sp_lv = res.config.baoying_sp_diff_gap_sp_lv * scale_ratio;
+                        let gap_lv_question = res.config.baoying_sp_diff_gap_lv_question * scale_ratio;
+                        let sp_w = h * style.sp.width() / style.sp.height() * squeeze;
+                        let lv_w = h * style.lv.width() / style.lv.height() * squeeze;
+                        let question_w = h * style.question.width() / style.question.height() * squeeze;
+                        let y = bt - h + res.config.baoying_sp_diff_offset_y * scale_ratio;
+                        let x = -lf - (sp_w + gap_sp_lv + lv_w + gap_lv_question + question_w);
+                        let color = Color { a: color.a * c.a, ..color };
+                        let sp = Rect::new(x, y, sp_w, h);
+                        let lv = Rect::new(sp.right() + gap_sp_lv, y, lv_w, h);
+                        let question = Rect::new(lv.right() + gap_lv_question, y, question_w, h);
+                        ui.fill_rect(sp, (*style.sp, sp, ScaleType::Fit, color));
+                        ui.fill_rect(lv, (*style.lv, lv, ScaleType::Fit, color));
+                        ui.fill_rect(question, (*style.question, question, ScaleType::Fit, color));
+                    }
+                    None => {
+                        draw_text_aligned_opt_width(ui, diff_text, -lf, bt, (1., 1.), 0.505 * scale_ratio, Color { a: color.a * c.a, ..color }, 0.9 * aspect_ratio);
+                    }
+                }
             });
         }
         if !res.config.watermark.is_empty() {
@@ -1082,8 +1233,8 @@ impl GameScene {
                 (aspect_ratio * 2. * dest as f32).max(0.).min(aspect_ratio * 2.)
             }
         };
-        // 同上：模式下的进度条是演出的一部分，关掉也照画
-        if res.config.render_ui_bar || xuejiang_sp.is_some() {
+        // 同上：模式下的进度条是演出的一部分，关掉也照画；「报应SP」界面没有进度条
+        if (res.config.render_ui_bar || xuejiang_sp.is_some()) && baoying.is_none() {
             self.chart.with_element(ui, res, UIElement::Bar, Some((-aspect_ratio, top + height / 2.)), Some((-aspect_ratio, top + height / 2.)), |ui, color| {
                 //let ct = Vector::new(0., top + height / 2.);
                 ui.fill_rect(

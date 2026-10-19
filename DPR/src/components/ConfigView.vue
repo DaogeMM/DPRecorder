@@ -79,6 +79,8 @@ const debugEnabled = useStorage<boolean>('phi.debug.enabled', false);
  * 纯界面状态、不进配置：它只是齿轮弹窗的入口（演出本身由输入谱面的文件名强制开启）。
  */
 const xuejiangSpDebug = ref(true);
+/** 「谱面 · 调试」里那一行「报应SP」三级菜单的开关（同上，纯界面状态、不进配置）。 */
+const baoyingSpDebug = ref(true);
 const fileNameFormatDialog = ref(false);
 /**
  * 「文件名格式」说明弹窗的宽度 —— 与齿轮弹窗（`PhiSubMenu.vue` 的 `dialogWidth`）同一算法：
@@ -195,6 +197,14 @@ const {
   xuejiangSpFaceHitStart, xuejiangSpFacePeriod, xuejiangSpFaceRounds,
   xuejiangSpFaceLeadShow, xuejiangSpFaceLeadRoll,
   xuejiangSpFaceTextShow, xuejiangSpFaceTextRoll, xuejiangSpFaceTextHit,
+  baoyingSpWowHeight, baoyingSpWowOffsetX, baoyingSpWowOffsetY,
+  baoyingSpTitleHeight, baoyingSpTitleOffsetY,
+  baoyingSpScoreHeight, baoyingSpScoreGap, baoyingSpScoreSqueeze,
+  baoyingSpComboHeight, baoyingSpComboGap, baoyingSpComboSqueeze,
+  baoyingSpComboLabelHeight, baoyingSpComboLabelOffset,
+  baoyingSpDiffHeight, baoyingSpDiffGapSpLv, baoyingSpDiffGapLvQuestion,
+  baoyingSpDiffSqueeze, baoyingSpDiffOffsetY, baoyingSpDigitsRtl,
+  baoyingSpHitFxScale, baoyingSpParticleCount,
   // 界面独占的槽位
   hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
 } = toRefs(ui);
@@ -1025,6 +1035,31 @@ defineExpose({
               <CfgField :label="t('xuejiang-sp-face-text-show')" :tip="t('xuejiang-sp-face-text-show-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextShow" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
               <CfgField :label="t('xuejiang-sp-face-text-roll')" :tip="t('xuejiang-sp-face-text-roll-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextRoll" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
               <CfgField :label="t('xuejiang-sp-face-text-hit')" :tip="t('xuejiang-sp-face-text-hit-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextHit" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-baoying-sp" :label="t('baoying-sp-group')" :tip="t('baoying-sp-group-tip')" v-model="baoyingSpDebug">
+            <div class="cfg-grid">
+              <CfgField :label="t('baoying-sp-wow-height')" :tip="t('baoying-sp-wow-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpWowHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-wow-offset-x')" :tip="t('baoying-sp-wow-offset-x-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpWowOffsetX" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-wow-offset-y')" :tip="t('baoying-sp-wow-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpWowOffsetY" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-title-height')" :tip="t('baoying-sp-title-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpTitleHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-title-offset-y')" :tip="t('baoying-sp-title-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpTitleOffsetY" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-score-height')" :tip="t('baoying-sp-score-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpScoreHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-score-gap')" :tip="t('baoying-sp-score-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpScoreGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-score-squeeze')" :tip="t('baoying-sp-score-squeeze-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpScoreSqueeze" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-combo-height')" :tip="t('baoying-sp-combo-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpComboHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-combo-gap')" :tip="t('baoying-sp-combo-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpComboGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-combo-squeeze')" :tip="t('baoying-sp-combo-squeeze-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpComboSqueeze" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-combo-label-height')" :tip="t('baoying-sp-combo-label-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpComboLabelHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-combo-label-offset')" :tip="t('baoying-sp-combo-label-offset-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpComboLabelOffset" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-diff-height')" :tip="t('baoying-sp-diff-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-diff-gap-sp-lv')" :tip="t('baoying-sp-diff-gap-sp-lv-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffGapSpLv" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-diff-gap-lv-question')" :tip="t('baoying-sp-diff-gap-lv-question-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffGapLvQuestion" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-diff-squeeze')" :tip="t('baoying-sp-diff-squeeze-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffSqueeze" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-diff-offset-y')" :tip="t('baoying-sp-diff-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffOffsetY" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-digits-rtl')" :tip="t('baoying-sp-digits-rtl-tip')"><CfgSwitch v-model="baoyingSpDigitsRtl" /></CfgField>
+              <CfgField :label="t('baoying-sp-hit-fx-scale')" :tip="t('baoying-sp-hit-fx-scale-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpHitFxScale" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('baoying-sp-particle-count')" :tip="t('baoying-sp-particle-count-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpParticleCount" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
         </div>

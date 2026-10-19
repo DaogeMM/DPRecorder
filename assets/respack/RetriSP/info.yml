@@ -1,0 +1,30 @@
+# 资源包信息（当前格式，字段含义见 DPS/dps/src/core/resource.rs 的 ResPackInfo）
+# 按键贴图由 raw/ 里的 Phigros 原始散图拼成（见 raw/make_notes.py），
+# 其余素材（hit_fx）保持原始文件不动。
+name: Phigros SP Retribution
+author: PigeonGames
+description: 还原依据为 phigros Retribution ~ Cycle of Redemption ~ 的 SP 谱面按键素材
+# 打击特效帧数：hit_fx.png 为 1280×1536，横 5 帧、竖 6 帧（单帧 256×256）
+hitFx: [5, 6]
+# 打击特效持续时间（秒）
+hitFxDuration: 0.5
+# 打击特效缩放比例
+hitFxScale: 1.8
+# 打击特效是否随 Note 旋转
+hitFxRotate: true
+# 打击特效是否按判定线颜色着色
+hitFxTinted: true
+# 打击时隐藏方形粒子
+hideParticles: true
+# Hold 贴图从上到下依次是尾部、中间和头部，这里给尾部与头部的高度（像素）
+# hold.png 高 900 ⇒ 尾部 50、头部 50、中间（镜像两段）800
+holdAtlas: [50, 50]
+# 双押 Hold 同上：尾沿用单押的 Hold_End（横向拉到 1016 后高 51），头是 Hold2HL_0（98）
+# hold_mh.png 高 929 ⇒ 尾部 51、头部 98、中间（镜像两段）780
+holdAtlasMH: [51, 98]
+# Hold 触线后不保留头部
+holdKeepHead: false
+# Hold 中间部分采用重复式拉伸：原始素材是长条噪点纹理，按比例拉伸会糊成竖条
+holdRepeat: true
+# Hold 头尾不与中间重叠
+holdCompact: false

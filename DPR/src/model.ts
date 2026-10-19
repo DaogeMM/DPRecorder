@@ -220,6 +220,48 @@ export interface RenderConfig {
   xuejiangSpFaceTextRoll: string;
   /** 音符被判定时连击数位置的表情 */
   xuejiangSpFaceTextHit: string;
+  /** 「报应SP」界面左上角 WOW! 贴图的高度 */
+  baoyingSpWowHeight: number;
+  /** 「报应SP」界面 WOW! 贴图向右的偏移 */
+  baoyingSpWowOffsetX: number;
+  /** 「报应SP」界面 WOW! 贴图向下的偏移 */
+  baoyingSpWowOffsetY: number;
+  /** 「报应SP」界面左下角曲名贴图的高度 */
+  baoyingSpTitleHeight: number;
+  /** 「报应SP」界面曲名贴图向下的偏移 */
+  baoyingSpTitleOffsetY: number;
+  /** 「报应SP」界面右上角分数单个数字的高度 */
+  baoyingSpScoreHeight: number;
+  /** 「报应SP」界面右上角分数相邻数字之间的间距 */
+  baoyingSpScoreGap: number;
+  /** 「报应SP」界面分数数字的横向挤压倍率 */
+  baoyingSpScoreSqueeze: number;
+  /** 「报应SP」界面中上连击数单个数字的高度 */
+  baoyingSpComboHeight: number;
+  /** 「报应SP」界面中上连击数相邻数字之间的间距 */
+  baoyingSpComboGap: number;
+  /** 「报应SP」界面连击数字的横向挤压倍率 */
+  baoyingSpComboSqueeze: number;
+  /** 「报应SP」界面连击数下方 `COMBO` 贴图的高度 */
+  baoyingSpComboLabelHeight: number;
+  /** 「报应SP」界面 `COMBO` 贴图与连击数字之间的间距 */
+  baoyingSpComboLabelOffset: number;
+  /** 「报应SP」界面右下角 `SP LV.?` 贴图的高度 */
+  baoyingSpDiffHeight: number;
+  /** 「报应SP」界面 `SP` 与 `LV.` 之间的间距 */
+  baoyingSpDiffGapSpLv: number;
+  /** 「报应SP」界面 `LV.` 与 `?` 之间的间距 */
+  baoyingSpDiffGapLvQuestion: number;
+  /** 「报应SP」界面难度贴图的横向挤压倍率 */
+  baoyingSpDiffSqueeze: number;
+  /** 「报应SP」界面难度贴图向下的偏移 */
+  baoyingSpDiffOffsetY: number;
+  /** 「报应SP」界面分数与连击数从右往左排 */
+  baoyingSpDigitsRtl: boolean;
+  /** 「报应SP」打击特效贴图缩放（小于等于 0 表示沿用资源包设置） */
+  baoyingSpHitFxScale: number;
+  /** 「报应SP」打击特效粒子数（0 表示不画粒子） */
+  baoyingSpParticleCount: number;
   renderBg: boolean;
   renderBgDim: boolean;
   /** 背景暗淡：黑色遮罩的不透明度（0~1），覆盖谱面信息里的同名值，默认 0.1 */
@@ -434,7 +476,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   diff: '',
   difficulty: '',
   judgeOffset: 0,
-  fileNameFormat: '%date% %time% %file%.%level_prefix%',
+  fileNameFormat: '%date% %time% %file%',
   renderLine: true,
   renderLineExtra: true,
   renderNote: true,
@@ -452,7 +494,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   xuejiangSpFakeBarSeconds: 120,
   xuejiangSpBurstCombo: 240,
   xuejiangSpRollScale: 0.75,
-  xuejiangSpDiffFake: 'IN Lv.l2',
+  xuejiangSpDiffFake: 'IN Lv.I2',
   xuejiangSpDiffReal: 'SP Lv.?',
   xuejiangSpVolumePercentile: 0.99,
   xuejiangSpVolumeGamma: 1.05,
@@ -465,6 +507,27 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   xuejiangSpFaceTextShow: '(⊙o⊙)',
   xuejiangSpFaceTextRoll: '(⊙ω⊙)',
   xuejiangSpFaceTextHit: 'Ｏ(≧▽≦)Ｏ',
+  baoyingSpWowHeight: 0.043,
+  baoyingSpWowOffsetX: 0.02,
+  baoyingSpWowOffsetY: 0.005,
+  baoyingSpTitleHeight: 0.05,
+  baoyingSpTitleOffsetY: 0,
+  baoyingSpScoreHeight: 0.05,
+  baoyingSpScoreGap: 0.006,
+  baoyingSpScoreSqueeze: 1.23,
+  baoyingSpComboHeight: 0.055,
+  baoyingSpComboGap: 0,
+  baoyingSpComboSqueeze: 1.23,
+  baoyingSpComboLabelHeight: 0.06,
+  baoyingSpComboLabelOffset: 0.01,
+  baoyingSpDiffHeight: 0.05,
+  baoyingSpDiffGapSpLv: 0.08,
+  baoyingSpDiffGapLvQuestion: 0.02,
+  baoyingSpDiffSqueeze: 1.2,
+  baoyingSpDiffOffsetY: 0,
+  baoyingSpDigitsRtl: true,
+  baoyingSpHitFxScale: 0.5,
+  baoyingSpParticleCount: 1,
   renderBg: true,
   renderBgDim: true,
   backgroundDim: 0.1,
