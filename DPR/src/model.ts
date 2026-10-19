@@ -102,10 +102,10 @@ export interface Task {
  * 4. i18n：`src/locales/zh-CN/config.json` 与 `src/locales/en/config.json` **都要**加标签键
  *    （只加一个语言时另一个会显示字面量 key）；提示键照邻居的写法（有的叫 `-tip`、有的叫 `-tips`）。
  * 5. 后端步骤见 `src-tauri/src/render.rs` 里 `RenderConfig` 结构体上方的注释（字段 / `to_config()` /
- *    `impl Default` / `src-tauri/config.toml` 与 dev 会读的 `src-tauri/target/debug/config.toml`）。
+ *    `impl Default` / `src-tauri/config.toml` 与 dev 运行时读的 exe 同目录 `config.toml`）。
  *    只有 DPS 渲染真的要用到这个值时才改它（`DPS/dps/src/config.rs` 加字段并在 `core/` 里读）。
  * 6. 改完跑 `& .\node_modules\.bin\vue-tsc.CMD --noEmit -p tsconfig.app.json --composite false`
- *    （本仓库没有测试套件；`pnpm type-check` 在本机会因 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 中止）。
+ *    （本仓库没有测试套件；`pnpm type-check` 在没有 TTY 的环境里会因 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 中止）。
  */
 export interface RenderConfig {
   resolution: number[];
@@ -228,14 +228,24 @@ export interface RenderConfig {
   baoyingSpWowOffsetY: number;
   /** 「报应SP」界面左下角曲名贴图的高度 */
   baoyingSpTitleHeight: number;
+  /** 「报应SP」界面曲名贴图向右的偏移 */
+  baoyingSpTitleOffsetX: number;
   /** 「报应SP」界面曲名贴图向下的偏移 */
   baoyingSpTitleOffsetY: number;
+  /** 「报应SP」界面右上角分数向右的偏移 */
+  baoyingSpScoreOffsetX: number;
+  /** 「报应SP」界面右上角分数向下的偏移 */
+  baoyingSpScoreOffsetY: number;
   /** 「报应SP」界面右上角分数单个数字的高度 */
   baoyingSpScoreHeight: number;
   /** 「报应SP」界面右上角分数相邻数字之间的间距 */
   baoyingSpScoreGap: number;
   /** 「报应SP」界面分数数字的横向挤压倍率 */
   baoyingSpScoreSqueeze: number;
+  /** 「报应SP」界面中上连击数向右的偏移 */
+  baoyingSpComboOffsetX: number;
+  /** 「报应SP」界面中上连击数向下的偏移 */
+  baoyingSpComboOffsetY: number;
   /** 「报应SP」界面中上连击数单个数字的高度 */
   baoyingSpComboHeight: number;
   /** 「报应SP」界面中上连击数相邻数字之间的间距 */
@@ -244,6 +254,8 @@ export interface RenderConfig {
   baoyingSpComboSqueeze: number;
   /** 「报应SP」界面连击数下方 `COMBO` 贴图的高度 */
   baoyingSpComboLabelHeight: number;
+  /** 「报应SP」界面 `COMBO` 贴图向右的偏移 */
+  baoyingSpComboLabelOffsetX: number;
   /** 「报应SP」界面 `COMBO` 贴图与连击数字之间的间距 */
   baoyingSpComboLabelOffset: number;
   /** 「报应SP」界面右下角 `SP LV.?` 贴图的高度 */
@@ -254,12 +266,16 @@ export interface RenderConfig {
   baoyingSpDiffGapLvQuestion: number;
   /** 「报应SP」界面难度贴图的横向挤压倍率 */
   baoyingSpDiffSqueeze: number;
+  /** 「报应SP」界面难度贴图向右的偏移 */
+  baoyingSpDiffOffsetX: number;
   /** 「报应SP」界面难度贴图向下的偏移 */
   baoyingSpDiffOffsetY: number;
   /** 「报应SP」界面分数与连击数从右往左排 */
   baoyingSpDigitsRtl: boolean;
   /** 「报应SP」打击特效贴图缩放（小于等于 0 表示沿用资源包设置） */
   baoyingSpHitFxScale: number;
+  /** 「报应SP」打击特效贴图是否随判定线旋转 */
+  baoyingSpHitFxRotate: boolean;
   /** 「报应SP」打击特效粒子数（0 表示不画粒子） */
   baoyingSpParticleCount: number;
   renderBg: boolean;
@@ -509,25 +525,33 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   xuejiangSpFaceTextHit: 'Ｏ(≧▽≦)Ｏ',
   baoyingSpWowHeight: 0.043,
   baoyingSpWowOffsetX: 0.02,
-  baoyingSpWowOffsetY: 0.005,
-  baoyingSpTitleHeight: 0.05,
+  baoyingSpWowOffsetY: 0.02,
+  baoyingSpTitleHeight: 0.056,
+  baoyingSpTitleOffsetX: 0.03,
   baoyingSpTitleOffsetY: 0,
+  baoyingSpScoreOffsetX: 0,
+  baoyingSpScoreOffsetY: 0.01,
   baoyingSpScoreHeight: 0.05,
-  baoyingSpScoreGap: 0.006,
-  baoyingSpScoreSqueeze: 1.23,
+  baoyingSpScoreGap: 0.003,
+  baoyingSpScoreSqueeze: 1.1,
+  baoyingSpComboOffsetX: 0,
+  baoyingSpComboOffsetY: 0.01,
   baoyingSpComboHeight: 0.055,
   baoyingSpComboGap: 0,
-  baoyingSpComboSqueeze: 1.23,
-  baoyingSpComboLabelHeight: 0.06,
+  baoyingSpComboSqueeze: 1.1,
+  baoyingSpComboLabelHeight: 0.055,
+  baoyingSpComboLabelOffsetX: 0,
   baoyingSpComboLabelOffset: 0.01,
   baoyingSpDiffHeight: 0.05,
-  baoyingSpDiffGapSpLv: 0.08,
-  baoyingSpDiffGapLvQuestion: 0.02,
+  baoyingSpDiffGapSpLv: 0.1,
+  baoyingSpDiffGapLvQuestion: 0,
   baoyingSpDiffSqueeze: 1.2,
-  baoyingSpDiffOffsetY: 0,
+  baoyingSpDiffOffsetX: -0.05,
+  baoyingSpDiffOffsetY: 0.029,
   baoyingSpDigitsRtl: true,
   baoyingSpHitFxScale: 0.5,
-  baoyingSpParticleCount: 1,
+  baoyingSpHitFxRotate: false,
+  baoyingSpParticleCount: 0,
   renderBg: true,
   renderBgDim: true,
   backgroundDim: 0.1,

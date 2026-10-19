@@ -1,8 +1,7 @@
 //! macroquad / miniquad 运行时窗口图标。
 //!
 //! **这份文件是自动生成的**，不要手改：源图 `DPR/src/assets/favicon.png`，
-//! 生成脚本 `临时目录\gen_icon.py`（改写自仓库根目录的 `icon.py`，
-//! 那支脚本用 tkinter 弹文件框、只吐三个 txt，需要手工粘进这里）。
+//! 由 `gen_icon.py` 之类的脚本按边长裁出三份 RGBA 裸字节后粘进这里。
 //!
 //! 每份都是 row-major 展平的 RGBA 裸字节，长度 = 边长*边长*4。
 //! 由 `src-tauri/src/lib.rs` 的 `use icon::{BIG_ICON, ICON, SMALL_ICON};`

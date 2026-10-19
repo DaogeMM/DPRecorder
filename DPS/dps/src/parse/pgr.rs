@@ -547,7 +547,7 @@ mod fv2_tests {
     use super::*;
 
     /// `example/` 在仓库上面若干级（与 `core::block_area` 里的同名工具同一套找法）；
-    /// 这台机器上没有示例谱面时返回 `None`，调用方按「skip」处理。
+    /// 没有示例谱面时返回 `None`，调用方按「skip」处理。
     fn example_dir() -> Option<std::path::PathBuf> {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(dir) = std::env::var("DPS_EXAMPLE_DIR") {

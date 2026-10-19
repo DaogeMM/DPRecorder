@@ -183,14 +183,24 @@ pub struct Config {
     pub baoying_sp_wow_offset_y: f32,
     /// 「报应SP」界面：左下角曲名贴图的高度
     pub baoying_sp_title_height: f32,
+    /// 「报应SP」界面：曲名贴图向右的偏移（正值右移）
+    pub baoying_sp_title_offset_x: f32,
     /// 「报应SP」界面：曲名贴图向下的偏移（正值下移）
     pub baoying_sp_title_offset_y: f32,
+    /// 「报应SP」界面：右上角分数向右的偏移（正值右移）
+    pub baoying_sp_score_offset_x: f32,
+    /// 「报应SP」界面：右上角分数向下的偏移（正值下移）
+    pub baoying_sp_score_offset_y: f32,
     /// 「报应SP」界面：右上角分数单个数字的高度
     pub baoying_sp_score_height: f32,
     /// 「报应SP」界面：右上角分数相邻数字之间的间距
     pub baoying_sp_score_gap: f32,
     /// 「报应SP」界面：分数数字的横向挤压倍率（1 为原始比例，小于 1 变窄）
     pub baoying_sp_score_squeeze: f32,
+    /// 「报应SP」界面：中上连击数向右的偏移（正值右移）
+    pub baoying_sp_combo_offset_x: f32,
+    /// 「报应SP」界面：中上连击数向下的偏移（正值下移）
+    pub baoying_sp_combo_offset_y: f32,
     /// 「报应SP」界面：中上连击数单个数字的高度
     pub baoying_sp_combo_height: f32,
     /// 「报应SP」界面：中上连击数相邻数字之间的间距
@@ -199,6 +209,8 @@ pub struct Config {
     pub baoying_sp_combo_squeeze: f32,
     /// 「报应SP」界面：连击数下方 `COMBO` 贴图的高度
     pub baoying_sp_combo_label_height: f32,
+    /// 「报应SP」界面：`COMBO` 贴图向右的偏移（正值右移）
+    pub baoying_sp_combo_label_offset_x: f32,
     /// 「报应SP」界面：`COMBO` 贴图与连击数字之间的间距
     pub baoying_sp_combo_label_offset: f32,
     /// 「报应SP」界面：右下角 `SP LV.?` 贴图的高度
@@ -209,12 +221,16 @@ pub struct Config {
     pub baoying_sp_diff_gap_lv_question: f32,
     /// 「报应SP」界面：难度贴图的横向挤压倍率
     pub baoying_sp_diff_squeeze: f32,
+    /// 「报应SP」界面：难度贴图向右的偏移（正值右移）
+    pub baoying_sp_diff_offset_x: f32,
     /// 「报应SP」界面：难度贴图向下的偏移（正值下移）
     pub baoying_sp_diff_offset_y: f32,
     /// 「报应SP」界面：分数与连击数从右往左排（实机上这串数字是倒着写的）
     pub baoying_sp_digits_rtl: bool,
     /// 「报应SP」打击特效：贴图缩放的覆盖值（小于等于 0 表示沿用资源包里的设置）
     pub baoying_sp_hit_fx_scale: f32,
+    /// 「报应SP」打击特效：贴图是否随判定线旋转（默认关闭，实机上是固定朝向）
+    pub baoying_sp_hit_fx_rotate: bool,
     /// 「报应SP」打击特效：粒子数（0 表示不画粒子）
     pub baoying_sp_particle_count: u32,
     pub render_bg: bool,
@@ -568,25 +584,33 @@ impl Default for Config {
             baoying_sp_mode: false,
             baoying_sp_wow_height: 0.043,
             baoying_sp_wow_offset_x: 0.02,
-            baoying_sp_wow_offset_y: 0.005,
-            baoying_sp_title_height: 0.05,
+            baoying_sp_wow_offset_y: 0.02,
+            baoying_sp_title_height: 0.056,
+            baoying_sp_title_offset_x: 0.03,
             baoying_sp_title_offset_y: 0.,
+            baoying_sp_score_offset_x: 0.,
+            baoying_sp_score_offset_y: 0.01,
             baoying_sp_score_height: 0.05,
-            baoying_sp_score_gap: 0.006,
-            baoying_sp_score_squeeze: 1.23,
+            baoying_sp_score_gap: 0.003,
+            baoying_sp_score_squeeze: 1.1,
+            baoying_sp_combo_offset_x: 0.,
+            baoying_sp_combo_offset_y: 0.01,
             baoying_sp_combo_height: 0.055,
             baoying_sp_combo_gap: 0.,
-            baoying_sp_combo_squeeze: 1.23,
-            baoying_sp_combo_label_height: 0.06,
+            baoying_sp_combo_squeeze: 1.1,
+            baoying_sp_combo_label_height: 0.055,
+            baoying_sp_combo_label_offset_x: 0.,
             baoying_sp_combo_label_offset: 0.01,
             baoying_sp_diff_height: 0.05,
-            baoying_sp_diff_gap_sp_lv: 0.08,
-            baoying_sp_diff_gap_lv_question: 0.02,
+            baoying_sp_diff_gap_sp_lv: 0.1,
+            baoying_sp_diff_gap_lv_question: 0.,
             baoying_sp_diff_squeeze: 1.2,
-            baoying_sp_diff_offset_y: 0.,
+            baoying_sp_diff_offset_x: -0.05,
+            baoying_sp_diff_offset_y: 0.029,
             baoying_sp_digits_rtl: true,
             baoying_sp_hit_fx_scale: 0.5,
-            baoying_sp_particle_count: 1,
+            baoying_sp_hit_fx_rotate: false,
+            baoying_sp_particle_count: 0,
             render_bg: true,
             render_bg_dim: true,
             render_block_area: true,

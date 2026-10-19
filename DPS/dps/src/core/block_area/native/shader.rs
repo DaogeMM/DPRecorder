@@ -163,8 +163,8 @@ fn lava_frame(time: f32) -> Texture2D {
 /// hover 溶解用的噪声底。
 ///
 /// 官方 `FD_Noise_00000.png` 不在 `Phira-Pro-main` 的备份里（`prpr/assets/` 是空的），
-/// 整个工作区也搜不到。原版直接 `include_bytes!` 它，缺文件连编译都过不去，所以
-/// `assets/blockarea/FD_Noise_00000.png`（仓库根）里放了一份**我们自己生成的近似替身**
+/// 仓库里也找不到。原版直接 `include_bytes!` 它，缺文件连编译都过不去，所以
+/// `assets/blockarea/FD_Noise_00000.png` 里放了一份**我们自己生成的近似替身**
 ///（64x64 值噪声，见 `assets/blockarea/README.md`）。拿到官方素材直接覆盖该文件即可。
 ///
 /// 它只被 `block_shader_full.frag:429` 的 `texture2D(uNoiseTex, u_xlat1.xy).xy` 用到一次，

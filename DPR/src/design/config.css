@@ -99,9 +99,17 @@
   grid-column: 1 / -1;
 }
 
-/* 整行的控件可以更长 —— 它不用跟三栏的节奏对齐，右侧留白没意义 */
+/* 整行的控件可以更长 —— 它不用跟三栏的节奏对齐，右侧留白没意义。
+   留白只留给条目名：条目名吃掉自己那一份（`flex: 0 1 auto` + 文本宽度），
+   省下的全给控件。文件名格式那种几十个字符的模板必须能一眼看全，
+   所以这里比原来的 68% 宽得多；短条目名（「Tip」之类）也不会有任何变化。 */
+.cfg-item--full .cfg-item__label {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
 .cfg-item--full .cfg-item__control {
-  flex: 0 0 68%;
+  flex: 1 1 auto;
 }
 
 .cfg-item__label {

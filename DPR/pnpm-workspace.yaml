@@ -1,4 +1,4 @@
-# nodeLinker: hoisted —— 本机 pnpm 生成的 junction 的 substitute name 带了一个
+# nodeLinker: hoisted —— pnpm 在 Windows 上生成的 junction 的 substitute name 带了一个
 # 无效的 `Global\` 前缀（`\??\Global\<drive>:\...`），Windows 能遍历但 Node 的
 # realpath 解析不了，导致 `node_modules/vite` 里找不到 rollup 等依赖而无法构建。
 # 改用 hoisted（扁平、真实目录、无 junction）绕开该问题。
@@ -8,7 +8,7 @@ nodeLinker: hoisted
 # DPR 目录换个位置之后，它就会判定现有 node_modules 作废、要先删掉整个目录再装。
 # `cargo tauri dev` → `pnpm dev` 跑在无 TTY 的子进程里，于是直接失败：
 #   [ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY] Aborted removal of modules directory due to no TTY
-# 关掉这个交互确认，让它照做即可（重装走本机 store，离线几秒就完）。
+# 关掉这个交互确认，让它照做即可（重装走本地 store，离线几秒就完）。
 confirmModulesPurge: false
 allowBuilds:
   esbuild: false

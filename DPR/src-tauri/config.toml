@@ -2,7 +2,7 @@
 # GUI 的默认值在 src/model.ts 的 DEFAULT_RENDER_CONFIG，后端结构体在 src-tauri/src/render.rs。
 # 新增 / 修改参数的完整步骤写在 render.rs 的 RenderConfig 结构体上方，照那份走。
 # 键名一律 camelCase（结构体标了 #[serde(rename_all = "camelCase")]）；缺的键自动取 Rust 的 Default。
-# 注意: dev 运行时真正被读的是 exe 同目录那份 target/debug/config.toml（仓库根下），改完这里记得同步。
+# 注意: dev 运行时真正被读的是 exe 同目录那份 config.toml（target/debug/config.toml），改完这里记得同步。
 # Output 输出
 resolution = [1920, 1080]
 fps = 60

@@ -611,6 +611,7 @@ impl GameScene {
             if res.config.baoying_sp_hit_fx_scale > 0. {
                 res.res_pack.info.hit_fx_scale = res.config.baoying_sp_hit_fx_scale;
             }
+            res.res_pack.info.hit_fx_rotate = res.config.baoying_sp_hit_fx_rotate;
             res.res_pack.info.hide_particles = res.config.baoying_sp_particle_count == 0;
             res.res_pack.info.particle_count = res.config.baoying_sp_particle_count as usize;
         }
@@ -1014,8 +1015,8 @@ impl GameScene {
                             ui,
                             style,
                             &text,
-                            score_right,
-                            score_top,
+                            score_right + res.config.baoying_sp_score_offset_x * scale_ratio,
+                            score_top + res.config.baoying_sp_score_offset_y * scale_ratio,
                             (1., 0.),
                             res.config.baoying_sp_score_height * scale_ratio,
                             res.config.baoying_sp_score_gap * scale_ratio,
@@ -1073,15 +1074,17 @@ impl GameScene {
                 // 数字与标签画在同一个 ComboNumber 闭包里，这样两者共用同一份判定线变换
                 let combo_number = self.judge.combo();
                 let combo_y = top + eps * 5.4 - (1. - p) * 0.4;
+                let combo_x = res.config.baoying_sp_combo_offset_x * scale_ratio;
+                let combo_y = combo_y + res.config.baoying_sp_combo_offset_y * scale_ratio;
                 let digit_h = res.config.baoying_sp_combo_height * scale_ratio;
                 let label_h = res.config.baoying_sp_combo_label_height * scale_ratio;
-                self.chart.with_element(ui, res, UIElement::ComboNumber, Some((0., combo_y)), Some((0., combo_y)), |ui, color| {
+                self.chart.with_element(ui, res, UIElement::ComboNumber, Some((combo_x, combo_y)), Some((combo_x, combo_y)), |ui, color| {
                     let color = Color { a: color.a * c.a, ..color };
                     Self::draw_digit_text(
                         ui,
                         style,
                         &combo_number.to_string(),
-                        0.,
+                        combo_x,
                         combo_y,
                         (0.5, 0.5),
                         digit_h,
@@ -1092,7 +1095,8 @@ impl GameScene {
                     );
                     let label_w = label_h * style.combo.width() / style.combo.height();
                     let label_y = combo_y + digit_h * 0.5 + res.config.baoying_sp_combo_label_offset * scale_ratio;
-                    let rect = Rect::new(-label_w / 2., label_y, label_w, label_h);
+                    let label_x = (combo_x - label_w / 2.) + res.config.baoying_sp_combo_label_offset_x * scale_ratio;
+                    let rect = Rect::new(label_x, label_y, label_w, label_h);
                     ui.fill_rect(rect, (*style.combo, rect, ScaleType::Fit, color));
                 });
             } else {
@@ -1167,8 +1171,9 @@ impl GameScene {
                     Some(style) => {
                         let h = res.config.baoying_sp_title_height * scale_ratio;
                         let w = h * style.title.width() / style.title.height();
+                        let dx = res.config.baoying_sp_title_offset_x * scale_ratio;
                         let dy = res.config.baoying_sp_title_offset_y * scale_ratio;
-                        let rect = Rect::new(lf, bt - h + dy, w, h);
+                        let rect = Rect::new(lf + dx, bt - h + dy, w, h);
                         ui.fill_rect(rect, (*style.title, rect, ScaleType::Fit, Color { a: color.a * c.a, ..color }));
                     }
                     None => {
@@ -1201,7 +1206,8 @@ impl GameScene {
                         let lv_w = h * style.lv.width() / style.lv.height() * squeeze;
                         let question_w = h * style.question.width() / style.question.height() * squeeze;
                         let y = bt - h + res.config.baoying_sp_diff_offset_y * scale_ratio;
-                        let x = -lf - (sp_w + gap_sp_lv + lv_w + gap_lv_question + question_w);
+                        let x = -lf - (sp_w + gap_sp_lv + lv_w + gap_lv_question + question_w)
+                            + res.config.baoying_sp_diff_offset_x * scale_ratio;
                         let color = Color { a: color.a * c.a, ..color };
                         let sp = Rect::new(x, y, sp_w, h);
                         let lv = Rect::new(sp.right() + gap_sp_lv, y, lv_w, h);
@@ -1233,8 +1239,8 @@ impl GameScene {
                 (aspect_ratio * 2. * dest as f32).max(0.).min(aspect_ratio * 2.)
             }
         };
-        // 同上：模式下的进度条是演出的一部分，关掉也照画；「报应SP」界面没有进度条
-        if (res.config.render_ui_bar || xuejiang_sp.is_some()) && baoying.is_none() {
+        // 同上：模式下的进度条是演出的一部分，关掉也照画
+        if res.config.render_ui_bar || xuejiang_sp.is_some() {
             self.chart.with_element(ui, res, UIElement::Bar, Some((-aspect_ratio, top + height / 2.)), Some((-aspect_ratio, top + height / 2.)), |ui, color| {
                 //let ct = Vector::new(0., top + height / 2.);
                 ui.fill_rect(

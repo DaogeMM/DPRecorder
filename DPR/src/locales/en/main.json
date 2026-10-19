@@ -3,6 +3,7 @@
         "not-empty": "Must not be empty",
         "not-null": "Must not be empty",
         "positive": "Must be a positive number",
+        "number": "Must be a number",
         "positive-int": "Must be a positive integer",
         "alpha": "Must be between 0 and 1",
         "resolution": "Must be like '1920x1080'",

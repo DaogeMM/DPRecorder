@@ -731,10 +731,10 @@ pub fn group_block_areas(areas: &mut [BlockArea]) -> Vec<BlockGroup> {
 mod tests {
     use super::*;
 
-    /// 示例谱面目录（`example/`）：**只在本机仓库根，不随仓库分发**。
+    /// 示例谱面目录（`example/`）：**不在仓库里**。
     /// 它可能在 `CARGO_MANIFEST_DIR` 上面若干级，所以这里逐级向上找；
     /// 也可以直接用环境变量 `DPS_EXAMPLE_DIR` 指过去。
-    /// 返回 `None` 表示这台机器上没有示例谱面，调用方按「skip」处理。
+    /// 返回 `None` 表示没有示例谱面，调用方按「skip」处理。
     fn example_dir() -> Option<std::path::PathBuf> {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(dir) = std::env::var("DPS_EXAMPLE_DIR") {
@@ -1107,7 +1107,7 @@ mod tests {
 
     /// 「噪域优化」的实弹检验：示例谱面 `example/pez/ハテ.rNFrums.0.AT.pez` 的 `blockAreaList`
     /// 有 14355 条，归组后「噪域用量」必须掉下来，而且窗口一个不多、一个不少。
-    /// （谱面在本机仓库根、不随仓库分发；见 `example_dir`。）
+    /// （谱面不在仓库里，见 `example_dir`。）
     #[test]
     fn reuse_shrinks_real_chart_block_area_count() {
         let Some(path) = example_path("pez/ハテ.rNFrums.0.AT.pez") else {

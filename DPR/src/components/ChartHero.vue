@@ -7,7 +7,8 @@
 //   第三行  曲师 <composer>
 //   第四行  画师 <illustrator>
 //   第五行  谱师 <charter>
-// 右侧是曲绘，`width: 300px` + `aspect-ratio: 2048 / 1080`。
+// 右侧是曲绘（固定 `width: 300px` + `aspect-ratio: 2048 / 1080`），曲绘下方一行小字是谱面文件的
+// 磁盘路径：右端与曲绘右端平齐，但宽度不跟着曲绘走（单行，太长才省略）。
 //
 // 它作为 `PhiSection`（variant="hero"）的 **head 插槽内容**，所以：
 //   - 外层已经负责了圆角裁剪、0.5px 底线、右上角那个折叠箭头与「点击展开」的手型；
@@ -177,10 +178,13 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
         <div v-else class="chart-hero__empty">{{ t('choose.can-also-drop') }}</div>
       </div>
 
-      <!-- 曲绘缩略图放在横幅右侧，按 2048:1080 的比例裁切 -->
-      <div class="chart-hero__cover">
-        <img v-if="cover" :src="cover" alt="" @error="onCoverError" />
-        <v-icon v-else size="30">mdi-image-outline</v-icon>
+      <!-- 曲绘缩略图放在横幅右侧，按 2048:1080 的比例裁切；下面紧跟谱面文件的磁盘路径 -->
+      <div class="chart-hero__side">
+        <div class="chart-hero__cover">
+          <img v-if="cover" :src="cover" alt="" @error="onCoverError" />
+          <v-icon v-else size="30">mdi-image-outline</v-icon>
+        </div>
+        <div v-if="path" class="chart-hero__path" :title="path">{{ path }}</div>
       </div>
     </div>
   </div>
@@ -225,8 +229,34 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
   padding-right: calc(var(--phi-space-5) + var(--phi-space-4));
 }
 
-.chart-hero__cover {
+/* 右侧这一列：曲绘 + 它下方的谱面路径。曲绘固定 300px 宽；路径的右端与曲绘右端平齐，
+   但**不**限制成曲绘那么宽 —— 它是单行小字，长度按内容走，太长时左边被截掉加省略号，
+   所以整列宽度取内容宽度（用 max-content），上限见下面的 max-width。 */
+.chart-hero__side {
+  display: flex;
   flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  width: max-content;
+  max-width: min(100%, 560px);
+}
+
+/* 谱面文件的磁盘路径：小字、右对齐、单行（超出加省略号），完整值在 title 里 */
+.chart-hero__path {
+  overflow: hidden;
+  max-width: 100%;
+  white-space: nowrap;
+  text-align: right;
+  text-overflow: ellipsis;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--phi-label-caption);
+  /* 路径可选中，方便直接复制 */
+  user-select: text;
+}
+
+.chart-hero__cover {
   display: flex;
   align-items: center;
   justify-content: center;
