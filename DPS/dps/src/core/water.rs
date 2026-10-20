@@ -16,6 +16,7 @@ use macroquad::prelude::*;
 use once_cell::sync::Lazy;
 
 use crate::core::{
+    appendant,
     note::{Note, NoteKind},
     CtrlObject, Matrix, Point, Resource,
 };
@@ -24,21 +25,28 @@ use crate::judge::JudgeStatus;
 /// 屏幕**上方**额外多铺的水行数：抵消网格向下平移造成的顶部空缺（见 [`draw_water`]）。
 const WATER_EXTRA_ROWS: i32 = 2;
 
-/// MC 水贴图（16×16）。和岩浆噪域一样用 `include_bytes!` 打进二进制。
-static WATER_TEX: Lazy<Texture2D> = Lazy::new(|| {
-    let source = image::load_from_memory(include_bytes!("../../../../assets/Minecraft/water.png"))
-        .expect("water.png 解不开")
-        .to_rgba8();
+/// MC 水贴图（16×16）。素材在 `appendant/appendant.water.zip` 里，缺包时这层水不画。
+static WATER_TEX: Lazy<Option<Texture2D>> = Lazy::new(|| {
+    let source = image::load_from_memory(&appendant::water_image()?).ok()?.to_rgba8();
     let texture = Texture2D::from_rgba8(source.width() as u16, source.height() as u16, source.as_raw());
     texture.set_filter(FilterMode::Nearest);
-    texture
+    Some(texture)
 });
+
+/// 「屏幕进水」的素材是否可用（水贴图读到了就算可用）。缺包时整套进水效果静默关掉：
+/// 不画水、不扣血，也不播受伤音效。
+pub fn available() -> bool {
+    WATER_TEX.is_some()
+}
 
 /// 画水层。`water_screen` 关闭时直接返回（不碰任何状态）。
 pub fn draw_water(res: &mut Resource) {
     if !res.config.water_screen {
         return;
     }
+    let Some(water_tex) = *WATER_TEX else {
+        return;
+    };
     let aspect = res.aspect_ratio;
     if !aspect.is_finite() || aspect <= 0. {
         return;
@@ -74,7 +82,7 @@ pub fn draw_water(res: &mut Resource) {
                 break;
             }
             draw_texture_ex(
-                *WATER_TEX,
+                water_tex,
                 x,
                 y,
                 color,
@@ -93,14 +101,16 @@ pub fn draw_water(res: &mut Resource) {
 // 「屏幕进水」第 3/4 部分：受伤音效
 // ---------------------------------------------------------------------------
 
-/// `hit` 文件夹里的两个音效，和贴图一样 `include_bytes!` 打进二进制。
+/// `hit` 文件夹里的两个音效，同样读 `appendant/appendant.water.zip`；缺包时是空表。
 ///
 /// 公开是为了让 `DPR` 的渲染器能用**同一份素材**把进水音效写进视频音轨
 /// （见 [`take_sfx_events`]）。
-pub const HIT_SFX_BYTES: [&[u8]; 2] = [
-    include_bytes!("../../../../assets/Minecraft/hit/hit-1.mp3"),
-    include_bytes!("../../../../assets/Minecraft/hit/hit-2.mp3"),
-];
+static HIT_SFX_BYTES: Lazy<Vec<Vec<u8>>> = Lazy::new(appendant::hit_sfx);
+
+/// 「屏幕进水」的受伤音效字节（缺包时为空表）。
+pub fn hit_sfx_bytes() -> &'static [Vec<u8>] {
+    &HIT_SFX_BYTES
+}
 
 /// 受伤音效的近似时长（秒）：用来把「同一时刻最多几个并发」落到实处。
 const HIT_SFX_LEN: f64 = 0.4;
@@ -191,15 +201,19 @@ fn hit_sfx_instances(limit: usize) -> usize {
 
 /// 把实例池建到「每个素材 `per_material` 个」；已经够了就直接返回。
 fn init_hit_sfx(res: &mut Resource, per_material: usize) {
-    let need = per_material.max(1) * HIT_SFX_BYTES.len();
+    let clips = hit_sfx_bytes();
+    if clips.is_empty() {
+        return;
+    }
+    let need = per_material.max(1) * clips.len();
     HIT_SFX.with(|cell| {
         if cell.borrow().len() >= need {
             return;
         }
         let mut list = cell.borrow_mut();
         while list.len() < need {
-            let bytes = HIT_SFX_BYTES[list.len() % HIT_SFX_BYTES.len()];
-            match sasa::AudioClip::new(bytes.to_vec()) {
+            let bytes = &clips[list.len() % clips.len()];
+            match sasa::AudioClip::new(bytes.clone()) {
                 Ok(clip) => match res.audio.create_sfx(clip, Some(crate::core::BUFFER_SIZE)) {
                     Ok(sfx) => list.push(sfx),
                     Err(err) => {
@@ -235,7 +249,7 @@ pub fn play_death(res: &mut Resource) {
 }
 
 fn play_hit_sound(res: &mut Resource, tag: &str) {
-    if !res.config.water_screen {
+    if !res.config.water_screen || !available() {
         return;
     }
     let max = hit_sfx_limit(res);
@@ -349,7 +363,7 @@ impl Default for WaterState {
 /// 位置公式与 `Note::render` 完全一致（同一套 `base = height - line_height`），否则
 /// 「在屏幕里」会和眼睛看到的差一截。
 pub fn update(note: &mut Note, res: &mut Resource, parent_tr: &Matrix, ctrl_obj: &mut CtrlObject, line_height: f64) {
-    if !res.config.water_screen {
+    if !res.config.water_screen || !available() {
         note.water.last = -1.;
         note.water.in_water = 0.;
         return;

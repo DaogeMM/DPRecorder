@@ -27,6 +27,7 @@ import * as dialog from '@tauri-apps/plugin-dialog';
 import { VForm } from 'vuetify/components';
 
 import { RULES, toast, anyFilter, toastError } from '../common';
+import { isOptionalAppendant } from '../appendant';
 import { DEFAULT_RENDER_CONFIG, type Preset, type RenderConfig } from '../model';
 import { useRenderConfig } from '../config/useRenderConfig';
 import { jumpToFirstError } from '../formError';
@@ -653,6 +654,11 @@ defineExpose({
       <PhiSection id="sec-respack" :title="t('respack')">
         <div class="preset-row">
           <v-combobox density="compact" hide-details="auto" :items="respacks" item-title="name" v-model="respack" style="flex: 1;"></v-combobox>
+          <!-- 选中的包不在 appendant/ 里：标出来，免得点了预览才看到下载提示 -->
+          <!-- 可选包（appendant.official）缺了不标：它会自动退回内置默认皮肤 -->
+          <v-icon v-if="respack && respack.present === false && !isOptionalAppendant(respack.name)" color="warning" :title="t('respack-missing-tip')">
+            mdi-alert-circle-outline
+          </v-icon>
           <v-btn icon="mdi-refresh" variant="text" size="small" :title="t('respack-refresh')" @click="refreshRespacks"></v-btn>
           <v-btn icon="mdi-folder-open-outline" variant="text" size="small" :title="t('respack-open')" @click="openRespackFolder"></v-btn>
         </div>

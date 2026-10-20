@@ -13,7 +13,7 @@ mod task;
 
 use anyhow::{bail, Context, Result};
 use common::{
-    collect_chart_files, create_zip, ensure_dir, get_output_dir, get_presets_json_file,
+    appendant_dir, collect_chart_files, create_zip, ensure_dir, get_output_dir, get_presets_json_file,
     get_presets_toml_file, get_rpe_dir, remove_file_retry, respack_dir, save_presets, AppConfig,
     Extra, CONFIG_DIR, DATA_DIR,
 };
@@ -295,7 +295,9 @@ pub fn run() -> Result<()> {
                 remove_task,
                 move_task,
                 get_respacks,
+                get_appendants,
                 open_respack_folder,
+                open_appendant_folder,
                 get_presets,
                 add_preset,
                 remove_preset,
@@ -303,6 +305,7 @@ pub fn run() -> Result<()> {
                 get_output_dir_path,
                 get_app_dir,
                 get_respack_dir_path,
+                get_appendant_dir_path,
                 read_config,
                 save_config,
                 test_output_dir,
@@ -373,9 +376,9 @@ pub fn run() -> Result<()> {
         )))
         .ok();
 
-    // 便携布局：用户会直接看到的四个文件夹都先在 exe 旁边建好（打包后一打开文件夹就能看到
+    // 便携布局：用户会直接看到的几个文件夹都先在 exe 旁边建好（打包后一打开文件夹就能看到
     // 该放什么、该去哪儿找输出）。建不出来（exe 目录不可写）就跳过，后面各自的解析会兜底。
-    for name in ["config", "respack", "output", "tmp"] {
+    for name in ["config", "respack", "appendant", "output", "tmp"] {
         let dir = exe_dir.join(name);
         if !dir.is_dir() {
             let _ = std::fs::create_dir_all(&dir);
@@ -1152,28 +1155,94 @@ async fn move_task(queue: State<'_, TaskQueue>, id: u32, index: usize) -> Result
     Ok(())
 }
 
+/// 皮肤包现在都不随安装包分发：用户自己下载 zip 放进 `<程序目录>/appendant`。下拉框里
+/// **不管在不在**都列出这三项（`present` 标出有没有），选中后点预览 / 渲染时再提示下载。
+const APPENDANT_SKINS: [&str; 3] = ["appendant.official.zip", "appendant.old.zip", "appendant.retri.zip"];
+
+/// Minecraft 材质拆成两个包：`appendant.lava.zip`（岩浆噪域的基岩贴图与岩浆帧）、
+/// `appendant.water.zip`（进水的水面贴图与受伤音效）。它们不是皮肤包、不出现在下拉框里，
+/// 由「启用岩浆噪域 / 屏幕进水」这类开关触发检查。
+const APPENDANT_MATERIALS: [&str; 2] = ["appendant.lava.zip", "appendant.water.zip"];
+
 #[derive(Serialize)]
 struct RespackInfo {
     name: String,
     path: String,
+    /// 包是否真的在磁盘上（列出来的都是已经存在的；保留这个字段给前端标缺失用）。
+    present: bool,
 }
+
+/// 资源包下拉框的候选：**只列 `respack/` 里的 zip**（用户自己做的皮肤包），再加上前端的
+/// 「默认」项。
+///
+/// `appendant/` 里的皮肤不进这个列表 —— 那是一组程序自己按场合挑的包（official 当默认、
+/// retri 给「报应SP」），不是给用户选的。
 #[tauri::command]
 fn get_respacks() -> Result<Vec<RespackInfo>, InvokeError> {
     (|| {
         let dir = respack_dir()?;
-        let mut names: Vec<RespackInfo> = dir
-            .read_dir()?
-            .filter_map(|it| {
-                it.ok()
-                    .filter(|it| it.path().is_file())
-                    .map(|it| RespackInfo {
-                        name: it.file_name().to_str().unwrap().to_owned(),
-                        path: it.path().canonicalize().unwrap().display().to_string(),
-                    })
+        let mut list = Vec::new();
+        let Ok(entries) = dir.read_dir() else {
+            return Ok(list);
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_zip = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+            if !path.is_file() || !is_zip {
+                continue;
+            }
+            list.push(RespackInfo {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path.display().to_string(),
+                present: true,
+            });
+        }
+        list.sort_by(|x, y| x.name.cmp(&y.name));
+        Ok(list)
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 附带资源包的状态：目录 + 每个已知包在不在。
+#[derive(Serialize)]
+struct AppendantInfo {
+    /// 包文件名（`appendant.official.zip` / `appendant.lava.zip` …）。
+    file: String,
+    /// 绝对路径。缺包时也给出来，界面拿它显示「该放到哪儿」。
+    path: String,
+    present: bool,
+}
+
+#[derive(Serialize)]
+struct AppendantStatus {
+    /// `<程序目录>/appendant` 的绝对路径。
+    dir: String,
+    items: Vec<AppendantInfo>,
+}
+
+#[tauri::command]
+fn get_appendants() -> Result<AppendantStatus, InvokeError> {
+    (|| {
+        let dir = appendant_dir()?;
+        let files: Vec<&str> = APPENDANT_SKINS.iter().chain(APPENDANT_MATERIALS.iter()).copied().collect();
+        let items = files
+            .into_iter()
+            .map(|file| {
+                let path = dir.join(file);
+                AppendantInfo {
+                    file: file.to_owned(),
+                    path: path.display().to_string(),
+                    present: path.is_file(),
+                }
             })
             .collect();
-        names.sort_by(|x, y| x.name.cmp(&y.name));
-        Ok(names)
+        Ok(AppendantStatus {
+            dir: dir.display().to_string(),
+            items,
+        })
     })()
     .map_err(InvokeError::from_anyhow)
 }
@@ -1184,6 +1253,20 @@ fn open_respack_folder() -> Result<(), InvokeError> {
         let path = respack_dir()?;
         info!("Opening respack folder: {}", path.display());
         // 从来没放过资源包时这个目录可能还不存在，先建出来再打开
+        std::fs::create_dir_all(&path)
+            .with_context(|| format!("failed to create {}", path.display()))?;
+        open_folder(&path)?;
+        Ok(())
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+#[tauri::command]
+fn open_appendant_folder() -> Result<(), InvokeError> {
+    (|| {
+        let path = appendant_dir()?;
+        info!("Opening appendant folder: {}", path.display());
+        // 缺包检查 / 设置页都可能先于任何下载来开这个目录：不存在就先建出来
         std::fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
         open_folder(&path)?;
@@ -1285,6 +1368,15 @@ fn get_app_dir() -> Result<String, InvokeError> {
 #[tauri::command]
 fn get_respack_dir_path() -> Result<String, InvokeError> {
     respack_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// 「附带资源包」目录（`<程序目录>/appendant`）的绝对路径 —— 设置页那一格拿它显示成相对写法 `.\appendant`。
+/// 目录本身由 `common::appendant_dir()` 解析并保证存在，这里只读不写。
+#[tauri::command]
+fn get_appendant_dir_path() -> Result<String, InvokeError> {
+    appendant_dir()
         .map(|path| path.to_string_lossy().to_string())
         .map_err(InvokeError::from_anyhow)
 }

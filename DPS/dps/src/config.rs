@@ -310,7 +310,8 @@ pub struct Config {
     /// 噪声斑点会糊在贴图上、填充位移会把矩形边缘撕出锯齿、火花点阵也是多余的一层。
     /// 贴图锚定屏幕、每 1/16 屏高一格（720p 下 45px）、点采样，于是噪域移动/缩放时
     /// 贴图从它下面滑过，不会跟着变形；`block_area_alpha` 照旧控制不透明度。
-    /// 素材在 `assets/Minecraft/netherrock.png` 与 `assets/Minecraft/lava.gif`（仓库根 assets，`include_bytes!` 进二进制）。
+    /// 素材在 `appendant/appendant.lava.zip`（`netherrock.png` 与 `lava.gif`），用户自己下载后放进
+    /// 程序目录下的 `appendant/`；缺包时这个选项不生效。
     /// 默认关闭。
     pub block_area_lava: bool,
 
@@ -337,7 +338,8 @@ pub struct Config {
     pub water_death_time: f32,
     /// 按键死亡瞬间喷出的白色粒子数量。默认 8.。
     pub water_death_particles: f32,
-    /// 按键受伤 / 死亡音效的音量（0~1），音效随机取 assets/Minecraft/hit 里的素材。默认 0.5。
+    /// 按键受伤 / 死亡音效的音量（0~1），音效随机取 `appendant/appendant.water.zip` 里 `hit/` 下的素材
+    /// （缺包则不出声）。默认 0.5。
     pub water_sfx_volume: f32,
     /// 受伤 / 死亡音效的并发上限：同一时刻最多同时响几个（夹到 1~512，小数向下取整）。
     /// 默认 500.（实际上等于不限）。

@@ -126,20 +126,24 @@ static DISPLACE_TEX: Lazy<Texture2D> = Lazy::new(|| tex(include_bytes!("../../..
 static SPARK_TEX: Lazy<Texture2D> = Lazy::new(|| tex(include_bytes!("../../../../../../assets/blockarea/PointNoise.png"), TextureWrap::Repeat));
 static EMPTY_TEX: Lazy<Texture2D> = Lazy::new(|| Texture2D::from_rgba8(4, 4, &[0; 64]));
 
-/// 「岩浆噪域」用的两张 Minecraft 贴图（随仓库分发，在 `assets/Minecraft/`）。
+/// 「岩浆噪域」用的两张 Minecraft 贴图（在附带资源包 `appendant/appendant.lava.zip` 里，不随程序分发）。
 ///
 /// `netherrock.png` 16×16 单帧；`lava.gif` 32×32、16 帧、每帧 160ms —— 这里把 16 帧各解成
 /// 一张纹理，按 [`LAVA_FRAME_SECONDS`] 在 Rust 侧选帧（采样器一次只认一张纹理，换帧就是换绑定，
 /// 也不需要在绘制中途上传纹理）。两张都按「屏幕高 1/16 一格」平铺、点采样 ⇒ MC 的颗粒感。
 ///
 /// 采样是**屏幕空间**的（`sceneUV`），所以噪域移动/缩放时贴图从它下面滑过，不会跟着变形。
+///
+/// 缺包时两张都是 `None` / 空表，[`lava_mode`] 会把岩浆模式退回 0（噪域保持官方原样）。
 const LAVA_CELLS_PER_SCREEN_HEIGHT: f32 = 16.;
 const LAVA_FRAME_SECONDS: f32 = 0.16;
-static NETHERROCK_TEX: Lazy<Texture2D> =
-    Lazy::new(|| tex(include_bytes!("../../../../../../assets/Minecraft/netherrock.png"), TextureWrap::Repeat));
+static NETHERROCK_TEX: Lazy<Option<Texture2D>> =
+    Lazy::new(|| crate::core::appendant::netherrock_image().map(|bytes| tex(&bytes, TextureWrap::Repeat)));
 static LAVA_FRAMES: Lazy<Vec<Texture2D>> = Lazy::new(|| {
     use image::AnimationDecoder;
-    let bytes: &[u8] = include_bytes!("../../../../../../assets/Minecraft/lava.gif");
+    let Some(bytes) = crate::core::appendant::lava_image() else {
+        return Vec::new();
+    };
     let Ok(decoder) = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)) else {
         // 素材坏了也只是「岩浆噪域」没有贴图可贴，不该让整个渲染崩掉。
         return Vec::new();
@@ -149,6 +153,15 @@ static LAVA_FRAMES: Lazy<Vec<Texture2D>> = Lazy::new(|| {
         Err(_) => Vec::new(),
     }
 });
+
+/// 「岩浆噪域」实际能用的模式：素材缺失（或读坏了）就退回 0，让噪域保持官方原样。
+fn lava_mode(lava: u8) -> u8 {
+    match lava {
+        1 if NETHERROCK_TEX.is_some() => 1,
+        2 if !LAVA_FRAMES.is_empty() => 2,
+        _ => 0,
+    }
+}
 
 /// 当前该绑哪一帧 lava。时间用 `res.time`（`FRAME` 里的帧时钟），所以全场岩浆同步跳动。
 fn lava_frame(time: f32) -> Texture2D {
@@ -893,9 +906,11 @@ fn draw_layer_at(
         m.set_texture("uAuxMasks", frame.aux.unwrap());
         m.set_texture("uNoiseTex", *NOISE_TEX);
         // 「岩浆噪域」：`lava` 0 = 关闭（绑空纹理并把 `_LavaMode` 归零 ⇒ 官方原样），
-        // 1 = netherrock（还没生效那一段），2 = lava 的当前动画帧。只有简化噪域会传非 0。
+        // 1 = netherrock（还没生效那一段），2 = lava 的当前动画帧。只有简化噪域会传非 0；
+        // 附带资源包缺素材时 `lava_mode` 已经把它折回 0。
+        let lava = lava_mode(lava);
         match lava {
-            1 => m.set_texture("_LavaTex", *NETHERROCK_TEX),
+            1 => m.set_texture("_LavaTex", NETHERROCK_TEX.unwrap_or(*EMPTY_TEX)),
             2 => m.set_texture("_LavaTex", lava_frame(time)),
             _ => m.set_texture("_LavaTex", *EMPTY_TEX),
         }

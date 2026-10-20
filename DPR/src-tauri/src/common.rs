@@ -202,6 +202,60 @@ pub fn respack_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// 附带资源包目录：`<程序目录>/appendant`，放用户自己下载的 zip（皮肤包、Minecraft 材质等）。
+///
+/// 这些包**不随程序分发**，缺了不算错误：界面在用户启用对应功能时提示去下载。
+/// 程序目录不可写时（例如装在 Program Files）退回配置目录里的 `appendant`。
+pub fn appendant_dir() -> Result<PathBuf> {
+    // 先在程序目录里找（用户看得见、和 exe 放一起最直观）；写不进去才退配置目录。
+    // 预览子进程没有 `CONFIG_DIR`，所以这一步不能依赖它，否则子进程读不到任何附带包。
+    if let Some(dir) = exe_dir().map(|dir| dir.join("appendant")) {
+        if dir.is_dir() {
+            return Ok(dir);
+        }
+        if std::fs::create_dir(&dir).is_ok() {
+            return Ok(dir);
+        }
+    }
+    let Some(config_dir) = CONFIG_DIR.get() else {
+        bail!("appendant directory is unavailable");
+    };
+    let dir = config_dir.join("appendant");
+    if dir.exists() {
+        if !dir.is_dir() {
+            bail!("appendant directory is not a directory");
+        }
+    } else {
+        std::fs::create_dir(&dir)?;
+    }
+    Ok(dir)
+}
+
+/// 「默认」皮肤包：`appendant/appendant.official.zip`（或同名目录）。
+///
+/// 这个包**可选**：不在就退回编进程序的内置皮肤，界面不该为此提示下载；在的话就当默认皮肤用。
+pub fn default_respack_path() -> Option<String> {
+    let dir = appendant_dir().ok()?;
+    for name in ["appendant.official.zip", "appendant.official"] {
+        let path = dir.join(name);
+        if path.exists() {
+            return Some(path.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// 解析配置里选的资源包路径。
+///
+/// 没选（`None`）与「选中的包已经被用户删掉」都退回默认皮肤 —— 后者前端会拦，但配置可能来自
+/// 别处（命令行参数、旧配置文件），后端不该拿着一个不存在的路径去加载。
+pub fn resolve_respack_path(path: Option<String>) -> Option<String> {
+    match path {
+        Some(path) if std::path::Path::new(&path).exists() => Some(path),
+        _ => default_respack_path(),
+    }
+}
+
 pub fn get_presets_toml_file() -> Result<PathBuf> {
     let file = CONFIG_DIR.get().unwrap().join("presets.toml");
     if file.exists() && !file.is_file() {

@@ -1138,6 +1138,10 @@ impl GameScene {
                 let mut text = ui.text(&res.config.combo).size(0.34 * scale_ratio);
                 let ct = text.measure().center();
                 self.chart.with_element(ui, res, UIElement::Combo, Some((0., btm + ct.y)), Some((0., btm + ct.y)), |ui, color| {
+                    if res.config.combo == "debug.uncovertext.autoplay" {
+                        draw_text_aligned(ui, "COMBO", 0., btm + ct.y, (0.5, 0.5), 0.34 * scale_ratio, Color { a: color.a * c.a, ..color });
+                        return;
+                    }
                     if (cfg!(feature = "play") && res.config.autoplay()) || validate_combo(&res.config.combo) || res.config.combo.len() > 50 {
                         draw_text_aligned(ui, "AUTOPLAY", 0., btm + ct.y, (0.5, 0.5), 0.34 * scale_ratio, Color { a: color.a * c.a, ..color });
                         return;

@@ -102,6 +102,14 @@ export interface RespackItem {
   name: string;
   path: string | null;
   index: number;
+  /**
+   * 包文件是否真的在磁盘上。
+   *
+   * `new` / `old` / `RetriSP` 三个皮肤包不再随程序分发，用户要把下载到的 zip 放进
+   * `<程序目录>/appendant`；缺包时下拉框里照样有这一项（否则没法先选中），
+   * 点预览 / 渲染时再提示下载。
+   */
+  present?: boolean;
 }
 
 /**

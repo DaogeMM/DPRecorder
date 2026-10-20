@@ -1143,16 +1143,30 @@ fn matches_chart_stem(path: &Path, stem: &str) -> bool {
 
 /// 「报应SP」谱面要用的资源包路径。
 ///
-/// 这个演出的手绘数字、曲名 logo 与按键贴图都在 `RetriSP` 包里，跟着配置里选的材质包走会缺图，
-/// 所以该谱面直接钉在 `RetriSP` 上；优先用打包好的 zip，没有就指向解包目录。
+/// 这个演出的手绘数字、曲名 logo 与按键贴图都在 `appendant.retri` 包里，跟着配置里选的皮肤走会缺图，
+/// 所以该谱面直接钉在它上面；优先用附带资源包目录里的 zip（`appendant/appendant.retri.zip`），
+/// 其次老的 `assets/respack/RetriSP{,.zip}`，都没有就返回 `None`（退回内置默认皮肤）。
 fn baoying_sp_respack_path() -> Option<String> {
-    let root = ASSET_PATH.get()?.join("respack");
-    let zip = root.join("RetriSP.zip");
-    if zip.exists() {
-        return Some(zip.to_string_lossy().into_owned());
+    let mut roots = Vec::new();
+    if let Ok(dir) = crate::common::appendant_dir() {
+        roots.push(dir);
     }
-    let dir = root.join("RetriSP");
-    dir.exists().then(|| dir.to_string_lossy().into_owned())
+    if let Some(assets) = ASSET_PATH.get() {
+        roots.push(assets.join("respack"));
+    }
+    for root in roots {
+        for name in [dps::core::appendant::RETRI, "RetriSP"] {
+            let zip = root.join(format!("{name}.zip"));
+            if zip.exists() {
+                return Some(zip.to_string_lossy().into_owned());
+            }
+            let dir = root.join(name);
+            if dir.exists() {
+                return Some(dir.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
 }
 
 pub async fn generate_resource(
@@ -1194,7 +1208,8 @@ pub async fn generate_resource(
         config.xuejiang_sp = is_xuejiang_sp_chart(Path::new(&path));
         if is_baoying_sp_chart(Path::new(&path)) {
             config.baoying_sp = true;
-            config.res_pack_path = baoying_sp_respack_path();
+            // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
+            config.res_pack_path = baoying_sp_respack_path().or_else(crate::common::default_respack_path);
         }
 
         let mut fs = fs::fs_from_file(path.as_ref())?;
@@ -1250,7 +1265,8 @@ pub async fn generate_resource(
         config.xuejiang_sp = is_xuejiang_sp_chart(&path);
         if is_baoying_sp_chart(&path) {
             config.baoying_sp = true;
-            config.res_pack_path = baoying_sp_respack_path();
+            // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
+            config.res_pack_path = baoying_sp_respack_path().or_else(crate::common::default_respack_path);
         }
         let info = params.info;
 
@@ -1310,13 +1326,9 @@ pub async fn main(cmd: bool) -> Result<()> {
     let volume_sfx = std::mem::take(&mut config.volume_sfx);
     let mut prpr_config = config.to_config();
     prpr_config.mods = Mods::AUTOPLAY;
-    let respack_root = ASSET_PATH.get().unwrap().join("respack");
-    let respack_path = config
-        .res_pack_path
-        .clone()
-        .unwrap_or_else(|| respack_root.join("new").to_string_lossy().into_owned());
-    config.res_pack_path = Some(respack_path.clone());
-    prpr_config.res_pack_path = Some(respack_path);
+    // 资源包：跟着 config 里选的那份走；没选、或选中的包已被删掉，就用默认皮肤
+    // （`appendant.official` 在的话优先，否则用程序自带的那份 `assets/respack`）。
+    prpr_config.res_pack_path = crate::common::resolve_respack_path(config.res_pack_path.clone());
     let Some(ffmpeg) = find_ffmpeg()? else {
         bail!("FFmpeg not found")
     };
@@ -1349,7 +1361,7 @@ pub async fn main(cmd: bool) -> Result<()> {
     let (chart, format) = GameScene::load_chart(fs.deref_mut(), &info, &prpr_config)
         .await
         .with_context(|| tl!("load-chart-failed"))?;
-    let res_pack = ResourcePack::from_path(config.res_pack_path.as_ref())
+    let res_pack = ResourcePack::from_path(prpr_config.res_pack_path.as_ref())
         .await
         .context("Failed to load resource pack")?;
     let sample_rate = 48000;
@@ -2333,7 +2345,7 @@ fn write_silent_wav(ffmpeg: &str, output: &Path, sample_rate: u32, samples: usiz
 ///
 /// 进水音效由引擎实时播放（`sasa::Sfx`），而主 ffmpeg 进程在开跑前就要拿到三条 wav 轨，
 /// 所以只能等视频写完再补一遍：`-c:v copy` 只重混音频、不重编码画面，代价很小。
-/// 素材（[`dps::core::water::HIT_SFX_BYTES`]）是 44.1 kHz 的 mp3，这里线性重采样到音轨的
+/// 素材（[`dps::core::water::hit_sfx_bytes`]）是 44.1 kHz 的 mp3，这里线性重采样到音轨的
 /// 48 kHz；事件时刻是引擎的**谱面时间**，按「音符音效」那套公式换算成视频里的位置
 /// （`before_time + (t - play_start_time) * speed_time_ratio`）。
 /// 音量已由引擎按 `water_sfx_volume` 施加在事件里，这里不再乘全局 `volume_sfx`（与实时播放一致）。
@@ -2356,7 +2368,7 @@ fn mix_water_sfx(
 
     // 1) 解码素材，统一成目标采样率的立体声交错样本
     let mut sources: Vec<Vec<f32>> = Vec::new();
-    for bytes in dps::core::water::HIT_SFX_BYTES.iter() {
+    for bytes in dps::core::water::hit_sfx_bytes().iter() {
         let clip = AudioClip::new(bytes.to_vec()).context("decode water sfx")?;
         let rate = clip.sample_rate().max(1) as f64;
         let data = clip.to_vec();

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useI18n } from 'vue-i18n';
@@ -8,8 +8,22 @@ const { t } = useI18n();
 import { invoke } from '@tauri-apps/api/core';
 import { event } from '@tauri-apps/api';
 
-import { toastError, RULES, toast, anyFilter, isString } from './common';
+import { toastError, RULES, toast, anyFilter, isString, openExternal } from './common';
 import { DEFAULT_APP_CONFIG } from './model';
+import {
+  APPENDANT_DOWNLOAD_PASSWORD,
+  APPENDANT_DOWNLOAD_URL,
+  appendantItem,
+  appendantUrl,
+  fetchAppendants,
+  isBaoyingSpChart,
+  isOptionalAppendant,
+  lavaPack,
+  missingAppendant,
+  openAppendantDir,
+  waterPack,
+} from './appendant';
+import type { AppendantItem } from './appendant';
 import { formatLvl, useLvlField } from './lvl';
 import type { AppConfig, ChartInfo, FileDropEvent, RenderConfig } from './model';
 import type { WorkingState } from './config/types';
@@ -206,10 +220,65 @@ document.addEventListener('keydown', async (event) => {
 const form = ref<VForm>();
 
 const configView = ref<typeof ConfigView>();
+
+/* ------------------------- 附带资源包（appendant） -------------------------
+ * 皮肤包与 Minecraft 材质包不随程序分发，用户自己下载 zip 放进 `<程序目录>/appendant`。
+ * 选中了缺的包（或开了需要 Minecraft 材质的特效）时，不发请求，先弹窗告诉用户下载与放哪。 */
+const appendantDialog = ref(false);
+const appendantMissing = ref<AppendantItem[]>([]);
+const appendantDir = ref('');
+
+const appendantMissingText = computed(() =>
+  appendantMissing.value.map((it) => t('appendant-missing-detail', { file: it.file, dir: appendantDir.value })).join('\n\n')
+);
+
+/**
+ * 检查这次渲染要用到的资源包是不是都在。
+ *
+ * 缺包就弹窗并返回 `false`：资源加载不了，渲染进程会直接报错退出，不如在界面先拦一道。
+ * 读不到状态（后端异常）时不拦，交给后面的正常流程报错。
+ */
+async function checkAppendants(config: RenderConfig) {
+  let status;
+  try {
+    status = await fetchAppendants();
+  } catch (e) {
+    console.warn(e);
+    return true;
+  }
+  const missing: AppendantItem[] = [];
+  const addMissing = (item: AppendantItem | null | undefined) => {
+    // 可选包（`appendant.official`）缺了不算缺：后端会自动退回内置默认皮肤
+    if (item && !item.present && !isOptionalAppendant(item.file) && !missing.some((it) => it.file.toLowerCase() === item.file.toLowerCase()))
+      missing.push(item);
+  };
+  addMissing(missingAppendant(status, config.resPackPath));
+  // 岩浆噪域读 appendant.lava.zip（基岩贴图 + 岩浆帧），屏幕进水（含水下受伤音效）读 appendant.water.zip
+  if (config.blockAreaLava) addMissing(lavaPack(status));
+  if (config.waterScreen) addMissing(waterPack(status));
+  // 「报应SP」谱面固定钉在 appendant.retri.zip 上，配置里选别的皮肤也换不掉
+  if (isBaoyingSpChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.retri.zip'));
+  if (!missing.length) return true;
+  appendantDir.value = status.dir;
+  appendantMissing.value = missing;
+  appendantDialog.value = true;
+  return false;
+}
+
+async function openMissingDownload() {
+  const url = appendantMissing.value.map((it) => appendantUrl(it.file)).find((it) => !!it);
+  if (!url) {
+    toast(t('appendant-no-download'), 'info');
+    return;
+  }
+  await openExternal(url);
+}
+
 async function buildParams() {
   if (!(await checkInfo())) return null;
   let config = await configView.value!.buildConfig();
   if (!config) return null;
+  if (!(await checkAppendants(config))) return null;
   // 谱面侧渲染参数（宽高比 / 强制宽高比 / 折叠式入场 / 判定线长度 / 总分 / 预览起止 / 偏移 /
   // 背景压暗 …）现在是配置项：**以配置为准**，所以展开在谱面信息**之后**覆盖同名键。
   // 其余键（名称 / 难度 / 曲绘 / Tip …）仍然来自解析出来的 chartInfo。
@@ -652,6 +721,24 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
     <v-overlay v-model="loadingParsingChart" contained class="align-center justify-center" persistent :close-on-content-click="false">
       <v-progress-circular indeterminate> </v-progress-circular>
     </v-overlay>
+    <!-- 附带资源包缺失：皮肤包与材质包要用户自己下载后放进 appendant/ -->
+    <v-dialog v-model="appendantDialog" width="auto" min-width="400px" class="log-card-bg">
+      <v-card class="log-card-window">
+        <v-card-title v-t="'appendant-missing-title'"></v-card-title>
+        <v-card-text>
+          <div class="block select wrap" style="max-height: 60vh; white-space: pre-wrap">{{ appendantMissingText }}</div>
+          <!-- 两段文案里都有 `\n`：必须 pre-wrap，否则整个提示挤成一行 -->
+          <div class="mt-3" style="white-space: pre-wrap">
+            {{ t('appendant-download-hint', { url: APPENDANT_DOWNLOAD_URL, password: APPENDANT_DOWNLOAD_PASSWORD }) }}
+          </div>
+        </v-card-text>
+        <v-card-actions class="justify-end">
+          <v-btn variant="text" v-t="'appendant-open-download'" @click="openMissingDownload"></v-btn>
+          <v-btn variant="text" v-t="'appendant-open-folder'" @click="openAppendantDir()"></v-btn>
+          <v-btn color="btn" class="hover-scale" variant="text" @click="appendantDialog = false" v-t="'confirm'"></v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 

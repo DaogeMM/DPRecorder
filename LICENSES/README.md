@@ -30,7 +30,7 @@
 
 ## 3. 不在 GPL-3.0 覆盖范围内的素材
 
-字体（Exo / halva / bold / Sarasa UI SC 等）、`assets/Minecraft/` 的贴图与打击音效（© Mojang AB）、`assets/respack/` 与 `assets/rank/` 里的社区资源包 —— 版权归各自权利人，各依其自身许可条款（多为字体自身的 SIL OFL / 商用许可或「仅供非商业使用」声明），**不适用本仓库的 GPL-3.0**。详见 [`../NOTICE`](../NOTICE) 第 3 节。
+字体（Exo / halva / bold / Sarasa UI SC 等）、`assets/rank/` 里的社区资源包 —— 版权归各自权利人，各依其自身许可条款（多为字体自身的 SIL OFL / 商用许可或「仅供非商业使用」声明），**不适用本仓库的 GPL-3.0**。皮肤包（`appendant.official.zip` / `appendant.old.zip` / `appendant.retri.zip`）与材质包（`appendant.lava.zip` / `appendant.water.zip`）**不在仓库里、也不进安装包**：作者把它们放在网盘 <https://daogemm.lanzouc.com/b0018qnkxi>（密码 `dgmm`），由用户下载后放进程序目录的 `appendant/`。详见 [`../NOTICE`](../NOTICE) 第 4 节。
 
 ## 4. 要补的东西
 

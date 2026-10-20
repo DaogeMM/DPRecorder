@@ -69,14 +69,9 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
 
     set_pc_assets_folder(ASSET_PATH.get().unwrap().to_str().unwrap());
     let mut prpr_config: Config = config.to_config();
-    // 资源包：跟着 config 里选的那份走，没设置就用 assets/respack/new
-    let respack_root = ASSET_PATH.get().unwrap().join("respack");
-    prpr_config.res_pack_path = Some(
-        config
-            .res_pack_path
-            .clone()
-            .unwrap_or_else(|| respack_root.join("new").to_string_lossy().into_owned()),
-    );
+    // 资源包：跟着 config 里选的那份走；没选、或选中的包已被删掉，就用默认皮肤
+    // （`appendant.official` 在的话优先，否则用程序自带的那份 `assets/respack`）。
+    prpr_config.res_pack_path = crate::common::resolve_respack_path(config.res_pack_path.clone());
     if autoplay {
         prpr_config.mods |= Mods::AUTOPLAY;
     }

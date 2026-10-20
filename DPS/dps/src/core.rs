@@ -19,6 +19,8 @@ pub use block_area::{
     BlockAreaStyle, BlockGroup, BlockPhase, NativeBlocks, NextArea, NextTempo, Zone, EASE_LINEAR, EASE_ONE, EASE_ZERO,
 };
 
+pub mod appendant;
+
 mod chart;
 pub use chart::{Chart, ChartExtra, ChartSettings, HitSoundMap};
 

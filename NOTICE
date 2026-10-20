@@ -43,11 +43,17 @@
 
 ## 4. 第三方素材（不在 GPL-3.0 覆盖范围内）
 
-- `assets/Minecraft/` 的贴图与打击音效 © Mojang AB。
-- `assets/respack/`、`assets/rank/`、`ui-font.ttf` 等来自 Phira 及其社区资源包，版权归各自作者。
+### 4.1 随本仓库分发的
+
+- `assets/rank/`、`ui-font.ttf` 等来自 Phira 及其社区资源包，版权归各自作者。
 - 字体（Exo / halva / bold / Sarasa UI SC 等）版权归各自字体作者。
+- `assets/respack/` 里的内置默认皮肤（根上那几张 png 与 `info.yml`）版权归其作者。
 
 这些素材**不属于本项目的版权范围**，随程序分发只是为了让程序开箱可用；权利人如要求，会立即移除。
+
+### 4.2 不随本仓库、也不随安装包分发的
+
+皮肤包 `appendant.official.zip`（官方皮肤）/ `appendant.old.zip`（旧版皮肤）/ `appendant.retri.zip`（「报应SP」用的手绘皮肤）与材质包 `appendant.lava.zip`（基岩贴图 `netherrock.png` + 岩浆帧 `lava.gif`）/ `appendant.water.zip`（水面 `water.png` + 受伤音效 `hit/hit-1.mp3`、`hit/hit-2.mp3`）**都不在本仓库里**：作者把它们放在网盘 <https://daogemm.lanzouc.com/b0018qnkxi>（密码 `dgmm`），由用户自己下载后放进程序目录的 `appendant/`，程序启动时按需读取。版权归各自作者（Minecraft 材质 © Mojang AB），同样不属于本项目的版权范围，本项目的任何产物都不包含它们。
 
 ## 5. 致谢
 

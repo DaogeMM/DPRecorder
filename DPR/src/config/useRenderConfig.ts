@@ -18,7 +18,7 @@ import { isNumeric, toast } from '../common';
 import { DEFAULT_RENDER_CONFIG, type RenderConfig } from '../model';
 import { RENDER_FIELDS } from './fields';
 import { defaultConfigValue, defaultUiValue } from './convert';
-import type { FieldContext, FieldSpec, UiState } from './types';
+import type { FieldContext, FieldSpec, RespackItem, UiState } from './types';
 
 export { DEFAULT_RGB, hexToRgb, rgbToHex } from './convert';
 
@@ -130,15 +130,19 @@ export function useRenderConfig() {
   };
 
   /* ------------------------ 材质包（异步） ------------------------ */
-  type Respack = { name: string; path: string | null; index: number };
-  const DEFAULT_RESPACK: Respack = { name: t('respack-default'), path: null, index: 0 };
+  type Respack = RespackItem;
+  const DEFAULT_RESPACK: Respack = { name: t('respack-default'), path: null, index: 0, present: true };
   const respacks = ref<Respack[]>([DEFAULT_RESPACK]);
 
+  /** 下拉框里的资源包：内置默认皮肤 + `appendant/` 里的包。缺包的项也列着（`present` 假），
+   *  选中后点预览 / 渲染时再提示下载 —— 不列出来就没法先选中再下载。 */
   async function getRespacks(): Promise<Respack[]> {
-    return [DEFAULT_RESPACK, ...((await invoke('get_respacks')) as { name: string; path: string }[])].map((obj, index) => ({
+    const list = (await invoke('get_respacks')) as { name: string; path: string; present?: boolean }[];
+    return [DEFAULT_RESPACK, ...list].map((obj, index) => ({
       name: obj.name,
       path: obj.path,
       index: index + 1,
+      present: obj.present,
     }));
   }
 
@@ -377,7 +381,8 @@ export function useRenderConfig() {
     const current = ui.respack as Respack | undefined;
     const next = respacks.value.find((x) => x.name === current?.name) || respacks.value[0];
     if (!next) return false;
-    if (current && next.name === current.name && next.path === current.path) return false;
+    if (current && next.name === current.name && next.path === current.path && !current.present === !next.present)
+      return false;
     ui.respack = next;
     return true;
   }
