@@ -258,8 +258,16 @@ impl Chart {
                 }
             }
 
+            // 「痉挛SP」：正中的插画垫在判定线与按键下面。
+            crate::core::jingluan_sp::render(res);
+
             let mut guard = self.bpm_list.borrow_mut();
             for id in &self.order {
+                // 「痉挛SP」：谱面里摆在正中、没有音符、只用来被插画顶替的判定线不画
+                //（不管谱面把它们的 `alpha` 写成多少）；按键所在那根线照常显示。
+                if res.config.jingluan_sp_mode && self.lines[*id].notes.is_empty() {
+                    continue;
+                }
                 self.lines[*id].render(ui, res, &self.lines, &mut guard, &self.settings, *id);
             }
             drop(guard);

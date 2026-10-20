@@ -233,6 +233,37 @@ pub struct Config {
     pub baoying_sp_hit_fx_rotate: bool,
     /// 「报应SP」打击特效：粒子数（0 表示不画粒子）
     pub baoying_sp_particle_count: u32,
+    /// 「痉挛SP」演出：正中判定线的位置按时间段换成插画。
+    /// 由输入谱面文件名强制开启，不暴露成配置项。
+    ///
+    /// 插画由 `appendant/appendant.spas.zip` 提供（不随程序分发），缺包时这段演出静默不画。
+    pub jingluan_sp_mode: bool,
+    /// 「痉挛SP」演出：第一段（`SpasmodicChan`）插画高度占画面高度的比例
+    pub jingluan_sp_chan_height: f32,
+    /// 「痉挛SP」演出：第一段插画的上下偏移（正数向下，按画面高度计）
+    pub jingluan_sp_chan_offset_y: f32,
+    /// 「痉挛SP」演出：第一段插画淡入所需的秒数（0 表示直接出现）
+    pub jingluan_sp_chan_fade_in: f32,
+    /// 「痉挛SP」演出：第一段插画淡出所需的秒数（0 表示到点直接消失）
+    pub jingluan_sp_chan_fade_out: f32,
+    /// 「痉挛SP」演出：第二段（「光」）插画高度占画面高度的比例
+    pub jingluan_sp_guang_height: f32,
+    /// 「痉挛SP」演出：第二段插画的上下偏移（正数向下，按画面高度计）
+    pub jingluan_sp_guang_offset_y: f32,
+    /// 「痉挛SP」演出：第二段插画淡入所需的秒数
+    pub jingluan_sp_guang_fade_in: f32,
+    /// 「痉挛SP」演出：第二段插画淡出所需的秒数
+    pub jingluan_sp_guang_fade_out: f32,
+    /// 「痉挛SP」演出：第三段（「もぺもぺ」）插画高度占画面高度的比例
+    pub jingluan_sp_mopemope_height: f32,
+    /// 「痉挛SP」演出：第三段插画的上下偏移（正数向下，按画面高度计）
+    pub jingluan_sp_mopemope_offset_y: f32,
+    /// 「痉挛SP」演出：第三段插画淡入所需的秒数
+    pub jingluan_sp_mopemope_fade_in: f32,
+    /// 「痉挛SP」演出：第三段插画淡出所需的秒数
+    pub jingluan_sp_mopemope_fade_out: f32,
+    /// 「痉挛SP」演出：插画的压暗程度（0 = 不压暗，1 = 全黑；和背景的压暗无关，单独设置）
+    pub jingluan_sp_dim: f32,
     pub render_bg: bool,
     pub render_bg_dim: bool,
     /// Phigros 4.0 `blockAreaList` 剧情遮挡区域（默认开启）
@@ -613,6 +644,20 @@ impl Default for Config {
             baoying_sp_hit_fx_scale: 0.5,
             baoying_sp_hit_fx_rotate: false,
             baoying_sp_particle_count: 0,
+            jingluan_sp_mode: false,
+            jingluan_sp_chan_height: 0.99,
+            jingluan_sp_chan_offset_y: -0.1,
+            jingluan_sp_chan_fade_in: 0.,
+            jingluan_sp_chan_fade_out: 0.,
+            jingluan_sp_guang_height: 1.0,
+            jingluan_sp_guang_offset_y: 0.,
+            jingluan_sp_guang_fade_in: 0.,
+            jingluan_sp_guang_fade_out: 0.,
+            jingluan_sp_mopemope_height: 1.0,
+            jingluan_sp_mopemope_offset_y: 0.,
+            jingluan_sp_mopemope_fade_in: 0.,
+            jingluan_sp_mopemope_fade_out: 0.,
+            jingluan_sp_dim: 0.18,
             render_bg: true,
             render_bg_dim: true,
             render_block_area: true,

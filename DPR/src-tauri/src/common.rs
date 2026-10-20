@@ -233,25 +233,21 @@ pub fn appendant_dir() -> Result<PathBuf> {
 
 /// 「默认」皮肤包：`appendant/appendant.official.zip`（或同名目录）。
 ///
-/// 这个包**可选**：不在就退回编进程序的内置皮肤，界面不该为此提示下载；在的话就当默认皮肤用。
+/// 这个包**可选**：不在（或里面缺文件）就退回编进程序的内置皮肤，界面不该为此提示下载；
+/// 齐全时当默认皮肤用。
 pub fn default_respack_path() -> Option<String> {
     let dir = appendant_dir().ok()?;
-    for name in ["appendant.official.zip", "appendant.official"] {
-        let path = dir.join(name);
-        if path.exists() {
-            return Some(path.to_string_lossy().into_owned());
-        }
-    }
-    None
+    let pack = dps::core::appendant::pack_in(&dir, dps::core::appendant::OFFICIAL)?;
+    dps::core::appendant::has_files(&pack, dps::core::appendant::SKIN_FILES).then(|| pack.to_string_lossy().into_owned())
 }
 
 /// 解析配置里选的资源包路径。
 ///
-/// 没选（`None`）与「选中的包已经被用户删掉」都退回默认皮肤 —— 后者前端会拦，但配置可能来自
-/// 别处（命令行参数、旧配置文件），后端不该拿着一个不存在的路径去加载。
+/// 没选（`None`）、「选中的包已经被用户删掉」、以及「包在但缺文件」都退回默认皮肤 —— 后者前端
+/// 会拦，但配置可能来自别处（命令行参数、旧配置文件），后端不该拿着一个加载不了的路径硬读。
 pub fn resolve_respack_path(path: Option<String>) -> Option<String> {
     match path {
-        Some(path) if std::path::Path::new(&path).exists() => Some(path),
+        Some(path) if dps::core::appendant::has_files(Path::new(&path), dps::core::appendant::SKIN_FILES) => Some(path),
         _ => default_respack_path(),
     }
 }

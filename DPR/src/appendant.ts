@@ -14,9 +14,16 @@ import { invoke } from '@tauri-apps/api/core';
 export interface AppendantItem {
   /** 包文件名，例如 `appendant.official.zip`。 */
   file: string;
-  /** 绝对路径。缺包时也给出，界面用它告诉用户该放到哪儿。 */
+  /** 包所在位置（zip 或同名目录）；缺包时给出「该放哪儿」的 zip 路径。 */
   path: string;
+  /** 包在不在（`<包名>.zip` 或同名目录都算在）。 */
+  found?: boolean;
+  /** 能不能用：包在、且必需文件齐全。缺文件时也是 false。 */
   present: boolean;
+  /** 包里缺哪些文件；包整个不在时就是整张必需文件表。 */
+  missing?: string[];
+  /** 这个包该放在哪个目录（`respack/` 里的自备皮肤与 `appendant/` 里的包不同），缺省用 appendant 目录。 */
+  dir?: string;
 }
 
 export interface AppendantStatus {
@@ -38,11 +45,32 @@ export const APPENDANT_FILES = [
   'appendant.retri.zip',
   'appendant.lava.zip',
   'appendant.water.zip',
+  'appendant.spas.zip',
 ] as const;
 
-/** 读取附带资源包状态（目录 + 每个包在不在）。 */
+/** 读取附带资源包状态（目录 + 每个包在不在、缺不缺文件）。 */
 export async function fetchAppendants(): Promise<AppendantStatus> {
   return (await invoke('get_appendants')) as AppendantStatus;
+}
+
+/** `respack/` 里的用户自备皮肤包（下拉框的候选，不含「默认」那一项）。 */
+export interface RespackStatus {
+  name: string;
+  path: string;
+  /** 能不能用：zip 在、且必需文件齐全。 */
+  present: boolean;
+  /** 包里缺哪些文件（齐全时为空）。 */
+  missing: string[];
+}
+
+/** 读取 `respack/` 里自备皮肤包的状态，用来判断选中的那个是不是缺文件。 */
+export async function fetchRespacks(): Promise<RespackStatus[]> {
+  return (await invoke('get_respacks')) as RespackStatus[];
+}
+
+/** `respack/` 目录的绝对路径（缺包提示里要写「该放到哪儿」）。 */
+export async function fetchRespackDir(): Promise<string> {
+  return (await invoke('get_respack_dir_path')) as string;
 }
 
 /** 打开附带资源包目录（不存在时后端会先建出来）。 */
@@ -103,4 +131,13 @@ export function waterPack(status: AppendantStatus): AppendantItem | undefined {
  */
 export function isBaoyingSpChart(path: string | null | undefined): boolean {
   return !!path && /Retribution~CycleofRedemption~/i.test(path);
+}
+
+/**
+ * 「痉挛SP」谱面：正中的插图演出取自 `appendant.spas.zip`，缺包时那几段时间什么都不画。
+ *
+ * 判据与后端 `render.rs::is_jingluan_sp_chart` 一致。
+ */
+export function isJingluanSpChart(path: string | null | undefined): boolean {
+  return !!path && /SpasmodicHaocoreMix/i.test(path);
 }

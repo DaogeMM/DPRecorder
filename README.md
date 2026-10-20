@@ -9,7 +9,7 @@
 | --- | --- |
 | `DPS/` | 引擎与播放器，5 个 crate：`dps`（核心库）、`dps-ui`、`dps-main`（瘦入口 exe）、`prpr-avc`（音视频编解码）、`prpr-pbc`（谱面转换 CLI） |
 | `DPR/` | Tauri 2 桌面端：`DPR/src/` 是 Vue 3 + Vuetify 界面，`DPR/src-tauri/` 是 Rust 后端（crate `dpr`，exe `dpr.exe`） |
-| `assets/` | 随仓库分发的运行资源：内置默认皮肤（`assets/respack/`）、字体、音效、图标（`assets/rank/`）。皮肤包与 Minecraft 材质**不在仓库里**，由用户自己放进程序目录的 `appendant/` |
+| `assets/` | 随仓库分发的运行资源（默认皮肤、字体、音效、图标）；附加的皮肤与材质已拆分出去，见下面「许可与出处」 |
 | `Cargo.toml` | 工作区根，6 个成员：`DPS/` 的 5 个 + `DPR/src-tauri` |
 
 ## fork 网络
@@ -59,8 +59,8 @@ cargo tauri build               # 出安装包 → <仓库根>\target\release\bu
 - 整体以 [GNU GPL-3.0](LICENSE) 发布。`DPR/` 谱系含按 **Apache-2.0** 提供的上游代码，两者**单向兼容**，并入本仓库后整体按 GPL-3.0 分发；再分发时请一并满足 GPL-3.0 的**源码提供**与**许可证保留**要求。
 - 逐项出处、版权与致谢见 [`NOTICE`](NOTICE)；第三方组件与依赖的许可证索引见 [`LICENSES/README.md`](LICENSES/README.md)（Rust 依赖见 [`Cargo.lock`](Cargo.lock)，前端依赖见 [`DPR/pnpm-lock.yaml`](DPR/pnpm-lock.yaml)）。
 - 第三方素材（`assets/` 下的字体与音效、`assets/rank/` 等）版权归各自权利人，随仓库分发只为开箱可用；权利人如要求会立即移除。
-- **皮肤包与 Minecraft 材质既不进仓库、也不进安装包**：`appendant.official.zip`（官方皮肤，可当默认）、`appendant.old.zip`（旧版皮肤）、`appendant.retri.zip`（「报应SP」固定用的手绘皮肤）、`appendant.lava.zip`（岩浆噪域用的基岩贴图与岩浆帧）、`appendant.water.zip`（屏幕进水用的水面贴图与受伤音效）。五个包都在作者的网盘 <https://daogemm.lanzouc.com/b0018qnkxi>（密码 `dgmm`）：下载后把 zip **原样**放进 exe 旁边的 `appendant/` 目录（不用解压），程序启动时按需读取。缺包时会在启用对应功能（或渲染「报应SP」谱面）时弹窗给出这个地址。
-- 上面五个包的版权归各自作者（Minecraft 材质 © Mojang AB），**不在本项目的 GPL-3.0 覆盖范围内**；它们只是被程序读取，不随任何本项目的产物分发。
+- **附加的皮肤与材质已从仓库和安装包里拆分出去**：程序运行时从 exe 旁边的 `appendant/` 目录读取，需要用户自己下载后把 zip 原样放进去（不用解压）；缺包时界面会提示并给出下载地址。
+- 这些附加资源的版权归各自权利人，**不在本项目的 GPL-3.0 覆盖范围内**；它们只是被程序读取，不随本项目的任何产物分发。
 - 致谢：Phi-Recorder 的作者 **HLMC**、**Mivik**；Phira 与 phira-render 的 **TeamFlos** 及其贡献者；Phira-Pro 的维护者；以及所有被直接或间接引用的开源项目作者。
 - **非官方**：与 Pigeon Games（Phigros）、TeamFlos（Phira）、Mojang AB / Microsoft 均无任何隶属、授权或赞助关系；相关游戏名与商标归各自权利人。请勿用它伪造游玩成绩或官方内容。
 

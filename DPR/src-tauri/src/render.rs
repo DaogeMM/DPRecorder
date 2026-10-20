@@ -178,6 +178,33 @@ pub struct RenderConfig {
     pub baoying_sp_hit_fx_scale: f32,
     pub baoying_sp_hit_fx_rotate: bool,
     pub baoying_sp_particle_count: u32,
+    /// 「痉挛SP」演出：由输入谱面的文件名强制开启（见 `is_jingluan_sp_chart`），不是配置项
+    /// —— 前端不传，配置文件里写了也会在 `generate_resource` 里按文件名覆盖。
+    /// `to_config()` 把它透传成 `dps::config::Config::jingluan_sp_mode`。
+    pub jingluan_sp: bool,
+    /// 「痉挛SP」演出：第一段（`SpasmodicChan`）插画高度占画面高度的比例
+    pub jingluan_sp_chan_height: f32,
+    /// 「痉挛SP」演出：第一段插画的上下偏移（正数向下，按画面高度计）
+    pub jingluan_sp_chan_offset_y: f32,
+    /// 「痉挛SP」演出：第一段插画淡入 / 淡出的秒数
+    pub jingluan_sp_chan_fade_in: f32,
+    pub jingluan_sp_chan_fade_out: f32,
+    /// 「痉挛SP」演出：第二段（「光」）插画高度占画面高度的比例
+    pub jingluan_sp_guang_height: f32,
+    /// 「痉挛SP」演出：第二段插画的上下偏移（正数向下，按画面高度计）
+    pub jingluan_sp_guang_offset_y: f32,
+    /// 「痉挛SP」演出：第二段插画淡入 / 淡出的秒数
+    pub jingluan_sp_guang_fade_in: f32,
+    pub jingluan_sp_guang_fade_out: f32,
+    /// 「痉挛SP」演出：第三段（「もぺもぺ」）插画高度占画面高度的比例
+    pub jingluan_sp_mopemope_height: f32,
+    /// 「痉挛SP」演出：第三段插画的上下偏移（正数向下，按画面高度计）
+    pub jingluan_sp_mopemope_offset_y: f32,
+    /// 「痉挛SP」演出：第三段插画淡入 / 淡出的秒数
+    pub jingluan_sp_mopemope_fade_in: f32,
+    pub jingluan_sp_mopemope_fade_out: f32,
+    /// 「痉挛SP」演出：插画的压暗程度（0 = 不压暗，1 = 全黑；和背景压暗无关）
+    pub jingluan_sp_dim: f32,
     /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启（见 `is_xuejiang_sp_chart`），
     /// 不是配置项 —— 前端不传，配置文件里写了也会在 `generate_resource` 里按文件名覆盖。
     /// `to_config()` 把它透传成 `dps::config::Config::xuejiang_sp_mode`。
@@ -473,6 +500,20 @@ impl RenderConfig {
             baoying_sp_hit_fx_scale: self.baoying_sp_hit_fx_scale,
             baoying_sp_hit_fx_rotate: self.baoying_sp_hit_fx_rotate,
             baoying_sp_particle_count: self.baoying_sp_particle_count,
+            jingluan_sp_mode: self.jingluan_sp,
+            jingluan_sp_chan_height: self.jingluan_sp_chan_height,
+            jingluan_sp_chan_offset_y: self.jingluan_sp_chan_offset_y,
+            jingluan_sp_chan_fade_in: self.jingluan_sp_chan_fade_in,
+            jingluan_sp_chan_fade_out: self.jingluan_sp_chan_fade_out,
+            jingluan_sp_guang_height: self.jingluan_sp_guang_height,
+            jingluan_sp_guang_offset_y: self.jingluan_sp_guang_offset_y,
+            jingluan_sp_guang_fade_in: self.jingluan_sp_guang_fade_in,
+            jingluan_sp_guang_fade_out: self.jingluan_sp_guang_fade_out,
+            jingluan_sp_mopemope_height: self.jingluan_sp_mopemope_height,
+            jingluan_sp_mopemope_offset_y: self.jingluan_sp_mopemope_offset_y,
+            jingluan_sp_mopemope_fade_in: self.jingluan_sp_mopemope_fade_in,
+            jingluan_sp_mopemope_fade_out: self.jingluan_sp_mopemope_fade_out,
+            jingluan_sp_dim: self.jingluan_sp_dim,
             xuejiang_sp_mode: self.xuejiang_sp,
             xuejiang_sp_fake_notes: self.xuejiang_sp_fake_notes,
             xuejiang_sp_fake_bar_seconds: self.xuejiang_sp_fake_bar_seconds,
@@ -678,6 +719,20 @@ impl Default for RenderConfig {
             baoying_sp_hit_fx_scale: 0.5,
             baoying_sp_hit_fx_rotate: false,
             baoying_sp_particle_count: 0,
+            jingluan_sp: false,
+            jingluan_sp_chan_height: 0.99,
+            jingluan_sp_chan_offset_y: -0.1,
+            jingluan_sp_chan_fade_in: 0.,
+            jingluan_sp_chan_fade_out: 0.,
+            jingluan_sp_guang_height: 1.,
+            jingluan_sp_guang_offset_y: 0.,
+            jingluan_sp_guang_fade_in: 0.,
+            jingluan_sp_guang_fade_out: 0.,
+            jingluan_sp_mopemope_height: 1.,
+            jingluan_sp_mopemope_offset_y: 0.,
+            jingluan_sp_mopemope_fade_in: 0.,
+            jingluan_sp_mopemope_fade_out: 0.,
+            jingluan_sp_dim: 0.18,
             xuejiang_sp: false,
             xuejiang_sp_fake_notes: 305.,
             xuejiang_sp_fake_bar_seconds: 120.,
@@ -1133,6 +1188,14 @@ fn is_baoying_sp_chart(path: &Path) -> bool {
     matches_chart_stem(path, BAOYING_SP_CHART_STEM)
 }
 
+/// 「痉挛SP」特殊演出的谱面名（同样既可能是 `.pez`，也可能是解包目录）。
+const JINGLUAN_SP_CHART_STEM: &str = "SpasmodicHaocoreMix.100.SP";
+
+/// 判断输入路径是不是「痉挛SP」特殊演出的那一份谱面。判定规则同 `is_xuejiang_sp_chart`。
+fn is_jingluan_sp_chart(path: &Path) -> bool {
+    matches_chart_stem(path, JINGLUAN_SP_CHART_STEM)
+}
+
 /// 路径最后一段是否等于 `stem`，或者等于 `stem.pez`。
 fn matches_chart_stem(path: &Path, stem: &str) -> bool {
     let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
@@ -1146,6 +1209,11 @@ fn matches_chart_stem(path: &Path, stem: &str) -> bool {
 /// 这个演出的手绘数字、曲名 logo 与按键贴图都在 `appendant.retri` 包里，跟着配置里选的皮肤走会缺图，
 /// 所以该谱面直接钉在它上面；优先用附带资源包目录里的 zip（`appendant/appendant.retri.zip`），
 /// 其次老的 `assets/respack/RetriSP{,.zip}`，都没有就返回 `None`（退回内置默认皮肤）。
+/// 「报应SP」谱面要用的资源包路径。
+///
+/// 这个演出的手绘数字、曲名 logo 与按键贴图都在 `appendant.retri` 包里，跟着配置里选的皮肤走会缺图，
+/// 所以该谱面直接钉在它上面；优先用附带资源包目录里的包（zip 或同名目录），其次老的
+/// `assets/respack/RetriSP{,.zip}`，都没有（或里面缺文件）就返回 `None`（退回内置默认皮肤）。
 fn baoying_sp_respack_path() -> Option<String> {
     let mut roots = Vec::new();
     if let Ok(dir) = crate::common::appendant_dir() {
@@ -1156,13 +1224,12 @@ fn baoying_sp_respack_path() -> Option<String> {
     }
     for root in roots {
         for name in [dps::core::appendant::RETRI, "RetriSP"] {
-            let zip = root.join(format!("{name}.zip"));
-            if zip.exists() {
-                return Some(zip.to_string_lossy().into_owned());
-            }
-            let dir = root.join(name);
-            if dir.exists() {
-                return Some(dir.to_string_lossy().into_owned());
+            // 缺文件的包按不在处理：不然演出资源只加载到一半，报错的位置离这儿很远
+            let Some(pack) = dps::core::appendant::pack_in(&root, name) else {
+                continue;
+            };
+            if dps::core::appendant::has_files(&pack, dps::core::appendant::SKIN_FILES) {
+                return Some(pack.to_string_lossy().into_owned());
             }
         }
     }
@@ -1206,6 +1273,7 @@ pub async fn generate_resource(
 
         let path = args_input.unwrap();
         config.xuejiang_sp = is_xuejiang_sp_chart(Path::new(&path));
+        config.jingluan_sp = is_jingluan_sp_chart(Path::new(&path));
         if is_baoying_sp_chart(Path::new(&path)) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
@@ -1263,6 +1331,7 @@ pub async fn generate_resource(
 
         let mut config = params.config;
         config.xuejiang_sp = is_xuejiang_sp_chart(&path);
+        config.jingluan_sp = is_jingluan_sp_chart(&path);
         if is_baoying_sp_chart(&path) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载

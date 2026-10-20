@@ -134,15 +134,16 @@ export function useRenderConfig() {
   const DEFAULT_RESPACK: Respack = { name: t('respack-default'), path: null, index: 0, present: true };
   const respacks = ref<Respack[]>([DEFAULT_RESPACK]);
 
-  /** 下拉框里的资源包：内置默认皮肤 + `appendant/` 里的包。缺包的项也列着（`present` 假），
-   *  选中后点预览 / 渲染时再提示下载 —— 不列出来就没法先选中再下载。 */
+  /** 下拉框里的资源包：内置默认皮肤 + `respack/` 里用户自备的 zip。包在但缺文件的项也列着
+   *  （`present` 假，`missing` 说明缺什么），选中后点预览 / 渲染时再提示 —— 不列出来就没法选中去修。 */
   async function getRespacks(): Promise<Respack[]> {
-    const list = (await invoke('get_respacks')) as { name: string; path: string; present?: boolean }[];
+    const list = (await invoke('get_respacks')) as { name: string; path: string; present?: boolean; missing?: string[] }[];
     return [DEFAULT_RESPACK, ...list].map((obj, index) => ({
       name: obj.name,
       path: obj.path,
       index: index + 1,
       present: obj.present,
+      missing: obj.missing,
     }));
   }
 

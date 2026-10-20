@@ -31,21 +31,52 @@ pub const LAVA: &str = "appendant.lava";
 /// 材质包：「屏幕进水」用的水面贴图与受伤音效。
 pub const WATER: &str = "appendant.water";
 
+/// 演出包：「痉挛SP」谱面里顶替正中判定线的几张插画。
+pub const SPAS: &str = "appendant.spas";
+
+/// 皮肤包里的必需文件：与 `core::resource::ResourcePack::load` 读的那几张一一对应，缺一个都加载失败。
+pub const SKIN_FILES: &[&str] = &[
+    "info.yml",
+    "click.png",
+    "click_mh.png",
+    "drag.png",
+    "drag_mh.png",
+    "flick.png",
+    "flick_mh.png",
+    "hold.png",
+    "hold_mh.png",
+    "hit_fx.png",
+];
+
+/// 「岩浆噪域」材质包的必需文件。
+pub const LAVA_FILES: &[&str] = &["netherrock.png", "lava.gif"];
+
+/// 「屏幕进水」材质包的必需文件。
+pub const WATER_FILES: &[&str] = &["water.png", "hit/hit-1.mp3", "hit/hit-2.mp3"];
+
+/// 「痉挛SP」演出包的必需文件。
+pub const SPAS_FILES: &[&str] = &["spasmodic_chan.png", "mopemope.png", "guang.png"];
+
+
 /// `appendant/` 的绝对路径。取不到程序路径时返回 `None`。
 pub fn dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     Some(exe.parent()?.join(APPENDANT_DIR))
 }
 
-/// 一个包在磁盘上的位置：`appendant/<包名>.zip` 优先，其次同名目录。
-pub fn pack(name: &str) -> Option<PathBuf> {
-    let dir = dir()?;
+/// 在指定目录里找一个包：`<dir>/<包名>.zip` 优先，其次同名目录。
+pub fn pack_in(dir: &Path, name: &str) -> Option<PathBuf> {
     let zip = dir.join(format!("{name}.zip"));
     if zip.is_file() {
         return Some(zip);
     }
     let folder = dir.join(name);
     folder.is_dir().then_some(folder)
+}
+
+/// 一个包在磁盘上的位置：`appendant/<包名>.zip` 优先，其次同名目录。
+pub fn pack(name: &str) -> Option<PathBuf> {
+    pack_in(&dir()?, name)
 }
 
 /// 从包里读一条资源。包不存在、或包里没有这条，都返回 `None`。
@@ -55,7 +86,7 @@ pub fn entry(name: &str, path: &str) -> Option<Vec<u8>> {
 
 fn read_entry(pack: &Path, path: &str) -> Option<Vec<u8>> {
     if pack.is_dir() {
-        return std::fs::read(pack.join(path)).ok();
+        return std::fs::read(dir_entry(pack, path)?).ok();
     }
     let file = std::fs::File::open(pack).ok()?;
     let mut zip = zip::ZipArchive::new(file).ok()?;
@@ -66,6 +97,46 @@ fn read_entry(pack: &Path, path: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     item.read_to_end(&mut bytes).ok()?;
     Some(bytes)
+}
+
+/// 同名目录里的一条资源：直接命中，或解压时多套了一层文件夹。
+fn dir_entry(pack: &Path, path: &str) -> Option<PathBuf> {
+    let direct = pack.join(path);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    for entry in std::fs::read_dir(pack).ok()?.flatten() {
+        let nested = entry.path().join(path);
+        if nested.is_file() {
+            return Some(nested);
+        }
+    }
+    None
+}
+
+/// 包里有没有这条资源（只看在不在，不读内容）。
+pub fn has_entry(pack: &Path, path: &str) -> bool {
+    if pack.is_dir() {
+        return dir_entry(pack, path).is_some();
+    }
+    let Ok(file) = std::fs::File::open(pack) else {
+        return false;
+    };
+    let Ok(zip) = zip::ZipArchive::new(file) else {
+        return false;
+    };
+    let suffix = format!("/{path}");
+    (0..zip.len()).any(|index| zip.name_for_index(index).is_some_and(|name| name == path || name.ends_with(&suffix)))
+}
+
+/// 包里缺了哪些文件（包整个不在就整张表都算缺）。顺序与 `files` 一致。
+pub fn missing_files(pack: &Path, files: &[&'static str]) -> Vec<&'static str> {
+    files.iter().copied().filter(|path| !has_entry(pack, path)).collect()
+}
+
+/// 包里的必需文件是不是都在。
+pub fn has_files(pack: &Path, files: &[&'static str]) -> bool {
+    files.iter().all(|path| has_entry(pack, path))
 }
 
 /// 「屏幕进水」的水面贴图（16×16 PNG）。
@@ -86,4 +157,71 @@ pub fn netherrock_image() -> Option<Vec<u8>> {
 /// 「岩浆噪域」生效那一段的岩浆动画（32×32、16 帧的 GIF）。
 pub fn lava_image() -> Option<Vec<u8>> {
     entry(LAVA, "lava.gif")
+}
+
+/// 「痉挛SP」第一段演出图（`SpasmodicChan`，方块形插画）。
+pub fn spas_chan_image() -> Option<Vec<u8>> {
+    entry(SPAS, "spasmodic_chan.png")
+}
+
+/// 「痉挛SP」第二段演出图（「光」，满幅横图）。
+pub fn spas_guang_image() -> Option<Vec<u8>> {
+    entry(SPAS, "guang.png")
+}
+
+/// 「痉挛SP」第三段演出图（「もぺもぺ」，满幅横图）。
+pub fn spas_mopemope_image() -> Option<Vec<u8>> {
+    entry(SPAS, "mopemope.png")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 建一个临时目录；测试结束由调用方删。
+    fn temp_root(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dps-appendant-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 同名目录（以及解压时多套一层文件夹）照样认。
+    #[test]
+    fn directory_pack_tolerates_wrapper_folder() {
+        let root = temp_root("dir");
+        let pack = root.join(LAVA);
+        std::fs::create_dir_all(pack.join(LAVA)).unwrap();
+        std::fs::write(pack.join(LAVA).join("lava.gif"), b"gif").unwrap();
+        std::fs::write(pack.join("netherrock.png"), b"png").unwrap();
+
+        assert_eq!(pack_in(&root, LAVA), Some(pack.clone()));
+        assert!(has_entry(&pack, "netherrock.png"));
+        assert!(has_entry(&pack, "lava.gif"));
+        assert!(missing_files(&pack, LAVA_FILES).is_empty());
+        assert_eq!(read_entry(&pack, "netherrock.png").as_deref(), Some(&b"png"[..]));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// zip 与同名目录同时存在时用 zip；缺文件时缺的条目点名报出来。
+    #[test]
+    fn zip_wins_and_missing_files_are_listed() {
+        let root = temp_root("zip");
+        let zip_path = root.join(format!("{WATER}.zip"));
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        for entry in ["water.png", "hit/hit-1.mp3"] {
+            zip.start_file(entry, zip::write::SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut zip, b"x").unwrap();
+        }
+        zip.finish().unwrap();
+        std::fs::create_dir_all(root.join(WATER)).unwrap();
+
+        assert_eq!(pack_in(&root, WATER), Some(zip_path.clone()));
+        assert_eq!(missing_files(&zip_path, WATER_FILES), vec!["hit/hit-2.mp3"]);
+        assert!(!has_files(&zip_path, WATER_FILES));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

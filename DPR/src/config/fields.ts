@@ -320,6 +320,19 @@ const CHART = {
   baoyingSpHitFxScale: { widget: 'number' },
   baoyingSpHitFxRotate: { widget: 'checkbox' },
   baoyingSpParticleCount: { widget: 'number' },
+  jingluanSpChanHeight: { widget: 'number' },
+  jingluanSpChanOffsetY: { widget: 'number' },
+  jingluanSpChanFadeIn: { widget: 'number' },
+  jingluanSpChanFadeOut: { widget: 'number' },
+  jingluanSpGuangHeight: { widget: 'number' },
+  jingluanSpGuangOffsetY: { widget: 'number' },
+  jingluanSpGuangFadeIn: { widget: 'number' },
+  jingluanSpGuangFadeOut: { widget: 'number' },
+  jingluanSpMopemopeHeight: { widget: 'number' },
+  jingluanSpMopemopeOffsetY: { widget: 'number' },
+  jingluanSpMopemopeFadeIn: { widget: 'number' },
+  jingluanSpMopemopeFadeOut: { widget: 'number' },
+  jingluanSpDim: { widget: 'number' },
 } satisfies Partial<FieldTable>;
 
 /* ========================= 判定 / 染色 =========================== */

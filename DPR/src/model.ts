@@ -278,6 +278,32 @@ export interface RenderConfig {
   baoyingSpHitFxRotate: boolean;
   /** 「报应SP」打击特效粒子数（0 表示不画粒子） */
   baoyingSpParticleCount: number;
+  /** 「痉挛SP」演出第一段（`SpasmodicChan`）插画高度占画面高度的比例 */
+  jingluanSpChanHeight: number;
+  /** 「痉挛SP」演出第一段插画的上下偏移（正数向下，按画面高度计） */
+  jingluanSpChanOffsetY: number;
+  /** 「痉挛SP」演出第一段插画淡入的秒数 */
+  jingluanSpChanFadeIn: number;
+  /** 「痉挛SP」演出第一段插画淡出的秒数 */
+  jingluanSpChanFadeOut: number;
+  /** 「痉挛SP」演出第二段（「光」）插画高度占画面高度的比例 */
+  jingluanSpGuangHeight: number;
+  /** 「痉挛SP」演出第二段插画的上下偏移（正数向下，按画面高度计） */
+  jingluanSpGuangOffsetY: number;
+  /** 「痉挛SP」演出第二段插画淡入的秒数 */
+  jingluanSpGuangFadeIn: number;
+  /** 「痉挛SP」演出第二段插画淡出的秒数 */
+  jingluanSpGuangFadeOut: number;
+  /** 「痉挛SP」演出第三段（「もぺもぺ」）插画高度占画面高度的比例 */
+  jingluanSpMopemopeHeight: number;
+  /** 「痉挛SP」演出第三段插画的上下偏移（正数向下，按画面高度计） */
+  jingluanSpMopemopeOffsetY: number;
+  /** 「痉挛SP」演出第三段插画淡入的秒数 */
+  jingluanSpMopemopeFadeIn: number;
+  /** 「痉挛SP」演出第三段插画淡出的秒数 */
+  jingluanSpMopemopeFadeOut: number;
+  /** 「痉挛SP」演出插画的压暗程度（0 = 不压暗，1 = 全黑；与背景压暗无关） */
+  jingluanSpDim: number;
   renderBg: boolean;
   renderBgDim: boolean;
   /** 背景暗淡：黑色遮罩的不透明度（0~1），覆盖谱面信息里的同名值，默认 0.1 */
@@ -552,6 +578,19 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   baoyingSpHitFxScale: 0.5,
   baoyingSpHitFxRotate: false,
   baoyingSpParticleCount: 0,
+  jingluanSpChanHeight: 0.99,
+  jingluanSpChanOffsetY: -0.1,
+  jingluanSpChanFadeIn: 0,
+  jingluanSpChanFadeOut: 0,
+  jingluanSpGuangHeight: 1.0,
+  jingluanSpGuangOffsetY: 0,
+  jingluanSpGuangFadeIn: 0,
+  jingluanSpGuangFadeOut: 0,
+  jingluanSpMopemopeHeight: 1.0,
+  jingluanSpMopemopeOffsetY: 0,
+  jingluanSpMopemopeFadeIn: 0,
+  jingluanSpMopemopeFadeOut: 0,
+  jingluanSpDim: 0.18,
   renderBg: true,
   renderBgDim: true,
   backgroundDim: 0.1,

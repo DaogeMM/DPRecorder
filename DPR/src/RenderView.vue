@@ -16,7 +16,10 @@ import {
   appendantItem,
   appendantUrl,
   fetchAppendants,
+  fetchRespacks,
+  fetchRespackDir,
   isBaoyingSpChart,
+  isJingluanSpChart,
   isOptionalAppendant,
   lavaPack,
   missingAppendant,
@@ -229,7 +232,15 @@ const appendantMissing = ref<AppendantItem[]>([]);
 const appendantDir = ref('');
 
 const appendantMissingText = computed(() =>
-  appendantMissing.value.map((it) => t('appendant-missing-detail', { file: it.file, dir: appendantDir.value })).join('\n\n')
+  appendantMissing.value
+    .map((it) => {
+      const dir = it.dir ?? appendantDir.value;
+      // 包在、只是缺文件：把缺的名字列出来，用户才分得清「没下载」和「下载坏了」
+      if (it.found && it.missing?.length)
+        return t('appendant-incomplete-detail', { file: it.file, files: it.missing.join('、'), dir });
+      return t('appendant-missing-detail', { file: it.file, dir });
+    })
+    .join('\n\n')
 );
 
 /**
@@ -253,11 +264,32 @@ async function checkAppendants(config: RenderConfig) {
       missing.push(item);
   };
   addMissing(missingAppendant(status, config.resPackPath));
+  // 下拉框里选的是 `respack/` 里的自备皮肤：包在、但缺文件时也要拦（缺文件的包加载到一半就报错，
+  // 错误位置离用户的操作很远）。路径指到 `appendant/` 里的包时上面已经查过了。
+  const respackFile = (config.resPackPath ?? '').replace(/\\/g, '/').split('/').pop() ?? '';
+  if (config.resPackPath && !appendantItem(status, respackFile)) {
+    try {
+      const item = (await fetchRespacks()).find((it) => it.path === config.resPackPath);
+      if (item && !item.present)
+        addMissing({
+          file: item.name,
+          path: item.path,
+          found: true,
+          present: false,
+          missing: item.missing,
+          dir: await fetchRespackDir(),
+        });
+    } catch (e) {
+      console.warn(e);
+    }
+  }
   // 岩浆噪域读 appendant.lava.zip（基岩贴图 + 岩浆帧），屏幕进水（含水下受伤音效）读 appendant.water.zip
   if (config.blockAreaLava) addMissing(lavaPack(status));
   if (config.waterScreen) addMissing(waterPack(status));
   // 「报应SP」谱面固定钉在 appendant.retri.zip 上，配置里选别的皮肤也换不掉
   if (isBaoyingSpChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.retri.zip'));
+  // 「痉挛SP」的演出插图只有 appendant.spas.zip 里有，缺了这段演出就什么都不画
+  if (isJingluanSpChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.spas.zip'));
   if (!missing.length) return true;
   appendantDir.value = status.dir;
   appendantMissing.value = missing;

@@ -103,13 +103,14 @@ export interface RespackItem {
   path: string | null;
   index: number;
   /**
-   * 包文件是否真的在磁盘上。
+   * 包能不能用：`respack/` 里的 zip 在、且必需文件齐全。
    *
-   * `new` / `old` / `RetriSP` 三个皮肤包不再随程序分发，用户要把下载到的 zip 放进
-   * `<程序目录>/appendant`；缺包时下拉框里照样有这一项（否则没法先选中），
-   * 点预览 / 渲染时再提示下载。
+   * 全是用户自备的皮肤包，缺了或里面缺文件时照样列在下拉框里（否则没法先选中再修），
+   * 只是这一项为 false：界面标个图标，点预览 / 渲染时再提示下载。
    */
   present?: boolean;
+  /** 包里缺哪些文件（齐全时为空），用来在提示里点名。 */
+  missing?: string[];
 }
 
 /**

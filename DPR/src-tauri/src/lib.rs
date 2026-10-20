@@ -19,6 +19,7 @@ use common::{
 };
 use icon::{BIG_ICON, ICON, SMALL_ICON};
 use dps::{
+    core::appendant,
     fs::{self, FileSystem},
     info::ChartInfo,
     log,
@@ -1155,28 +1156,32 @@ async fn move_task(queue: State<'_, TaskQueue>, id: u32, index: usize) -> Result
     Ok(())
 }
 
-/// 皮肤包现在都不随安装包分发：用户自己下载 zip 放进 `<程序目录>/appendant`。下拉框里
-/// **不管在不在**都列出这三项（`present` 标出有没有），选中后点预览 / 渲染时再提示下载。
-const APPENDANT_SKINS: [&str; 3] = ["appendant.official.zip", "appendant.old.zip", "appendant.retri.zip"];
-
-/// Minecraft 材质拆成两个包：`appendant.lava.zip`（岩浆噪域的基岩贴图与岩浆帧）、
-/// `appendant.water.zip`（进水的水面贴图与受伤音效）。它们不是皮肤包、不出现在下拉框里，
-/// 由「启用岩浆噪域 / 屏幕进水」这类开关触发检查。
-const APPENDANT_MATERIALS: [&str; 2] = ["appendant.lava.zip", "appendant.water.zip"];
+/// 程序认得的五个包：包名（`appendant/` 下的 zip 或同名目录）、界面显示的文件名、必需文件表。
+///
+/// `appendant/` 里的皮肤不进资源包下拉框 —— 那是一组程序自己按场合挑的包（official 当默认、
+/// retri 给「报应SP」、spas 给「痉挛SP」），不是给用户选的。
+const APPENDANT_PACKS: [(&str, &str, &[&str]); 6] = [
+    (appendant::OFFICIAL, "appendant.official.zip", appendant::SKIN_FILES),
+    (appendant::OLD, "appendant.old.zip", appendant::SKIN_FILES),
+    (appendant::RETRI, "appendant.retri.zip", appendant::SKIN_FILES),
+    (appendant::LAVA, "appendant.lava.zip", appendant::LAVA_FILES),
+    (appendant::WATER, "appendant.water.zip", appendant::WATER_FILES),
+    (appendant::SPAS, "appendant.spas.zip", appendant::SPAS_FILES),
+];
 
 #[derive(Serialize)]
 struct RespackInfo {
     name: String,
     path: String,
-    /// 包是否真的在磁盘上（列出来的都是已经存在的；保留这个字段给前端标缺失用）。
+    /// 能不能用：zip 在、且必需文件齐全。缺文件的包照样列出来（用户得能选中它去修），
+    /// 只是 `present` 为 false，界面据此标红并提示重新下载。
     present: bool,
+    /// 包里缺哪些文件（齐全时为空）。
+    missing: Vec<String>,
 }
 
-/// 资源包下拉框的候选：**只列 `respack/` 里的 zip**（用户自己做的皮肤包），再加上前端的
-/// 「默认」项。
-///
-/// `appendant/` 里的皮肤不进这个列表 —— 那是一组程序自己按场合挑的包（official 当默认、
-/// retri 给「报应SP」），不是给用户选的。
+/// 资源包下拉框的候选：`respack/` 里的 zip 与**同名的皮肤目录**（用户自己做的皮肤包），再加上
+/// 前端的「默认」项。目录要有 `info.yml` 才认，免得把随便一个子目录列成资源包。
 #[tauri::command]
 fn get_respacks() -> Result<Vec<RespackInfo>, InvokeError> {
     (|| {
@@ -1191,13 +1196,19 @@ fn get_respacks() -> Result<Vec<RespackInfo>, InvokeError> {
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
-            if !path.is_file() || !is_zip {
+            let is_pack_dir = path.is_dir() && path.join("info.yml").is_file();
+            if !is_pack_dir && !(path.is_file() && is_zip) {
                 continue;
             }
+            let missing: Vec<String> = appendant::missing_files(&path, appendant::SKIN_FILES)
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
             list.push(RespackInfo {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 path: path.display().to_string(),
-                present: true,
+                present: missing.is_empty(),
+                missing,
             });
         }
         list.sort_by(|x, y| x.name.cmp(&y.name));
@@ -1206,14 +1217,19 @@ fn get_respacks() -> Result<Vec<RespackInfo>, InvokeError> {
     .map_err(InvokeError::from_anyhow)
 }
 
-/// 附带资源包的状态：目录 + 每个已知包在不在。
+/// 附带资源包的状态：目录 + 每个已知包在不在、缺不缺文件。
 #[derive(Serialize)]
 struct AppendantInfo {
     /// 包文件名（`appendant.official.zip` / `appendant.lava.zip` …）。
     file: String,
-    /// 绝对路径。缺包时也给出来，界面拿它显示「该放到哪儿」。
+    /// 包所在位置（zip 或同名目录）；缺包时给出「该放哪儿」的 zip 路径。
     path: String,
+    /// 包在不在（`<包名>.zip` 或同名目录都算在）。
+    found: bool,
+    /// 能不能用：包在且必需文件齐全。缺文件的包按缺包处理 —— 加载到一半失败比提前提示更难查。
     present: bool,
+    /// 包里缺哪些文件；包整个不在时就是整张必需文件表。
+    missing: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1227,15 +1243,23 @@ struct AppendantStatus {
 fn get_appendants() -> Result<AppendantStatus, InvokeError> {
     (|| {
         let dir = appendant_dir()?;
-        let files: Vec<&str> = APPENDANT_SKINS.iter().chain(APPENDANT_MATERIALS.iter()).copied().collect();
-        let items = files
-            .into_iter()
-            .map(|file| {
-                let path = dir.join(file);
+        let items = APPENDANT_PACKS
+            .iter()
+            .map(|(name, file, required)| {
+                let pack = appendant::pack_in(&dir, name);
+                let missing: Vec<String> = match &pack {
+                    Some(pack) => appendant::missing_files(pack, required).into_iter().map(str::to_owned).collect(),
+                    None => required.iter().map(|it| (*it).to_owned()).collect(),
+                };
                 AppendantInfo {
-                    file: file.to_owned(),
-                    path: path.display().to_string(),
-                    present: path.is_file(),
+                    file: (*file).to_owned(),
+                    path: pack
+                        .as_ref()
+                        .map(|it| it.display().to_string())
+                        .unwrap_or_else(|| dir.join(file).display().to_string()),
+                    found: pack.is_some(),
+                    present: missing.is_empty(),
+                    missing,
                 }
             })
             .collect();

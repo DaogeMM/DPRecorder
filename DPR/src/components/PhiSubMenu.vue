@@ -34,6 +34,11 @@ const props = defineProps<{
   /** 可选 DOM id（形如 `sec3-aggressive`） */
   id?: string;
   disabled?: boolean;
+  /**
+   * 不要 ✅/❌ 开关，只留齿轮。
+   * 调试用的那几个三级菜单没有「关掉这一组」的语义，挂个开关反而像配置项，所以只给齿轮。
+   */
+  noToggle?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -76,12 +81,12 @@ onUnmounted(() => {
     <div class="phi-submenu__head" :title="tip || undefined">
       <span class="phi-submenu__title">{{ label }}</span>
       <v-spacer></v-spacer>
-      <!-- 齿轮：打开这个三级菜单的配置弹窗。放在 ✅/❌ 开关**左边**。
+      <!-- 齿轮：打开这个三级菜单的配置弹窗。放在 ✅/❌ 开关**左边**（`noToggle` 时开关不渲染）。
            图标 22px、按钮不带 `density`；到开关的间距靠 `.phi-submenu__gear`
            的 `margin-right` 给正边距（不能用负边距去抵消 v-btn 内边距贴紧开关）。
            **没启用就不显示** —— 开关关着、或所在二级分区关着，都没什么可配的。 -->
       <v-btn
-        v-if="modelValue && !disabled"
+        v-if="(modelValue || noToggle) && !disabled"
         class="phi-submenu__gear"
         icon
         variant="text"
@@ -92,6 +97,7 @@ onUnmounted(() => {
         <v-icon size="22">mdi-cog-outline</v-icon>
       </v-btn>
       <CfgSwitch
+        v-if="!noToggle"
         bare
         :disabled="disabled"
         :model-value="modelValue"

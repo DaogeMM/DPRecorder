@@ -13,6 +13,7 @@
     "ffmpeg-not-found-detail": "请下载 ffmpeg, Windows 用户一般只需下载 \"ffmpeg-master-latest-win64-gpl.zip\"\n将 bin 文件夹内的所有文件放置在程序文件夹内或配置 ffmpeg 环境变量",
     "appendant-missing-title": "缺少资源包",
     "appendant-missing-detail": "「{file}」未找到，请下载对应资源包后放到：\n{dir}",
+    "appendant-incomplete-detail": "「{file}」缺少文件：{files}\n请重新下载这个资源包后放到：\n{dir}",
     "appendant-download-hint": "下载页：{url} (密码：{password})\n下载后把 zip 原样放进上面的文件夹（不需要解压）",
     "appendant-open-download": "打开下载页",
     "appendant-open-folder": "打开资源包文件夹",

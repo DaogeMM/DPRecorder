@@ -39,6 +39,8 @@ pub use object::{CtrlObject, Object};
 
 pub mod fixed_lane;
 
+pub mod jingluan_sp;
+
 pub mod pure_config;
 
 mod render;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, toRefs, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, toRefs, watch } from 'vue';
 import { useStorage } from '@vueuse/core';
 
 import { useI18n } from 'vue-i18n';
@@ -83,6 +83,18 @@ const debugEnabled = useStorage<boolean>('phi.debug.enabled', false);
 const xuejiangSpDebug = ref(true);
 /** 「谱面 · 调试」里那一行「报应SP」三级菜单的开关（同上，纯界面状态、不进配置）。 */
 const baoyingSpDebug = ref(true);
+/** 「谱面 · 调试」里那一行「痉挛SP」三级菜单的开关（同上）。 */
+const jingluanSpDebug = ref(true);
+/** 「报应SP」那两个开关（数字倒着写 / 打击特效旋转）收进的齿轮弹窗。 */
+const baoyingSpSwitchDialog = ref(false);
+/** 齿轮弹窗的宽度：与上面几个弹窗同一套算法（内容区的 60%，打开时量一次）。 */
+const baoyingSpSwitchDialogWidth = ref(880);
+function openBaoyingSpSwitchDialog() {
+  const content = document.querySelector<HTMLElement>('.phi-center');
+  const base = content?.clientWidth || window.innerWidth;
+  baoyingSpSwitchDialogWidth.value = Math.max(480, Math.round(base * 0.6));
+  baoyingSpSwitchDialog.value = true;
+}
 const fileNameFormatDialog = ref(false);
 /**
  * 「文件名格式」说明弹窗的宽度 —— 与齿轮弹窗（`PhiSubMenu.vue` 的 `dialogWidth`）同一算法：
@@ -209,9 +221,20 @@ const {
   baoyingSpDiffHeight, baoyingSpDiffGapSpLv, baoyingSpDiffGapLvQuestion,
   baoyingSpDiffSqueeze, baoyingSpDiffOffsetX, baoyingSpDiffOffsetY, baoyingSpDigitsRtl,
   baoyingSpHitFxScale, baoyingSpHitFxRotate, baoyingSpParticleCount,
+  // 「痉挛SP」特殊演出的插画参数（谱面 → 调试）
+  jingluanSpChanHeight, jingluanSpChanOffsetY, jingluanSpChanFadeIn, jingluanSpChanFadeOut,
+  jingluanSpGuangHeight, jingluanSpGuangOffsetY, jingluanSpGuangFadeIn, jingluanSpGuangFadeOut,
+  jingluanSpMopemopeHeight, jingluanSpMopemopeOffsetY, jingluanSpMopemopeFadeIn, jingluanSpMopemopeFadeOut,
+  jingluanSpDim,
   // 界面独占的槽位
   hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
 } = toRefs(ui);
+
+/** 选中资源包的缺失说明：包在但缺文件时点名，整个不在时笼统提示。 */
+const respackMissingTip = computed(() => {
+  const missing = respack?.value?.missing;
+  return missing?.length ? t('respack-incomplete-tip', { files: missing.join('、') }) : t('respack-missing-tip');
+});
 
 /** 配置里的 `render_bg_dim` 不由界面勾选，而是**跟着数值派生**：`background_dim > 0` 才压暗，
  *  0 就是不压暗。`immediate: true` 让初次挂载与载入预设时也同步一次（老预设里那个勾选框的值会被覆盖）。 */
@@ -656,7 +679,7 @@ defineExpose({
           <v-combobox density="compact" hide-details="auto" :items="respacks" item-title="name" v-model="respack" style="flex: 1;"></v-combobox>
           <!-- 选中的包不在 appendant/ 里：标出来，免得点了预览才看到下载提示 -->
           <!-- 可选包（appendant.official）缺了不标：它会自动退回内置默认皮肤 -->
-          <v-icon v-if="respack && respack.present === false && !isOptionalAppendant(respack.name)" color="warning" :title="t('respack-missing-tip')">
+          <v-icon v-if="respack && respack.present === false && !isOptionalAppendant(respack.name)" color="warning" :title="respackMissingTip">
             mdi-alert-circle-outline
           </v-icon>
           <v-btn icon="mdi-refresh" variant="text" size="small" :title="t('respack-refresh')" @click="refreshRespacks"></v-btn>
@@ -1031,7 +1054,7 @@ defineExpose({
            （参数收进齿轮弹窗），以后再加别的调试就再摆一行。 -->
       <PhiSection v-if="debugEnabled" id="sec-chart-debug" :title="t('title.xuejiang-sp-debug')">
         <div class="cfg-grid">
-          <PhiSubMenu id="sec3-xuejiang-sp" :label="t('xuejiang-sp-group')" :tip="t('xuejiang-sp-group-tip')" v-model="xuejiangSpDebug">
+          <PhiSubMenu id="sec3-xuejiang-sp" :label="t('xuejiang-sp-group')" :tip="t('xuejiang-sp-group-tip')" v-model="xuejiangSpDebug" no-toggle>
             <div class="cfg-grid">
               <CfgField :label="t('xuejiang-sp-burst-combo')" :tip="t('xuejiang-sp-burst-combo-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpBurstCombo" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('xuejiang-sp-fake-notes')" :tip="t('xuejiang-sp-fake-notes-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFakeNotes" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
@@ -1052,7 +1075,7 @@ defineExpose({
               <CfgField :label="t('xuejiang-sp-face-text-hit')" :tip="t('xuejiang-sp-face-text-hit-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextHit" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
-          <PhiSubMenu id="sec3-baoying-sp" :label="t('baoying-sp-group')" :tip="t('baoying-sp-group-tip')" v-model="baoyingSpDebug">
+          <PhiSubMenu id="sec3-baoying-sp" :label="t('baoying-sp-group')" :tip="t('baoying-sp-group-tip')" v-model="baoyingSpDebug" no-toggle>
             <div class="cfg-grid">
               <CfgField :label="t('baoying-sp-wow-height')" :tip="t('baoying-sp-wow-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpWowHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('baoying-sp-wow-offset-x')" :tip="t('baoying-sp-wow-offset-x-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpWowOffsetX" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
@@ -1079,10 +1102,26 @@ defineExpose({
               <CfgField :label="t('baoying-sp-diff-squeeze')" :tip="t('baoying-sp-diff-squeeze-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffSqueeze" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('baoying-sp-diff-offset-x')" :tip="t('baoying-sp-diff-offset-x-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffOffsetX" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
               <CfgField :label="t('baoying-sp-diff-offset-y')" :tip="t('baoying-sp-diff-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpDiffOffsetY" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
-              <CfgField :label="t('baoying-sp-digits-rtl')" :tip="t('baoying-sp-digits-rtl-tip')"><CfgSwitch v-model="baoyingSpDigitsRtl" /></CfgField>
+              <CfgField :label="t('baoying-sp-switches')" :tip="t('baoying-sp-switches-tip')"><v-btn icon="mdi-cog-outline" variant="text" density="comfortable" @click="openBaoyingSpSwitchDialog" /></CfgField>
               <CfgField :label="t('baoying-sp-hit-fx-scale')" :tip="t('baoying-sp-hit-fx-scale-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpHitFxScale" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('baoying-sp-hit-fx-rotate')" :tip="t('baoying-sp-hit-fx-rotate-tip')"><CfgSwitch v-model="baoyingSpHitFxRotate" /></CfgField>
               <CfgField :label="t('baoying-sp-particle-count')" :tip="t('baoying-sp-particle-count-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpParticleCount" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-jingluan-sp" :label="t('jingluan-sp-group')" :tip="t('jingluan-sp-group-tip')" v-model="jingluanSpDebug" no-toggle>
+            <div class="cfg-grid">
+              <CfgField :label="t('jingluan-sp-chan-height')" :tip="t('jingluan-sp-chan-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpChanHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-chan-offset-y')" :tip="t('jingluan-sp-chan-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpChanOffsetY" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-chan-fade-in')" :tip="t('jingluan-sp-chan-fade-in-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpChanFadeIn" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-chan-fade-out')" :tip="t('jingluan-sp-chan-fade-out-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpChanFadeOut" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-guang-height')" :tip="t('jingluan-sp-guang-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpGuangHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-guang-offset-y')" :tip="t('jingluan-sp-guang-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpGuangOffsetY" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-guang-fade-in')" :tip="t('jingluan-sp-guang-fade-in-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpGuangFadeIn" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-guang-fade-out')" :tip="t('jingluan-sp-guang-fade-out-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpGuangFadeOut" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-mopemope-height')" :tip="t('jingluan-sp-mopemope-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpMopemopeHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-mopemope-offset-y')" :tip="t('jingluan-sp-mopemope-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpMopemopeOffsetY" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-mopemope-fade-in')" :tip="t('jingluan-sp-mopemope-fade-in-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpMopemopeFadeIn" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-mopemope-fade-out')" :tip="t('jingluan-sp-mopemope-fade-out-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpMopemopeFadeOut" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('jingluan-sp-dim')" :tip="t('jingluan-sp-dim-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpDim" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
         </div>
@@ -1114,6 +1153,21 @@ defineExpose({
       </div>
       <v-card-text class="config-root phi-config-dialog__body">
         <DebugFieldSettings v-model="chartDebugNoteFields" :fields="NOTE_DEBUG_FIELDS" prefix="chart-debug-note-field" />
+      </v-card-text>
+    </v-card>
+  </v-dialog>
+
+  <!-- 「报应SP」那两个开关的齿轮弹窗：调试区里不再摆 ✓/✗，统一收进这里。 -->
+  <v-dialog v-model="baoyingSpSwitchDialog" :width="baoyingSpSwitchDialogWidth" class="log-card-bg">
+    <v-card class="log-card-only-window phi-config-dialog">
+      <div class="phi-config-dialog__head">
+        <span class="phi-config-dialog__title" v-t="'baoying-sp-switches'"></span>
+      </div>
+      <v-card-text class="config-root phi-config-dialog__body">
+        <div class="cfg-grid">
+          <CfgField :label="t('baoying-sp-digits-rtl')" :tip="t('baoying-sp-digits-rtl-tip')"><CfgSwitch v-model="baoyingSpDigitsRtl" /></CfgField>
+          <CfgField :label="t('baoying-sp-hit-fx-rotate')" :tip="t('baoying-sp-hit-fx-rotate-tip')"><CfgSwitch v-model="baoyingSpHitFxRotate" /></CfgField>
+        </div>
       </v-card-text>
     </v-card>
   </v-dialog>
