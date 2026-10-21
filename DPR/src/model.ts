@@ -304,6 +304,10 @@ export interface RenderConfig {
   jingluanSpMopemopeFadeOut: number;
   /** 「痉挛SP」演出插画的压暗程度（0 = 不压暗，1 = 全黑；与背景压暗无关） */
   jingluanSpDim: number;
+  /** 「もぺもぺSP」演出第一种红的乘算系数 rgb（0~1，用在那一串「闪」上，比第二种亮） */
+  mopemopeSpColorA: [number, number, number];
+  /** 「もぺもぺSP」演出第二种红的乘算系数 rgb（0~1，用在三段长镜头上，比第一种更暗更纯） */
+  mopemopeSpColorB: [number, number, number];
   renderBg: boolean;
   renderBgDim: boolean;
   /** 背景暗淡：黑色遮罩的不透明度（0~1），覆盖谱面信息里的同名值，默认 0.1 */
@@ -591,6 +595,8 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   jingluanSpMopemopeFadeIn: 0,
   jingluanSpMopemopeFadeOut: 0,
   jingluanSpDim: 0.18,
+  mopemopeSpColorA: [0.4118, 0.298, 0.1412],
+  mopemopeSpColorB: [0.3412, 0.2314, 0.0588],
   renderBg: true,
   renderBgDim: true,
   backgroundDim: 0.1,

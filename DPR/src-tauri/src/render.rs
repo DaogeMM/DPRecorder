@@ -205,6 +205,12 @@ pub struct RenderConfig {
     pub jingluan_sp_mopemope_fade_out: f32,
     /// 「痉挛SP」演出：插画的压暗程度（0 = 不压暗，1 = 全黑；和背景压暗无关）
     pub jingluan_sp_dim: f32,
+    /// 「もぺもぺSP」演出：由输入谱面的文件名强制开启（见 `is_mopemope_sp_chart`），不是配置项。
+    /// `to_config()` 把它透传成 `dps::config::Config::mopemope_sp_mode`。
+    pub mopemope_sp: bool,
+    /// 「もぺもぺSP」演出：第一种红（闪）/ 第二种红（长段）的乘算系数 rgb（0~1），乘到背景上
+    pub mopemope_sp_color_a: [f32; 3],
+    pub mopemope_sp_color_b: [f32; 3],
     /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启（见 `is_xuejiang_sp_chart`），
     /// 不是配置项 —— 前端不传，配置文件里写了也会在 `generate_resource` 里按文件名覆盖。
     /// `to_config()` 把它透传成 `dps::config::Config::xuejiang_sp_mode`。
@@ -514,6 +520,9 @@ impl RenderConfig {
             jingluan_sp_mopemope_fade_in: self.jingluan_sp_mopemope_fade_in,
             jingluan_sp_mopemope_fade_out: self.jingluan_sp_mopemope_fade_out,
             jingluan_sp_dim: self.jingluan_sp_dim,
+            mopemope_sp_mode: self.mopemope_sp,
+            mopemope_sp_color_a: self.mopemope_sp_color_a,
+            mopemope_sp_color_b: self.mopemope_sp_color_b,
             xuejiang_sp_mode: self.xuejiang_sp,
             xuejiang_sp_fake_notes: self.xuejiang_sp_fake_notes,
             xuejiang_sp_fake_bar_seconds: self.xuejiang_sp_fake_bar_seconds,
@@ -733,6 +742,9 @@ impl Default for RenderConfig {
             jingluan_sp_mopemope_fade_in: 0.,
             jingluan_sp_mopemope_fade_out: 0.,
             jingluan_sp_dim: 0.18,
+            mopemope_sp: false,
+            mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
+            mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],
             xuejiang_sp: false,
             xuejiang_sp_fake_notes: 305.,
             xuejiang_sp_fake_bar_seconds: 120.,
@@ -1196,6 +1208,14 @@ fn is_jingluan_sp_chart(path: &Path) -> bool {
     matches_chart_stem(path, JINGLUAN_SP_CHART_STEM)
 }
 
+/// 「もぺもぺSP」特殊演出的谱面名（同样既可能是 `.pez`，也可能是解包目录）。
+const MOPEMOPE_SP_CHART_STEM: &str = "もぺもぺ.LeaF.100.SP";
+
+/// 判断输入路径是不是「もぺもぺSP」特殊演出的那一份谱面。判定规则同 `is_xuejiang_sp_chart`。
+fn is_mopemope_sp_chart(path: &Path) -> bool {
+    matches_chart_stem(path, MOPEMOPE_SP_CHART_STEM)
+}
+
 /// 路径最后一段是否等于 `stem`，或者等于 `stem.pez`。
 fn matches_chart_stem(path: &Path, stem: &str) -> bool {
     let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
@@ -1274,6 +1294,7 @@ pub async fn generate_resource(
         let path = args_input.unwrap();
         config.xuejiang_sp = is_xuejiang_sp_chart(Path::new(&path));
         config.jingluan_sp = is_jingluan_sp_chart(Path::new(&path));
+        config.mopemope_sp = is_mopemope_sp_chart(Path::new(&path));
         if is_baoying_sp_chart(Path::new(&path)) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
@@ -1332,6 +1353,7 @@ pub async fn generate_resource(
         let mut config = params.config;
         config.xuejiang_sp = is_xuejiang_sp_chart(&path);
         config.jingluan_sp = is_jingluan_sp_chart(&path);
+        config.mopemope_sp = is_mopemope_sp_chart(&path);
         if is_baoying_sp_chart(&path) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载

@@ -264,6 +264,16 @@ pub struct Config {
     pub jingluan_sp_mopemope_fade_out: f32,
     /// 「痉挛SP」演出：插画的压暗程度（0 = 不压暗，1 = 全黑；和背景的压暗无关，单独设置）
     pub jingluan_sp_dim: f32,
+    /// 「もぺもぺSP」演出：整屏乘一层红（`背景 × 红`），只压背景（判定线、按键、粒子与界面都在它上面）。
+    /// 由输入谱面文件名强制开启，不暴露成配置项。
+    pub mopemope_sp_mode: bool,
+    /// 「もぺもぺSP」演出：第一种红的乘算系数 rgb（0~1），用在那一串「闪」上（每段只有几帧，
+    /// 出现在长段红色区间的开头 / 结尾，以及 62~65.5 秒的频闪里）。
+    /// 蒙板按 `背景 × 这个颜色` 乘上去，通道值越小压得越狠，白色等于没有蒙板；默认 `#694D24`
+    pub mopemope_sp_color_a: [f32; 3],
+    /// 「もぺもぺSP」演出：第二种红的乘算系数 rgb（0~1），用在三段长镜头上，
+    /// 比 A 更暗更纯（绿蓝压得更狠），默认 `#573B0F`
+    pub mopemope_sp_color_b: [f32; 3],
     pub render_bg: bool,
     pub render_bg_dim: bool,
     /// Phigros 4.0 `blockAreaList` 剧情遮挡区域（默认开启）
@@ -658,6 +668,9 @@ impl Default for Config {
             jingluan_sp_mopemope_fade_in: 0.,
             jingluan_sp_mopemope_fade_out: 0.,
             jingluan_sp_dim: 0.18,
+            mopemope_sp_mode: false,
+            mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
+            mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],
             render_bg: true,
             render_bg_dim: true,
             render_block_area: true,

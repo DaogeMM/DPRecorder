@@ -41,6 +41,8 @@ pub mod fixed_lane;
 
 pub mod jingluan_sp;
 
+pub mod mopemope_sp;
+
 pub mod pure_config;
 
 mod render;

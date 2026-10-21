@@ -85,6 +85,8 @@ const xuejiangSpDebug = ref(true);
 const baoyingSpDebug = ref(true);
 /** 「谱面 · 调试」里那一行「痉挛SP」三级菜单的开关（同上）。 */
 const jingluanSpDebug = ref(true);
+/** 「谱面 · 调试」里那一行「もぺもぺSP」三级菜单的开关（同上）。 */
+const mopemopeSpDebug = ref(true);
 /** 「报应SP」那两个开关（数字倒着写 / 打击特效旋转）收进的齿轮弹窗。 */
 const baoyingSpSwitchDialog = ref(false);
 /** 齿轮弹窗的宽度：与上面几个弹窗同一套算法（内容区的 60%，打开时量一次）。 */
@@ -226,6 +228,8 @@ const {
   jingluanSpGuangHeight, jingluanSpGuangOffsetY, jingluanSpGuangFadeIn, jingluanSpGuangFadeOut,
   jingluanSpMopemopeHeight, jingluanSpMopemopeOffsetY, jingluanSpMopemopeFadeIn, jingluanSpMopemopeFadeOut,
   jingluanSpDim,
+  // 「もぺもぺSP」特殊演出的两种红（谱面 → 调试）
+  mopemopeSpColorA, mopemopeSpColorB,
   // 界面独占的槽位
   hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
 } = toRefs(ui);
@@ -1122,6 +1126,12 @@ defineExpose({
               <CfgField :label="t('jingluan-sp-mopemope-fade-in')" :tip="t('jingluan-sp-mopemope-fade-in-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpMopemopeFadeIn" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
               <CfgField :label="t('jingluan-sp-mopemope-fade-out')" :tip="t('jingluan-sp-mopemope-fade-out-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpMopemopeFadeOut" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
               <CfgField :label="t('jingluan-sp-dim')" :tip="t('jingluan-sp-dim-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpDim" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-mopemope-sp" :label="t('mopemope-sp-group')" :tip="t('mopemope-sp-group-tip')" v-model="mopemopeSpDebug" no-toggle>
+            <div class="cfg-grid">
+              <CfgField :label="t('mopemope-sp-color-a')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :title="t('mopemope-sp-color-a-tip')" v-model="mopemopeSpColorA" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
+              <CfgField :label="t('mopemope-sp-color-b')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :title="t('mopemope-sp-color-b-tip')" v-model="mopemopeSpColorB" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
             </div>
           </PhiSubMenu>
         </div>

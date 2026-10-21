@@ -261,6 +261,9 @@ impl Chart {
             // 「痉挛SP」：正中的插画垫在判定线与按键下面。
             crate::core::jingluan_sp::render(res);
 
+            // 「もぺもぺSP」：整屏红色蒙板同样垫在判定线与按键下面（只压背景）。
+            crate::core::mopemope_sp::render(res);
+
             let mut guard = self.bpm_list.borrow_mut();
             for id in &self.order {
                 // 「痉挛SP」：谱面里摆在正中、没有音符、只用来被插画顶替的判定线不画

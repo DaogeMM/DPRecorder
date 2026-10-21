@@ -333,6 +333,8 @@ const CHART = {
   jingluanSpMopemopeFadeIn: { widget: 'number' },
   jingluanSpMopemopeFadeOut: { widget: 'number' },
   jingluanSpDim: { widget: 'number' },
+  mopemopeSpColorA: { widget: 'color' },
+  mopemopeSpColorB: { widget: 'color' },
 } satisfies Partial<FieldTable>;
 
 /* ========================= 判定 / 染色 =========================== */
