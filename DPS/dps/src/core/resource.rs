@@ -449,6 +449,16 @@ impl ParticleEmitter {
         let config_default = Config::default();
         let config = config.unwrap_or(config_default);
 
+        // 「Rr」演出的调试倍率乘在资源包自带的值上：大小直接放大，速度按「时长除以倍率」折算
+        let (fx_scale, fx_lifetime) = if config.rr_sp {
+            (
+                res_pack.info.hit_fx_scale * config.rr_hit_fx_scale.max(0.),
+                res_pack.info.hit_fx_duration / config.rr_hit_fx_speed.max(0.01),
+            )
+        } else {
+            (res_pack.info.hit_fx_scale, res_pack.info.hit_fx_duration)
+        };
+
         // --------------------------
         // 基础发射器配置（单颗标记粒子）
         // 仅生成1个静态标记粒子，无扩散、无随机速度
@@ -457,7 +467,7 @@ impl ParticleEmitter {
             max_particles: config.max_particles,     // 最大存活粒子上限
             local_coords: false,                     // 使用世界坐标而非局部坐标
             texture: Some(*res_pack.hit_fx),         // 击中特效贴图
-            lifetime: res_pack.info.hit_fx_duration, // 粒子总存活时长
+            lifetime: fx_lifetime,                   // 粒子总存活时长
             lifetime_randomness: 0.0,                // 生命周期无随机浮动
             initial_rotation_randomness: 0.0,        // 初始旋转无随机
             initial_direction_spread: 0.0,           // 发射方向无扩散（固定朝向）
@@ -487,7 +497,7 @@ impl ParticleEmitter {
             max_particles: config.max_particles * res_pack.info.particle_count,
             rng: Some(Pcg32::seed_from_u64(RNG_SEED)),           // 固定随机种子，保证特效表现一致
             local_coords: false,                                 // 世界坐标
-            lifetime: res_pack.info.hit_fx_duration,             // 统一生命周期时长
+            lifetime: fx_lifetime,                               // 统一生命周期时长
             lifetime_randomness: 0.0,                            // 寿命无随机
             initial_direction_spread: 2. * std::f32::consts::PI, // 360°全方向随机扩散
             size_randomness: 0.3,                                // 粒子尺寸±30%随机浮动
@@ -504,10 +514,10 @@ impl ParticleEmitter {
 
         // 初始化发射器结构体
         let mut res = Self {
-            scale: res_pack.info.hit_fx_scale,                   // 资源内置粒子基础缩放
+            scale: fx_scale,                                     // 资源内置粒子基础缩放（含调试倍率）
             emitter: Emitter::new(emitter_config),               // 单点标记粒子发射器
             emitter_square: Emitter::new(emitter_square_config), // 批量扩散粒子发射器
-            hide_particles: !config.particle_square,             // 是否关闭扩散粒子渲染
+            hide_particles: !config.particle_square || res_pack.info.hide_particles, // 全局开关或资源包要求时关闭
             particle_count: res_pack.info.particle_count,        // 单次发射扩散粒子数量
         };
         // 根据外部传入scale重新计算两个发射器的基础粒子尺寸

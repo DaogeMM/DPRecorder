@@ -18,6 +18,14 @@ import type { FieldSpec, FieldTable, SectionId } from './types';
 /** 挑战模式颜色：界面上是本地化名字，落盘成这几个英文词（下标一一对应） */
 export const STD_CHALLENGE_COLORS = ['white', 'green', 'blue', 'red', 'golden', 'rainbow'] as const;
 
+/**
+ * 「Rr」谱面演出的打击特效默认色。
+ *
+ * 只用于**界面回显**：这一项留空表示「用全局 hitcolor / 资源包自带颜色」，
+ * 但空输入框看起来像「默认值没生效」，所以留空时界面照样显示这个色。
+ */
+const RR_HIT_FX_COLOR = '#FBA373';
+
 /* ============================== 输出 ============================== */
 const OUTPUT = {
   resolution: {
@@ -335,6 +343,9 @@ const CHART = {
   jingluanSpDim: { widget: 'number' },
   mopemopeSpColorA: { widget: 'color' },
   mopemopeSpColorB: { widget: 'color' },
+  qzkagoSpStart: { widget: 'number' },
+  qzkagoSpWhiteIn: { widget: 'number' },
+  qzkagoSpWhiteOut: { widget: 'number' },
 } satisfies Partial<FieldTable>;
 
 /* ========================= 判定 / 染色 =========================== */
@@ -379,6 +390,13 @@ const JUDGE = {
   judgeRangeColor: { widget: 'color' },
   judgeRangeNoiseOcclusion: { widget: 'checkbox' },
   notecolor: { widget: 'textarea' },
+  rrHitFxColor: {
+    widget: 'textarea',
+    // 配置里留空 = 用全局 hitcolor / 资源包颜色；界面按默认色回显，避免看着像「没填」
+    toUi: (value) => (value ? String(value) : RR_HIT_FX_COLOR),
+  },
+  rrHitFxScale: { widget: 'number' },
+  rrHitFxSpeed: { widget: 'number' },
   hitcolor: { widget: 'textarea' },
   linecolor: { widget: 'textarea' },
 } satisfies Partial<FieldTable>;

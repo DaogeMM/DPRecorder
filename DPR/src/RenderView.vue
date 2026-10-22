@@ -22,6 +22,7 @@ import {
   isJingluanSpChart,
   isOptionalAppendant,
   isQzkagoChart,
+  isRrChart,
   lavaPack,
   missingAppendant,
   openAppendantDir,
@@ -293,6 +294,8 @@ async function checkAppendants(config: RenderConfig) {
   if (isJingluanSpChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.spas.zip'));
   // 「QZKAGO」的 7 张整屏静图只有 appendant.qzk.zip 里有，缺了那 7.10 秒什么都不画
   if (isQzkagoChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.qzk.zip'));
+  // 「Rr」的按键贴图与 AP 打击特效只有 appendant.rr.zip 里有，缺包会退回默认皮肤
+  if (isRrChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.rr.zip'));
   if (!missing.length) return true;
   appendantDir.value = status.dir;
   appendantMissing.value = missing;

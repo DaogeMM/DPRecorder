@@ -117,6 +117,12 @@ pub struct RenderConfig {
     pub audio_mix_optimization: bool,
     pub watermark: String,
     pub notecolor: String,
+    /// 「Rr」演出 · 打击特效调试：颜色覆盖（`#RRGGBB`），留空则用 `hitcolor` / 资源包颜色。
+    pub rr_hit_fx_color: String,
+    /// 「Rr」演出 · 打击特效调试：大小倍率，1.0 为资源包自带值。
+    pub rr_hit_fx_scale: f32,
+    /// 「Rr」演出 · 打击特效调试：动画速度倍率，1.0 为资源包自带时长。
+    pub rr_hit_fx_speed: f32,
     pub hitcolor: String,
     pub linecolor: String,
     pub roman: bool,
@@ -208,9 +214,18 @@ pub struct RenderConfig {
     /// 「QZKAGO」演出：由输入谱面的文件名强制开启（见 `is_qzkago_chart`），不是配置项。
     /// `to_config()` 把它透传成 `dps::config::Config::qzkago_sp`。
     pub qzkago_sp: bool,
+    /// 「QZKAGO」演出：整段起点（秒）。
+    pub qzkago_sp_start: f64,
+    /// 「QZKAGO」演出：白屏渐入时长（秒）。
+    pub qzkago_sp_white_in: f64,
+    /// 「QZKAGO」演出：白屏渐出时长（秒）。
+    pub qzkago_sp_white_out: f64,
     /// 「もぺもぺSP」演出：由输入谱面的文件名强制开启（见 `is_mopemope_sp_chart`），不是配置项。
     /// `to_config()` 把它透传成 `dps::config::Config::mopemope_sp_mode`。
     pub mopemope_sp: bool,
+    /// 「Rr」演出：由输入谱面的文件名强制开启（见 `is_rr_chart`），不是配置项。
+    /// `to_config()` 把它透传成 `dps::config::Config::rr_sp`；那三项打击特效调试只在它开启时生效。
+    pub rr_sp: bool,
     /// 「もぺもぺSP」演出：第一种红（闪）/ 第二种红（长段）的乘算系数 rgb（0~1），乘到背景上
     pub mopemope_sp_color_a: [f32; 3],
     pub mopemope_sp_color_b: [f32; 3],
@@ -456,6 +471,9 @@ impl RenderConfig {
             all_bad: self.all_bad,
             watermark: self.watermark.clone(),
             notecolor: self.notecolor.clone(),
+            rr_hit_fx_color: self.rr_hit_fx_color.clone(),
+            rr_hit_fx_scale: self.rr_hit_fx_scale,
+            rr_hit_fx_speed: self.rr_hit_fx_speed,
             hitcolor: self.hitcolor.clone(),
             linecolor: self.linecolor.clone(),
             roman: self.roman,
@@ -524,7 +542,11 @@ impl RenderConfig {
             jingluan_sp_mopemope_fade_out: self.jingluan_sp_mopemope_fade_out,
             jingluan_sp_dim: self.jingluan_sp_dim,
             qzkago_sp: self.qzkago_sp,
+            qzkago_sp_start: self.qzkago_sp_start,
+            qzkago_sp_white_in: self.qzkago_sp_white_in,
+            qzkago_sp_white_out: self.qzkago_sp_white_out,
             mopemope_sp_mode: self.mopemope_sp,
+            rr_sp: self.rr_sp,
             mopemope_sp_color_a: self.mopemope_sp_color_a,
             mopemope_sp_color_b: self.mopemope_sp_color_b,
             xuejiang_sp_mode: self.xuejiang_sp,
@@ -677,6 +699,9 @@ impl Default for RenderConfig {
             all_bad: false,
             watermark: "".to_string(),
             notecolor: "".to_string(),
+            rr_hit_fx_color: "#FBA373".to_string(),
+            rr_hit_fx_scale: 1.,
+            rr_hit_fx_speed: 1.,
             hitcolor: "".to_string(),
             linecolor: "".to_string(),
             roman: false,
@@ -747,7 +772,11 @@ impl Default for RenderConfig {
             jingluan_sp_mopemope_fade_out: 0.,
             jingluan_sp_dim: 0.18,
             qzkago_sp: false,
+            qzkago_sp_start: 77.07,
+            qzkago_sp_white_in: 65. / 60.,
+            qzkago_sp_white_out: 30. / 60.,
             mopemope_sp: false,
+            rr_sp: false,
             mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
             mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],
             xuejiang_sp: false,
@@ -1243,6 +1272,33 @@ fn is_qzkago_chart(path: &Path) -> bool {
     }
 }
 
+/// 「Rr」特殊演出的谱面名。四个难度的文件名都是 `<这段>.<EZ/HD/IN/AT>.pez`，判据同样是前缀。
+const RR_CHART_STEM: &str = "Rrharil.TeamGrimoire.100";
+
+/// 判断输入路径是不是「Rr」特殊演出的谱面：最后一段以谱面名开头（含四个难度与解包目录）。
+fn is_rr_chart(path: &Path) -> bool {
+    let name = path.file_name().and_then(|it| it.to_str());
+    match name {
+        Some(name) => name.starts_with(RR_CHART_STEM),
+        None => false,
+    }
+}
+
+/// 「Rr」谱面要用的资源包路径。
+///
+/// 这个演出的按键贴图与 AP 打击特效在 `appendant.rr` 包里，跟着配置里选的皮肤走会缺图，所以该
+/// 谱面直接钉在它上面；只在附带资源包目录里找（zip 或同名目录），缺包或缺文件就返回 `None`
+/// （退回内置默认皮肤）。
+fn rr_respack_path() -> Option<String> {
+    let dir = crate::common::appendant_dir().ok()?;
+    // 缺文件的包按不在处理：不然皮肤只加载到一半，报错的位置离这儿很远
+    let pack = dps::core::appendant::pack_in(&dir, dps::core::appendant::RR)?;
+    if !dps::core::appendant::has_files(&pack, dps::core::appendant::SKIN_FILES) {
+        return None;
+    }
+    Some(pack.to_string_lossy().into_owned())
+}
+
 /// 「报应SP」谱面要用的资源包路径。
 ///
 /// 这个演出的手绘数字、曲名 logo 与按键贴图都在 `appendant.retri` 包里，跟着配置里选的皮肤走会缺图，
@@ -1273,6 +1329,19 @@ fn baoying_sp_respack_path() -> Option<String> {
         }
     }
     None
+}
+
+/// 「Rr」演出的固定配置：纯黑背景（关掉曲绘）、关掉随机的方形扩散粒子（只留打击特效本身）、
+/// 皮肤钉在 `appendant.rr` 上、AP 打击特效染成 `#FBA373`。
+///
+/// 打击特效颜色是「配置里的 `hitcolor` 非空就盖过资源包的 `colorPerfectFx`」，所以这里直接写死，
+/// 免得用户自己设过的颜色把演出改掉。
+fn apply_rr_chart(config: &mut RenderConfig) {
+    config.rr_sp = true;
+    config.render_bg = false;
+    config.particle_square = false;
+    config.hitcolor = "#FBA373".to_string();
+    config.res_pack_path = rr_respack_path().or_else(crate::common::default_respack_path);
 }
 
 pub async fn generate_resource(
@@ -1319,6 +1388,9 @@ pub async fn generate_resource(
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
             config.res_pack_path = baoying_sp_respack_path().or_else(crate::common::default_respack_path);
+        }
+        if is_rr_chart(Path::new(&path)) {
+            apply_rr_chart(&mut config);
         }
 
         let mut fs = fs::fs_from_file(path.as_ref())?;
@@ -1379,6 +1451,9 @@ pub async fn generate_resource(
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
             config.res_pack_path = baoying_sp_respack_path().or_else(crate::common::default_respack_path);
+        }
+        if is_rr_chart(&path) {
+            apply_rr_chart(&mut config);
         }
         let info = params.info;
 

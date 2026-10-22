@@ -153,6 +153,9 @@ export interface RenderConfig {
   volumeSfx: number;
   watermark: string;
   notecolor: string;
+  rrHitFxColor: string;
+  rrHitFxScale: number;
+  rrHitFxSpeed: number;
   hitcolor: string;
   linecolor: string;
   roman: boolean;
@@ -308,6 +311,12 @@ export interface RenderConfig {
   mopemopeSpColorA: [number, number, number];
   /** 「もぺもぺSP」演出第二种红的乘算系数 rgb（0~1，用在三段长镜头上，比第一种更暗更纯） */
   mopemopeSpColorB: [number, number, number];
+  /** 「QZKAGO」演出：整段起点（秒） */
+  qzkagoSpStart: number;
+  /** 「QZKAGO」演出：白屏渐入时长（秒） */
+  qzkagoSpWhiteIn: number;
+  /** 「QZKAGO」演出：白屏渐出时长（秒） */
+  qzkagoSpWhiteOut: number;
   renderBg: boolean;
   renderBgDim: boolean;
   /** 背景暗淡：黑色遮罩的不透明度（0~1），覆盖谱面信息里的同名值，默认 0.1 */
@@ -513,6 +522,9 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   audioMixOptimization: true,
   watermark: '',
   notecolor: '',
+  rrHitFxColor: '#FBA373',
+  rrHitFxScale: 1,
+  rrHitFxSpeed: 1,
   hitcolor: '',
   linecolor: '',
   roman: false,
@@ -597,6 +609,9 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   jingluanSpDim: 0.18,
   mopemopeSpColorA: [0.4118, 0.298, 0.1412],
   mopemopeSpColorB: [0.3412, 0.2314, 0.0588],
+  qzkagoSpStart: 77.07,
+  qzkagoSpWhiteIn: 65 / 60,
+  qzkagoSpWhiteOut: 30 / 60,
   renderBg: true,
   renderBgDim: true,
   backgroundDim: 0.1,

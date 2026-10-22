@@ -345,6 +345,20 @@ fn draw_force_position_hole(res: &Resource, y: f32, tint: bool, noise: bool) {
 }
 
 impl Note {
+    /// 打击特效的颜色：「Rr」演出的调试覆盖优先，其次是全局「打击特效颜色」（只管 Perfect），
+    /// 都没有才用资源包里 `colorPerfectFx` / `colorGoodFx` 的颜色。
+    pub(crate) fn hit_fx_color(res: &crate::core::resource::Resource, perfect: bool) -> Color {
+        let fallback = if perfect { res.res_pack.info.fx_perfect() } else { res.res_pack.info.fx_good() };
+        let hex = if res.config.rr_sp && !res.config.rr_hit_fx_color.is_empty() {
+            &res.config.rr_hit_fx_color
+        } else if perfect {
+            &res.config.hitcolor
+        } else {
+            return fallback;
+        };
+        Self::hex_to_color(hex, fallback)
+    }
+
     fn hex_to_color(hex: &str, fallback: Color) -> Color {
         let hex = hex.strip_prefix('#').unwrap_or(hex);
         if hex.len() != 6 {
@@ -407,8 +421,7 @@ impl Note {
         if self.time < res.config.play_start_time || res.disable_hit_fx {
             return;
         }
-        let hex_str = &res.config.hitcolor;
-        let global_default_color = Self::hex_to_color(hex_str, res.res_pack.info.fx_perfect());
+        // 颜色顺序：按键自带 → 调试覆盖 → 全局「打击特效颜色」→ 资源包里的 AP 色
         self.object.set_time(res.time);
         let color = if let JudgeStatus::Hold(perfect, ref mut at, ..) = self.judge {
             if res.time >= *at {
@@ -417,10 +430,8 @@ impl Note {
                 *at = res.time + beat * res.info.hold_particle_interval_ratio as f64 / res.config.speed as f64; //HOLD_PARTICLE_INTERVAL
                 Some(if let Some(color) = self.hit_fx_color.now_opt() {
                     color
-                } else if perfect && !res.config.all_good && !res.config.all_bad {
-                    global_default_color
                 } else {
-                    res.res_pack.info.fx_good()
+                    Self::hit_fx_color(res, perfect && !res.config.all_good && !res.config.all_bad)
                 })
             } else {
                 None

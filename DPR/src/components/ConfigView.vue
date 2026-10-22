@@ -87,6 +87,10 @@ const baoyingSpDebug = ref(true);
 const jingluanSpDebug = ref(true);
 /** 「谱面 · 调试」里那一行「もぺもぺSP」三级菜单的开关（同上）。 */
 const mopemopeSpDebug = ref(true);
+/** 「谱面 · 调试」里那一行「Rr」三级菜单的开关（同上）。 */
+const rrDebug = ref(true);
+/** 「谱面 · 调试」里那一行「QZKAGO」三级菜单的开关（同上）。 */
+const qzkagoSpDebug = ref(true);
 /** 「报应SP」那两个开关（数字倒着写 / 打击特效旋转）收进的齿轮弹窗。 */
 const baoyingSpSwitchDialog = ref(false);
 /** 齿轮弹窗的宽度：与上面几个弹窗同一套算法（内容区的 60%，打开时量一次）。 */
@@ -178,7 +182,7 @@ const {
   fps, dynamicBitrateControl, bitrate, aggressiveChart, aggressiveNote,
   aggressiveParticle, challengeColor, challengeRank, noteScale, particle, particleSquare,
   playerAvatar, playerName, playerRks, sampleCount, speed, volumeMusic, volumeSfx, watermark,
-  notecolor, hitcolor, linecolor, roman, chinese, combo, difficulty, judgeOffset, forceLimit,
+  notecolor, rrHitFxColor, rrHitFxScale, rrHitFxSpeed, hitcolor, linecolor, roman, chinese, combo, difficulty, judgeOffset, forceLimit,
   limitThreshold,
   loudnessEqualization, audioMixOptimization, fileNameFormat, renderLine, renderLineExtra,
   renderNote, renderDoubleHint, renderPendingNote, pendingNoteColor, renderUiPause, renderUiName, renderUiLevel, renderUiDifficulty,
@@ -230,6 +234,8 @@ const {
   jingluanSpDim,
   // 「もぺもぺSP」特殊演出的两种红（谱面 → 调试）
   mopemopeSpColorA, mopemopeSpColorB,
+  // 「QZKAGO」特殊演出的起点与白屏渐变时长（谱面 → 调试）
+  qzkagoSpStart, qzkagoSpWhiteIn, qzkagoSpWhiteOut,
   // 界面独占的槽位
   hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
 } = toRefs(ui);
@@ -1058,25 +1064,11 @@ defineExpose({
            （参数收进齿轮弹窗），以后再加别的调试就再摆一行。 -->
       <PhiSection v-if="debugEnabled" id="sec-chart-debug" :title="t('title.xuejiang-sp-debug')">
         <div class="cfg-grid">
-          <PhiSubMenu id="sec3-xuejiang-sp" :label="t('xuejiang-sp-group')" :tip="t('xuejiang-sp-group-tip')" v-model="xuejiangSpDebug" no-toggle>
+          <PhiSubMenu id="sec3-qzkago-sp" :label="t('qzkago-sp-group')" :tip="t('qzkago-sp-group-tip')" v-model="qzkagoSpDebug" no-toggle>
             <div class="cfg-grid">
-              <CfgField :label="t('xuejiang-sp-burst-combo')" :tip="t('xuejiang-sp-burst-combo-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpBurstCombo" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-fake-notes')" :tip="t('xuejiang-sp-fake-notes-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFakeNotes" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-fake-bar-seconds')" :tip="t('xuejiang-sp-fake-bar-seconds-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFakeBarSeconds" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-roll-scale')" :tip="t('xuejiang-sp-roll-scale-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpRollScale" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-volume-percentile')" :tip="t('xuejiang-sp-volume-percentile-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumePercentile" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-volume-gamma')" :tip="t('xuejiang-sp-volume-gamma-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumeGamma" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-volume-smooth')" :tip="t('xuejiang-sp-volume-smooth-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumeSmooth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-diff-fake')" :tip="t('xuejiang-sp-diff-fake-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpDiffFake" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-diff-real')" :tip="t('xuejiang-sp-diff-real-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpDiffReal" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-hit-start')" :tip="t('xuejiang-sp-face-hit-start-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceHitStart" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-period')" :tip="t('xuejiang-sp-face-period-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFacePeriod" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-rounds')" :tip="t('xuejiang-sp-face-rounds-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceRounds" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-lead-show')" :tip="t('xuejiang-sp-face-lead-show-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceLeadShow" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-lead-roll')" :tip="t('xuejiang-sp-face-lead-roll-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceLeadRoll" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-text-show')" :tip="t('xuejiang-sp-face-text-show-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextShow" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-text-roll')" :tip="t('xuejiang-sp-face-text-roll-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextRoll" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
-              <CfgField :label="t('xuejiang-sp-face-text-hit')" :tip="t('xuejiang-sp-face-text-hit-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextHit" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('qzkago-sp-start')" :tip="t('qzkago-sp-start-tip')"><v-text-field density="compact" hide-details="auto" v-model="qzkagoSpStart" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('qzkago-sp-white-in')" :tip="t('qzkago-sp-white-in-tip')"><v-text-field density="compact" hide-details="auto" v-model="qzkagoSpWhiteIn" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('qzkago-sp-white-out')" :tip="t('qzkago-sp-white-out-tip')"><v-text-field density="compact" hide-details="auto" v-model="qzkagoSpWhiteOut" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
           <PhiSubMenu id="sec3-baoying-sp" :label="t('baoying-sp-group')" :tip="t('baoying-sp-group-tip')" v-model="baoyingSpDebug" no-toggle>
@@ -1111,6 +1103,13 @@ defineExpose({
               <CfgField :label="t('baoying-sp-particle-count')" :tip="t('baoying-sp-particle-count-tip')"><v-text-field density="compact" hide-details="auto" v-model="baoyingSpParticleCount" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
+          <PhiSubMenu id="sec3-rr" :label="t('rr-group')" :tip="t('rr-group-tip')" v-model="rrDebug" no-toggle>
+            <div class="cfg-grid">
+              <CfgField :label="t('rr-hit-fx-color')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :title="t('rr-hit-fx-color-tip')" v-model="rrHitFxColor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
+              <CfgField :label="t('rr-hit-fx-scale')" :tip="t('rr-hit-fx-scale-tip')"><v-text-field density="compact" hide-details="auto" v-model="rrHitFxScale" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('rr-hit-fx-speed')" :tip="t('rr-hit-fx-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="rrHitFxSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
           <PhiSubMenu id="sec3-jingluan-sp" :label="t('jingluan-sp-group')" :tip="t('jingluan-sp-group-tip')" v-model="jingluanSpDebug" no-toggle>
             <div class="cfg-grid">
               <CfgField :label="t('jingluan-sp-chan-height')" :tip="t('jingluan-sp-chan-height-tip')"><v-text-field density="compact" hide-details="auto" v-model="jingluanSpChanHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
@@ -1132,6 +1131,27 @@ defineExpose({
             <div class="cfg-grid">
               <CfgField :label="t('mopemope-sp-color-a')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :title="t('mopemope-sp-color-a-tip')" v-model="mopemopeSpColorA" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
               <CfgField :label="t('mopemope-sp-color-b')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :title="t('mopemope-sp-color-b-tip')" v-model="mopemopeSpColorB" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-xuejiang-sp" :label="t('xuejiang-sp-group')" :tip="t('xuejiang-sp-group-tip')" v-model="xuejiangSpDebug" no-toggle>
+            <div class="cfg-grid">
+              <CfgField :label="t('xuejiang-sp-burst-combo')" :tip="t('xuejiang-sp-burst-combo-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpBurstCombo" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-fake-notes')" :tip="t('xuejiang-sp-fake-notes-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFakeNotes" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-fake-bar-seconds')" :tip="t('xuejiang-sp-fake-bar-seconds-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFakeBarSeconds" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-roll-scale')" :tip="t('xuejiang-sp-roll-scale-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpRollScale" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-volume-percentile')" :tip="t('xuejiang-sp-volume-percentile-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumePercentile" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-volume-gamma')" :tip="t('xuejiang-sp-volume-gamma-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumeGamma" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-volume-smooth')" :tip="t('xuejiang-sp-volume-smooth-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpVolumeSmooth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-diff-fake')" :tip="t('xuejiang-sp-diff-fake-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpDiffFake" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-diff-real')" :tip="t('xuejiang-sp-diff-real-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpDiffReal" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-hit-start')" :tip="t('xuejiang-sp-face-hit-start-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceHitStart" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-period')" :tip="t('xuejiang-sp-face-period-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFacePeriod" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-rounds')" :tip="t('xuejiang-sp-face-rounds-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceRounds" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-lead-show')" :tip="t('xuejiang-sp-face-lead-show-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceLeadShow" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-lead-roll')" :tip="t('xuejiang-sp-face-lead-roll-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceLeadRoll" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-text-show')" :tip="t('xuejiang-sp-face-text-show-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextShow" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-text-roll')" :tip="t('xuejiang-sp-face-text-roll-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextRoll" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+              <CfgField :label="t('xuejiang-sp-face-text-hit')" :tip="t('xuejiang-sp-face-text-hit-tip')"><v-text-field density="compact" hide-details="auto" v-model="xuejiangSpFaceTextHit" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
         </div>

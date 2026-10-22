@@ -23,9 +23,6 @@ use once_cell::sync::Lazy;
 
 use crate::core::{appendant, Resource};
 
-/// 整段的起点（秒，`Resource::time`）。
-const START: f64 = 77.07;
-
 /// 提前这么多秒开始解码贴图，免得恰好卡在起点那一帧。
 const PRELOAD: f64 = 3.;
 
@@ -45,10 +42,11 @@ const TOTAL: f64 = 426.;
 ///
 /// 边界按 60 fps 帧号：5s11f 开始渐入、6s16f 全白、6s36f 开始退、7s6f 退完（= 整段总长）。
 /// 渐入是盖在故障闪上面的；`WHITE_OUT_START` 正好是频闪结束的那一帧。
+/// 渐入 / 渐出的**时长**可以由配置调，下面的默认值就是 65 帧与 30 帧。
 const WHITE_IN_START: f64 = 311.;
-const WHITE_IN_END: f64 = 376.;
 const WHITE_OUT_START: f64 = 396.;
-const WHITE_OUT_END: f64 = 426.;
+const WHITE_IN_DEFAULT: f64 = 65. / 60.;
+const WHITE_OUT_DEFAULT: f64 = 30. / 60.;
 
 /// C 段 16 段的帧数：远景/放大两张交替，第 0 段是远景（`QZK_2`），越切越快。
 const ZOOM_FRAMES: [f64; 16] = [8., 8., 2., 6., 4., 6., 4., 6., 4., 6., 2., 2., 2., 8., 2., 6.];
@@ -110,20 +108,25 @@ fn image_at(frame: f64) -> Option<usize> {
 }
 
 /// 白屏在这一帧的不透明度：0 → 1 → 0 的分段线性。
-fn white_alpha(frame: f64) -> f32 {
+///
+/// `fade_in` / `fade_out` 是从配置来的**秒数**：渐入从 `WHITE_IN_START` 起算，渐出从
+/// `WHITE_OUT_START` 起算，两者都是 0 秒时就是硬切。
+fn white_alpha(frame: f64, fade_in: f64, fade_out: f64) -> f32 {
     let ramp = |from: f64, to: f64, low: f64, high: f64| {
-        (((frame - from) / (to - from)).clamp(0., 1.) * (high - low) + low) as f32
+        (((frame - from) / (to - from).max(1e-6)).clamp(0., 1.) * (high - low) + low) as f32
     };
-    if frame < WHITE_IN_START || frame >= WHITE_OUT_END {
+    let in_end = WHITE_IN_START + (fade_in.max(0.) * 60.);
+    let out_end = WHITE_OUT_START + (fade_out.max(0.) * 60.);
+    if frame < WHITE_IN_START || frame >= out_end {
         return 0.;
     }
-    if frame < WHITE_IN_END {
-        return ramp(WHITE_IN_START, WHITE_IN_END, 0., 1.);
+    if frame < in_end {
+        return ramp(WHITE_IN_START, in_end, 0., 1.);
     }
     if frame < WHITE_OUT_START {
         return 1.;
     }
-    ramp(WHITE_OUT_START, WHITE_OUT_END, 1., 0.)
+    ramp(WHITE_OUT_START, out_end, 1., 0.)
 }
 
 /// 铺一张整屏图。基础空间是 `x ∈ [-1, 1]`、`y ∈ [-1/aspect, 1/aspect]`。
@@ -135,11 +138,15 @@ pub fn render(res: &mut Resource) {
     if !aspect.is_finite() || aspect <= 0. {
         return;
     }
-    if res.time >= START - PRELOAD {
+    let start = res.config.qzkago_sp_start;
+    if res.time >= start - PRELOAD {
         Lazy::force(&IMAGES);
     }
-    let frame = (res.time - START) * 60.;
-    if !(0. ..TOTAL).contains(&frame) {
+    let frame = (res.time - start) * 60.;
+    let white_out = res.config.qzkago_sp_white_out;
+    // 总长跟着渐出末尾走：渐出调长了，白屏就多退一会儿。
+    let total = WHITE_OUT_START + white_out.max(0.) * 60.;
+    if !(0. ..total).contains(&frame) {
         return;
     }
 
@@ -165,7 +172,7 @@ pub fn render(res: &mut Resource) {
         }
     }
     // 白屏压在故障闪上面：渐入那一段是「故障闪被白色逐渐吃掉」，渐出退完才把画面还给谱面。
-    let alpha = white_alpha(frame);
+    let alpha = white_alpha(frame, res.config.qzkago_sp_white_in, white_out);
     if alpha > 0. {
         if let Some(texture) = IMAGES[6] {
             draw(texture, alpha);
@@ -211,16 +218,20 @@ mod tests {
 
     #[test]
     fn white_screen_fades_in_then_out() {
+        let fade = |frame: f64| white_alpha(frame, WHITE_IN_DEFAULT, WHITE_OUT_DEFAULT);
         // 频闪段的后半段开始渐入：从全透明到全白 65 帧
-        assert_eq!(white_alpha(310.9), 0.);
-        assert!(white_alpha(311.) < 0.01);
-        assert!((white_alpha(343.5) - 0.5).abs() < 0.02);
-        assert_eq!(white_alpha(376.), 1.);
+        assert_eq!(fade(310.9), 0.);
+        assert!(fade(311.) < 0.01);
+        assert!((fade(343.5) - 0.5).abs() < 0.02);
+        assert_eq!(fade(376.), 1.);
         // 停到频闪结束，再从 1 退到 0
-        assert_eq!(white_alpha(395.9), 1.);
-        assert!((white_alpha(411.) - 0.5).abs() < 0.02);
-        assert!(white_alpha(425.9) < 0.01);
-        assert_eq!(white_alpha(426.), 0.);
+        assert_eq!(fade(395.9), 1.);
+        assert!((fade(411.) - 0.5).abs() < 0.02);
+        assert!(fade(425.9) < 0.01);
+        assert_eq!(fade(426.), 0.);
+        // 时长可调：渐入调成 0.5 秒时 341 帧就已经全白
+        assert_eq!(white_alpha(341., 0.5, WHITE_OUT_DEFAULT), 1.);
+        assert!(white_alpha(330., 0.5, WHITE_OUT_DEFAULT) < 0.7);
     }
 
     #[test]

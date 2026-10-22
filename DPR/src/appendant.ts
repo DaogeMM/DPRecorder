@@ -47,6 +47,7 @@ export const APPENDANT_FILES = [
   'appendant.water.zip',
   'appendant.spas.zip',
   'appendant.qzk.zip',
+  'appendant.rr.zip',
 ] as const;
 
 /** 读取附带资源包状态（目录 + 每个包在不在、缺不缺文件）。 */
@@ -154,4 +155,17 @@ export function isQzkagoChart(path: string | null | undefined): boolean {
   if (!path) return false;
   const name = path.replace(/\\/g, '/').split('/').pop() ?? '';
   return name.startsWith('QZKagoRequiem.tpazolite.100');
+}
+
+/**
+ * 「Rr」谱面：按键贴图与 AP 打击特效取自 `appendant.rr.zip`，缺包时退回默认皮肤（演出变成
+ * 普通皮肤的一套，谱面照常播放）。
+ *
+ * 判据与后端 `render.rs::is_rr_chart` 一致：四个难度都是 `Rrharil.TeamGrimoire.100.<难度>`，
+ * 按前缀认。
+ */
+export function isRrChart(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const name = path.replace(/\\/g, '/').split('/').pop() ?? '';
+  return name.startsWith('Rrharil.TeamGrimoire.100');
 }

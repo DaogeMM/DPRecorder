@@ -50,7 +50,7 @@ sys-locale = "0.3.2"
 tempfile = "3.3.0"
 tracing = "0.1.37"
 unic-langid = { version = "0.9.1", features = ["macros"] }
-zip = { version = "4.3.0" }
+zip = { version = "8.3.0", default-features = false, features = ["deflate-flate2"] }
 
 byteorder = "1.4.3"
 chrono = { version = "0.4.24", features = ["serde"] }
@@ -104,3 +104,7 @@ wasm-bindgen-futures = "0.4"
 
 [build-dependencies]
 walkdir = "2.3.2"
+
+[dev-dependencies]
+# 手工造带错误的 zip 包（见 `core::appendant` 的用例）要算 CRC32
+crc32fast = "1.4"

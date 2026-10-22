@@ -92,6 +92,14 @@ pub struct Config {
     pub volume_bgm: f32,
     pub watermark: String,
     pub notecolor: String,
+    /// 「Rr」演出：由输入谱面文件名强制开启，不暴露成配置项；排版的这几项调试只在这一模式下生效。
+    pub rr_sp: bool,
+    /// 「Rr」演出 · 打击特效调试：颜色覆盖（`#RRGGBB`）。留空则用全局的 `hitcolor`，再没有就用资源包里的 AP 色。
+    pub rr_hit_fx_color: String,
+    /// 「Rr」演出 · 打击特效调试：大小倍率，乘在资源包自带的 `hitFxScale` 上（1.0 为原值）。
+    pub rr_hit_fx_scale: f32,
+    /// 「Rr」演出 · 打击特效调试：动画速度倍率，1.0 为资源包自带的时长，2.0 则整段动画快一倍。
+    pub rr_hit_fx_speed: f32,
     pub hitcolor: String,
     pub linecolor: String,
     pub roman: bool,
@@ -267,6 +275,12 @@ pub struct Config {
     /// 「QZKAGO」演出：77.07 秒起整屏换成 7 张静图来回硬切，共 7.10 秒，最后一张淡出。
     /// 由输入谱面文件名强制开启，不暴露成配置项。
     pub qzkago_sp: bool,
+    /// 「QZKAGO」演出：整段的起点（秒，`Resource::time`）。
+    pub qzkago_sp_start: f64,
+    /// 「QZKAGO」演出：白屏渐入时长（秒）；0 就是硬切。
+    pub qzkago_sp_white_in: f64,
+    /// 「QZKAGO」演出：白屏渐出时长（秒）；整段总长跟着它走。
+    pub qzkago_sp_white_out: f64,
     /// 「もぺもぺSP」演出：整屏乘一层红（`背景 × 红`），只压背景（判定线、按键、粒子与界面都在它上面）。
     /// 由输入谱面文件名强制开启，不暴露成配置项。
     pub mopemope_sp_mode: bool,
@@ -582,6 +596,10 @@ impl Default for Config {
             volume_bgm: 1.0,
             watermark: "".to_string(),
             notecolor: "".to_string(),
+            rr_sp: false,
+            rr_hit_fx_color: "#FBA373".to_string(),
+            rr_hit_fx_scale: 1.,
+            rr_hit_fx_speed: 1.,
             hitcolor: "".to_string(),
             linecolor: "".to_string(),
             roman: false,
@@ -672,6 +690,9 @@ impl Default for Config {
             jingluan_sp_mopemope_fade_out: 0.,
             jingluan_sp_dim: 0.18,
             qzkago_sp: false,
+            qzkago_sp_start: 77.07,
+            qzkago_sp_white_in: 65. / 60.,
+            qzkago_sp_white_out: 30. / 60.,
             mopemope_sp_mode: false,
             mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
             mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],

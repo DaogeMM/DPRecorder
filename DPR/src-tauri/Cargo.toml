@@ -46,7 +46,7 @@ tauri-plugin-os = "2.3.2"
 regex = "1.9.6"
 tauri-plugin-cli = "2.4.1"
 tauri-plugin-dialog = "2.4.2"
-zip = "4.3.0"
+zip = { version = "8.3.0", default-features = false, features = ["deflate-flate2"] }
 serde_yaml = "0.9.21"
 tauri-plugin-prevent-default = "2.0.0"
 ndarray = "0.16.1"

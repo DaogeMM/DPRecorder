@@ -37,6 +37,9 @@ pub const SPAS: &str = "appendant.spas";
 /// 演出包：「QZKAGO」谱面里整屏闪现的几张静图。
 pub const QZK: &str = "appendant.qzk";
 
+/// 皮肤包：「Rr」谱面用的按键贴图与 AP 打击特效。
+pub const RR: &str = "appendant.rr";
+
 /// 皮肤包里的必需文件：与 `core::resource::ResourcePack::load` 读的那几张一一对应，缺一个都加载失败。
 pub const SKIN_FILES: &[&str] = &[
     "info.yml",
@@ -94,8 +97,7 @@ fn read_entry(pack: &Path, path: &str) -> Option<Vec<u8>> {
     if pack.is_dir() {
         return std::fs::read(dir_entry(pack, path)?).ok();
     }
-    let file = std::fs::File::open(pack).ok()?;
-    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let mut zip = open_zip(pack)?;
     // `name_for_index` 借用整个 archive，先收一份名字列表再找，省得和 `by_index` 抢借用。
     let names: Vec<String> = (0..zip.len()).filter_map(|index| zip.name_for_index(index).map(str::to_owned)).collect();
     let index = names.iter().position(|name| name == path || name.ends_with(&format!("/{path}")))?;
@@ -103,6 +105,11 @@ fn read_entry(pack: &Path, path: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     item.read_to_end(&mut bytes).ok()?;
     Some(bytes)
+}
+
+/// 打开包里的 zip；文件名与 Info-ZIP Unicode 路径字段对不上的包由 `crate::fs::open_zip` 兜底。
+fn open_zip(pack: &Path) -> Option<zip::ZipArchive<std::io::Cursor<Vec<u8>>>> {
+    crate::fs::open_zip(std::fs::read(pack).ok()?).ok()
 }
 
 /// 同名目录里的一条资源：直接命中，或解压时多套了一层文件夹。
@@ -125,10 +132,7 @@ pub fn has_entry(pack: &Path, path: &str) -> bool {
     if pack.is_dir() {
         return dir_entry(pack, path).is_some();
     }
-    let Ok(file) = std::fs::File::open(pack) else {
-        return false;
-    };
-    let Ok(zip) = zip::ZipArchive::new(file) else {
+    let Some(zip) = open_zip(pack) else {
         return false;
     };
     let suffix = format!("/{path}");
@@ -234,5 +238,93 @@ mod tests {
         assert!(!has_files(&zip_path, WATER_FILES));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Info-ZIP 的 Unicode 路径字段（0x7075）与中央目录里的文件名不一致时，`zip` 要么因为
+    /// CRC 对不上判定整个包不可读，要么拿字段里那份旧名字当条目名；这类包（改过文件名却没
+    /// 同步扩展字段的皮肤包）还是要能按包里真实的文件名读出来。
+    #[test]
+    fn stale_unicode_path_field_still_reads() {
+        let root = temp_root("badcrc");
+        let zip_path = root.join("bad.zip");
+        write_zip_with_stale_unicode_path(&zip_path, "皮肤.png", "旧名字.png", b"png");
+
+        let raw = std::fs::File::open(&zip_path).unwrap();
+        assert!(zip::ZipArchive::new(raw).is_err(), "原始包应当因为 Unicode 路径字段的 CRC 读不出来");
+
+        assert!(has_entry(&zip_path, "皮肤.png"));
+        assert!(!has_entry(&zip_path, "旧名字.png"));
+        assert_eq!(read_entry(&zip_path, "皮肤.png").as_deref(), Some(&b"png"[..]));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 手工造一个 zip：文件名带中文（因而带 0x7075 字段），该字段里是另一份旧名字、CRC 也是错的，
+    /// 内容不压缩。
+    fn write_zip_with_stale_unicode_path(path: &Path, name: &str, extra_name: &str, data: &[u8]) {
+        use std::io::Write;
+
+        let name_bytes = name.as_bytes();
+        let extra_name_bytes = extra_name.as_bytes();
+        let crc = crc32fast::hash(data);
+        let mut file = std::fs::File::create(path).unwrap();
+
+        let mut local = Vec::new();
+        local.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+        local.extend_from_slice(&20u16.to_le_bytes()); // 版本
+        local.extend_from_slice(&0x800u16.to_le_bytes()); // 文件名为 UTF-8
+        local.extend_from_slice(&0u16.to_le_bytes()); // 不压缩
+        local.extend_from_slice(&0u16.to_le_bytes()); // 时间
+        local.extend_from_slice(&0u16.to_le_bytes()); // 日期
+        local.extend_from_slice(&crc.to_le_bytes());
+        local.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        local.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        local.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+        local.extend_from_slice(&0u16.to_le_bytes()); // 本地头不带扩展字段
+        local.extend_from_slice(name_bytes);
+        file.write_all(&local).unwrap();
+        file.write_all(data).unwrap();
+
+        let mut extra = Vec::new();
+        extra.extend_from_slice(&0x7075u16.to_le_bytes());
+        extra.extend_from_slice(&(5u16 + extra_name_bytes.len() as u16).to_le_bytes());
+        extra.push(1); // 版本号
+        extra.extend_from_slice(&0xdead_beef_u32.to_le_bytes()); // 故意写错的 CRC
+        extra.extend_from_slice(extra_name_bytes);
+
+        let mut central = Vec::new();
+        central.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+        central.extend_from_slice(&20u16.to_le_bytes()); // 版本
+        central.extend_from_slice(&20u16.to_le_bytes()); // 解压所需版本
+        central.extend_from_slice(&0x800u16.to_le_bytes()); // 文件名为 UTF-8
+        central.extend_from_slice(&0u16.to_le_bytes()); // 不压缩
+        central.extend_from_slice(&0u16.to_le_bytes()); // 时间
+        central.extend_from_slice(&0u16.to_le_bytes()); // 日期
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+        central.extend_from_slice(&(extra.len() as u16).to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes()); // 注释长度
+        central.extend_from_slice(&0u16.to_le_bytes()); // 起始磁盘
+        central.extend_from_slice(&0u16.to_le_bytes()); // 内部属性
+        central.extend_from_slice(&0u32.to_le_bytes()); // 外部属性
+        central.extend_from_slice(&0u32.to_le_bytes()); // 本地头偏移
+        central.extend_from_slice(name_bytes);
+        central.extend_from_slice(&extra);
+
+        let central_offset = (local.len() + data.len()) as u32;
+        file.write_all(&central).unwrap();
+
+        let mut eocd = Vec::new();
+        eocd.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        eocd.extend_from_slice(&0u16.to_le_bytes()); // 本磁盘号
+        eocd.extend_from_slice(&0u16.to_le_bytes()); // 中央目录起始磁盘
+        eocd.extend_from_slice(&1u16.to_le_bytes()); // 本磁盘条目数
+        eocd.extend_from_slice(&1u16.to_le_bytes()); // 总条目数
+        eocd.extend_from_slice(&(central.len() as u32).to_le_bytes());
+        eocd.extend_from_slice(&central_offset.to_le_bytes());
+        eocd.extend_from_slice(&0u16.to_le_bytes()); // 注释长度
+        file.write_all(&eocd).unwrap();
     }
 }

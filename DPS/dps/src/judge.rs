@@ -957,20 +957,18 @@ impl Judge {
             }
             if match judgement {
                 Judgement::Perfect => {
-                    let color = if let Some(color) = note.hit_fx_color.now_opt() {
-                        color
-                    } else {
-                        res.res_pack.info.fx_perfect()
-                    };
+                    let color = note
+                        .hit_fx_color
+                        .now_opt()
+                        .unwrap_or_else(|| Note::hit_fx_color(res, true));
                     res.with_model(line_tr * note_transform, |res| res.emit_at_origin(note.rotation(line), color));
                     true
                 }
                 Judgement::Good => {
-                    let color = if let Some(color) = note.hit_fx_color.now_opt() {
-                        color
-                    } else {
-                        res.res_pack.info.fx_good()
-                    };
+                    let color = note
+                        .hit_fx_color
+                        .now_opt()
+                        .unwrap_or_else(|| Note::hit_fx_color(res, false));
                     res.with_model(line_tr * note_transform, |res| res.emit_at_origin(note.rotation(line), color));
                     true
                 }
@@ -1020,31 +1018,16 @@ impl Judge {
         self.last_time = t / spd;
     }
 
-    fn hex_to_color(hex: &str, fallback: Color) -> Color {
-        let hex = hex.strip_prefix('#').unwrap_or(hex);
-        if hex.len() != 6 {
-            return fallback;
-        }
-        match u8::from_str_radix(&hex[0..2], 16) {
-            Ok(r) => {
-                let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(fallback.g as u8 * 255);
-                let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(fallback.b as u8 * 255);
-                Color::new(r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.0)
-            }
-            Err(_) => fallback,
-        }
-    }
-
     fn auto_play_update(&mut self, res: &mut Resource, chart: &mut Chart) {
         let t = res.time - res.config.judge_offset;
-        let hex_str = &res.config.hitcolor;
-        let global_default_color = Self::hex_to_color(hex_str,res.res_pack.info.fx_perfect());
+        let perfect_fx = Note::hit_fx_color(res, true);
+        let good_fx = Note::hit_fx_color(res, false);
         let (judge_type, judge_type_hold, judge_time, fx_color) = if res.config.all_bad {
             (Judgement::Bad, Judgement::Good, LIMIT_BAD, Color::new(0., 0., 0., 0.))
         } else if res.config.all_good {
-            (Judgement::Good, Judgement::Good, LIMIT_GOOD, res.res_pack.info.fx_good())
+            (Judgement::Good, Judgement::Good, LIMIT_GOOD, good_fx)
         } else {
-            (Judgement::Perfect, Judgement::Perfect, 0., global_default_color)
+            (Judgement::Perfect, Judgement::Perfect, 0., perfect_fx)
         };
         //let spd = res.config.speed;
         let mut judgements = Vec::new();

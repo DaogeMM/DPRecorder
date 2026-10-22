@@ -123,9 +123,91 @@ impl FileSystem for ExternalFileSystem {
 #[derive(Clone)]
 pub struct ZipFileSystem(pub Arc<Mutex<ZipArchive<Cursor<Vec<u8>>>>>, String);
 
+/// 打开一个 zip 归档；遇到文件名与 Info-ZIP Unicode 路径字段（0x7075）对不上的包时，
+/// 去掉该字段再试一次。
+///
+/// 有的打包工具改过包内文件名却没同步这个扩展字段：CRC 对不上时 `zip` 判定整个中央目录不可信
+/// （整个包打不开），CRC 对得上时它又会拿字段里那份旧名字当条目名（按新名字查不到）。
+/// 两种都只影响这一个扩展字段，去掉它、按中央目录里存的文件名解析即可。
+pub(crate) fn open_zip(bytes: Vec<u8>) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
+    if let Ok(zip) = ZipArchive::new(Cursor::new(bytes.clone())) {
+        return Ok(zip);
+    }
+    Ok(ZipArchive::new(Cursor::new(strip_unicode_path_fields(bytes)))?)
+}
+
+/// 重写中央目录，去掉每个条目的 0x7075（Unicode 路径）扩展字段，其余字节原样保留。
+/// 结构不认识（zip64、找不到 EOCD、条目越界）时原样返回，让调用方照常报错。
+fn strip_unicode_path_fields(bytes: Vec<u8>) -> Vec<u8> {
+    const EOCD_SIG: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    const CDFH_SIG: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
+    const UNICODE_PATH_TAG: u16 = 0x7075;
+    let Some(eocd) = bytes.windows(4).rposition(|window| window == EOCD_SIG) else {
+        return bytes;
+    };
+    if eocd + 22 > bytes.len() {
+        return bytes;
+    }
+    let entries = u16::from_le_bytes([bytes[eocd + 10], bytes[eocd + 11]]) as usize;
+    let cd_size = u32::from_le_bytes([bytes[eocd + 12], bytes[eocd + 13], bytes[eocd + 14], bytes[eocd + 15]]) as usize;
+    let cd_offset = u32::from_le_bytes([bytes[eocd + 16], bytes[eocd + 17], bytes[eocd + 18], bytes[eocd + 19]]) as usize;
+    // zip64 的计数与偏移是占位值，这里不处理
+    if entries == u16::MAX as usize || cd_size == u32::MAX as usize || cd_offset == u32::MAX as usize || cd_offset + cd_size > bytes.len() {
+        return bytes;
+    }
+
+    let mut rebuilt = Vec::with_capacity(cd_size);
+    let mut cursor = cd_offset;
+    for _ in 0..entries {
+        if cursor + 46 > bytes.len() || bytes[cursor..cursor + 4] != CDFH_SIG {
+            return bytes;
+        }
+        let name_len = u16::from_le_bytes([bytes[cursor + 28], bytes[cursor + 29]]) as usize;
+        let extra_len = u16::from_le_bytes([bytes[cursor + 30], bytes[cursor + 31]]) as usize;
+        let comment_len = u16::from_le_bytes([bytes[cursor + 32], bytes[cursor + 33]]) as usize;
+        let name_end = cursor + 46 + name_len;
+        let extra_end = name_end + extra_len;
+        let entry_end = extra_end + comment_len;
+        if entry_end > bytes.len() {
+            return bytes;
+        }
+
+        let mut kept_extra = Vec::with_capacity(extra_len);
+        let mut field = name_end;
+        while field + 4 <= extra_end {
+            let tag = u16::from_le_bytes([bytes[field], bytes[field + 1]]);
+            let size = u16::from_le_bytes([bytes[field + 2], bytes[field + 3]]) as usize;
+            let field_end = field + 4 + size;
+            if field_end > extra_end {
+                return bytes;
+            }
+            if tag != UNICODE_PATH_TAG {
+                kept_extra.extend_from_slice(&bytes[field..field_end]);
+            }
+            field = field_end;
+        }
+
+        let header_start = rebuilt.len();
+        rebuilt.extend_from_slice(&bytes[cursor..cursor + 46]);
+        rebuilt[header_start + 30..header_start + 32].copy_from_slice(&(kept_extra.len() as u16).to_le_bytes());
+        rebuilt.extend_from_slice(&bytes[cursor + 46..name_end]);
+        rebuilt.extend_from_slice(&kept_extra);
+        rebuilt.extend_from_slice(&bytes[extra_end..entry_end]);
+        cursor = entry_end;
+    }
+
+    let mut output = bytes[..cd_offset].to_vec();
+    output.extend_from_slice(&rebuilt);
+    output.extend_from_slice(&bytes[eocd..eocd + 12]);
+    output.extend_from_slice(&(rebuilt.len() as u32).to_le_bytes());
+    output.extend_from_slice(&(cd_offset as u32).to_le_bytes());
+    output.extend_from_slice(&bytes[eocd + 20..]);
+    output
+}
+
 impl ZipFileSystem {
     pub fn new(bytes: Vec<u8>) -> Result<Self> {
-        let zip = ZipArchive::new(Cursor::new(bytes))?;
+        let zip = open_zip(bytes)?;
         let root_dirs = zip
             .file_names()
             .filter(|it| it.ends_with('/') && it.find('/') == Some(it.len() - 1))
