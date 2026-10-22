@@ -34,6 +34,9 @@ pub const WATER: &str = "appendant.water";
 /// 演出包：「痉挛SP」谱面里顶替正中判定线的几张插画。
 pub const SPAS: &str = "appendant.spas";
 
+/// 演出包：「QZKAGO」谱面里整屏闪现的几张静图。
+pub const QZK: &str = "appendant.qzk";
+
 /// 皮肤包里的必需文件：与 `core::resource::ResourcePack::load` 读的那几张一一对应，缺一个都加载失败。
 pub const SKIN_FILES: &[&str] = &[
     "info.yml",
@@ -56,6 +59,9 @@ pub const WATER_FILES: &[&str] = &["water.png", "hit/hit-1.mp3", "hit/hit-2.mp3"
 
 /// 「痉挛SP」演出包的必需文件。
 pub const SPAS_FILES: &[&str] = &["spasmodic_chan.png", "mopemope.png", "guang.png"];
+
+/// 「QZKAGO」演出包的必需文件，下标与 `qzkago_sp` 里那张图的上场顺序一致。
+pub const QZK_FILES: &[&str] = &["qzk_0.png", "qzk_1.png", "qzk_2.png", "qzk_3.png", "qzk_4.png", "qzk_5.png", "qzk_6.png"];
 
 
 /// `appendant/` 的绝对路径。取不到程序路径时返回 `None`。
@@ -172,6 +178,11 @@ pub fn spas_guang_image() -> Option<Vec<u8>> {
 /// 「痉挛SP」第三段演出图（「もぺもぺ」，满幅横图）。
 pub fn spas_mopemope_image() -> Option<Vec<u8>> {
     entry(SPAS, "mopemope.png")
+}
+
+/// 「QZKAGO」演出包里第 `index` 张图（0..7，顺序见 `QZK_FILES`）。
+pub fn qzk_image(index: usize) -> Option<Vec<u8>> {
+    entry(QZK, QZK_FILES.get(index)?)
 }
 
 #[cfg(test)]

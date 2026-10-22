@@ -46,6 +46,7 @@ export const APPENDANT_FILES = [
   'appendant.lava.zip',
   'appendant.water.zip',
   'appendant.spas.zip',
+  'appendant.qzk.zip',
 ] as const;
 
 /** 读取附带资源包状态（目录 + 每个包在不在、缺不缺文件）。 */
@@ -140,4 +141,17 @@ export function isBaoyingSpChart(path: string | null | undefined): boolean {
  */
 export function isJingluanSpChart(path: string | null | undefined): boolean {
   return !!path && /SpasmodicHaocoreMix/i.test(path);
+}
+
+/**
+ * 「QZKAGO」谱面：整屏闪现的 7 张静图取自 `appendant.qzk.zip`，缺包时那 7.10 秒什么都不画，
+ * 谱面照常播放。
+ *
+ * 判据与后端 `render.rs::is_qzkago_chart` 一致：四个难度都是 `QZKagoRequiem.tpazolite.100.<难度>`，
+ * 按前缀认。
+ */
+export function isQzkagoChart(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const name = path.replace(/\\/g, '/').split('/').pop() ?? '';
+  return name.startsWith('QZKagoRequiem.tpazolite.100');
 }

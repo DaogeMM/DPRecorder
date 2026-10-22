@@ -21,6 +21,7 @@ import {
   isBaoyingSpChart,
   isJingluanSpChart,
   isOptionalAppendant,
+  isQzkagoChart,
   lavaPack,
   missingAppendant,
   openAppendantDir,
@@ -290,6 +291,8 @@ async function checkAppendants(config: RenderConfig) {
   if (isBaoyingSpChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.retri.zip'));
   // 「痉挛SP」的演出插图只有 appendant.spas.zip 里有，缺了这段演出就什么都不画
   if (isJingluanSpChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.spas.zip'));
+  // 「QZKAGO」的 7 张整屏静图只有 appendant.qzk.zip 里有，缺了那 7.10 秒什么都不画
+  if (isQzkagoChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.qzk.zip'));
   if (!missing.length) return true;
   appendantDir.value = status.dir;
   appendantMissing.value = missing;

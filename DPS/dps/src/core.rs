@@ -45,6 +45,8 @@ pub mod mopemope_sp;
 
 pub mod pure_config;
 
+pub mod qzkago_sp;
+
 mod render;
 pub use render::{copy_fbo, internal_id, MSRenderTarget};
 

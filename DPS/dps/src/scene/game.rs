@@ -2349,6 +2349,18 @@ impl Scene for GameScene {
             self.chart.render_pending_tint(ui, &mut self.res);
         }
 
+        // 「QZKAGO」：整屏异象闪现。素材是游戏自己的整屏截图，因此画在整帧的最后，
+        // 连判定线、按键与界面一起盖住（相机会话与最后拷屏那一趟一致）。
+        {
+            set_camera(&Camera2D {
+                zoom: vec2(1., asp2_window),
+                viewport: viewport_window,
+                render_target: self.res.chart_onto(),
+                ..Default::default()
+            });
+            crate::core::qzkago_sp::render(&mut self.res);
+        }
+
         // 拖影的噪域与屏幕进水补画在拷屏之后（累积缓冲不能被它们污染），画完即弃。
                 let noise_on_screen = trail;
 

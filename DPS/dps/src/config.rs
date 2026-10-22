@@ -264,6 +264,9 @@ pub struct Config {
     pub jingluan_sp_mopemope_fade_out: f32,
     /// 「痉挛SP」演出：插画的压暗程度（0 = 不压暗，1 = 全黑；和背景的压暗无关，单独设置）
     pub jingluan_sp_dim: f32,
+    /// 「QZKAGO」演出：77.07 秒起整屏换成 7 张静图来回硬切，共 7.10 秒，最后一张淡出。
+    /// 由输入谱面文件名强制开启，不暴露成配置项。
+    pub qzkago_sp: bool,
     /// 「もぺもぺSP」演出：整屏乘一层红（`背景 × 红`），只压背景（判定线、按键、粒子与界面都在它上面）。
     /// 由输入谱面文件名强制开启，不暴露成配置项。
     pub mopemope_sp_mode: bool,
@@ -668,6 +671,7 @@ impl Default for Config {
             jingluan_sp_mopemope_fade_in: 0.,
             jingluan_sp_mopemope_fade_out: 0.,
             jingluan_sp_dim: 0.18,
+            qzkago_sp: false,
             mopemope_sp_mode: false,
             mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
             mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],

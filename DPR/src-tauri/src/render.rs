@@ -205,6 +205,9 @@ pub struct RenderConfig {
     pub jingluan_sp_mopemope_fade_out: f32,
     /// 「痉挛SP」演出：插画的压暗程度（0 = 不压暗，1 = 全黑；和背景压暗无关）
     pub jingluan_sp_dim: f32,
+    /// 「QZKAGO」演出：由输入谱面的文件名强制开启（见 `is_qzkago_chart`），不是配置项。
+    /// `to_config()` 把它透传成 `dps::config::Config::qzkago_sp`。
+    pub qzkago_sp: bool,
     /// 「もぺもぺSP」演出：由输入谱面的文件名强制开启（见 `is_mopemope_sp_chart`），不是配置项。
     /// `to_config()` 把它透传成 `dps::config::Config::mopemope_sp_mode`。
     pub mopemope_sp: bool,
@@ -520,6 +523,7 @@ impl RenderConfig {
             jingluan_sp_mopemope_fade_in: self.jingluan_sp_mopemope_fade_in,
             jingluan_sp_mopemope_fade_out: self.jingluan_sp_mopemope_fade_out,
             jingluan_sp_dim: self.jingluan_sp_dim,
+            qzkago_sp: self.qzkago_sp,
             mopemope_sp_mode: self.mopemope_sp,
             mopemope_sp_color_a: self.mopemope_sp_color_a,
             mopemope_sp_color_b: self.mopemope_sp_color_b,
@@ -742,6 +746,7 @@ impl Default for RenderConfig {
             jingluan_sp_mopemope_fade_in: 0.,
             jingluan_sp_mopemope_fade_out: 0.,
             jingluan_sp_dim: 0.18,
+            qzkago_sp: false,
             mopemope_sp: false,
             mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
             mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],
@@ -1224,6 +1229,20 @@ fn matches_chart_stem(path: &Path, stem: &str) -> bool {
     name == stem || name.strip_suffix(".pez") == Some(stem)
 }
 
+/// 「QZKAGO」特殊演出的谱面名。四个难度的文件名都是 `<这段>.<EZ/HD/IN/AT>.pez`，
+/// 所以判据是前缀（`matches_chart_stem` 那种整名相等在这里不适用）。
+const QZKAGO_CHART_STEM: &str = "QZKagoRequiem.tpazolite.100";
+
+/// 判断输入路径是不是「QZKAGO」特殊演出的谱面：最后一段以谱面名开头（含四个难度与解包目录）。
+fn is_qzkago_chart(path: &Path) -> bool {
+    // 选的是解包目录本身时，看目录名。
+    let name = path.file_name().and_then(|it| it.to_str());
+    match name {
+        Some(name) => name.starts_with(QZKAGO_CHART_STEM),
+        None => false,
+    }
+}
+
 /// 「报应SP」谱面要用的资源包路径。
 ///
 /// 这个演出的手绘数字、曲名 logo 与按键贴图都在 `appendant.retri` 包里，跟着配置里选的皮肤走会缺图，
@@ -1295,6 +1314,7 @@ pub async fn generate_resource(
         config.xuejiang_sp = is_xuejiang_sp_chart(Path::new(&path));
         config.jingluan_sp = is_jingluan_sp_chart(Path::new(&path));
         config.mopemope_sp = is_mopemope_sp_chart(Path::new(&path));
+        config.qzkago_sp = is_qzkago_chart(Path::new(&path));
         if is_baoying_sp_chart(Path::new(&path)) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
@@ -1354,6 +1374,7 @@ pub async fn generate_resource(
         config.xuejiang_sp = is_xuejiang_sp_chart(&path);
         config.jingluan_sp = is_jingluan_sp_chart(&path);
         config.mopemope_sp = is_mopemope_sp_chart(&path);
+        config.qzkago_sp = is_qzkago_chart(&path);
         if is_baoying_sp_chart(&path) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载

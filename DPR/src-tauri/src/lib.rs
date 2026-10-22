@@ -1156,17 +1156,18 @@ async fn move_task(queue: State<'_, TaskQueue>, id: u32, index: usize) -> Result
     Ok(())
 }
 
-/// 程序认得的五个包：包名（`appendant/` 下的 zip 或同名目录）、界面显示的文件名、必需文件表。
+/// 程序认得的六个包：包名（`appendant/` 下的 zip 或同名目录）、界面显示的文件名、必需文件表。
 ///
 /// `appendant/` 里的皮肤不进资源包下拉框 —— 那是一组程序自己按场合挑的包（official 当默认、
-/// retri 给「报应SP」、spas 给「痉挛SP」），不是给用户选的。
-const APPENDANT_PACKS: [(&str, &str, &[&str]); 6] = [
+/// retri 给「报应SP」、spas 给「痉挛SP」、qzk 给「QZKAGO」），不是给用户选的。
+const APPENDANT_PACKS: [(&str, &str, &[&str]); 7] = [
     (appendant::OFFICIAL, "appendant.official.zip", appendant::SKIN_FILES),
     (appendant::OLD, "appendant.old.zip", appendant::SKIN_FILES),
     (appendant::RETRI, "appendant.retri.zip", appendant::SKIN_FILES),
     (appendant::LAVA, "appendant.lava.zip", appendant::LAVA_FILES),
     (appendant::WATER, "appendant.water.zip", appendant::WATER_FILES),
     (appendant::SPAS, "appendant.spas.zip", appendant::SPAS_FILES),
+    (appendant::QZK, "appendant.qzk.zip", appendant::QZK_FILES),
 ];
 
 #[derive(Serialize)]
