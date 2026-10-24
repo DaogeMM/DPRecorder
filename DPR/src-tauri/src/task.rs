@@ -480,6 +480,9 @@ impl Task {
                     if config.print_stderr {
                         eprintln!("{}", line);
                     }
+                    // 子进程自己不写日志文件：它的每行 stderr 在这里同时进「输出」面板和日志文件
+                    // （面板里前端按 ANSI 上色，`log_line` 落盘前会剥掉颜色码）。
+                    crate::common::log_line(&line);
                     output_stderr.push_str(&line);
                     output_stderr.push('\n');
                 },

@@ -1002,6 +1002,37 @@ fn cmd_hidden(program: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
+/// `-thread_queue_size` 该不该放在输入段（`-i` 前面）。
+///
+/// 老版 ffmpeg 把它算作**解复用**选项（`-h full` 里写的是 `from the demuxer`），必须写在 `-i` 前；
+/// 新版（近期的 master 构建）改成**复用器**选项（`set the maximum number of queued packets per stream on the muxer`），
+/// 留在输入段会让整条命令解析失败、进程直接退出（`Option thread_queue_size … cannot be applied to
+/// input url pipe:0` / `Error opening input files: Invalid argument`），而写帧那一侧只会看到
+/// `BrokenPipe`，看不出真正的原因。
+///
+/// 版本号不好判（master 构建是 `N-…`，没有稳定语义），所以直接拿一条最小命令问它吃哪一边：
+/// 输入段能过就用输入段（老行为不变），不能过就挪到输出段（新旧版本都接受的位置）。
+fn thread_queue_size_is_input(ffmpeg: impl AsRef<OsStr>) -> bool {
+    cmd_hidden(ffmpeg)
+        .args([
+            "-hide_banner",
+            "-nostdin",
+            "-thread_queue_size",
+            "1",
+            "-f",
+            "lavfi",
+            "-i",
+            "nullsrc=s=16x16:d=0.05",
+            "-f",
+            "null",
+            "-",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 /// 把「FFmpeg 路径」那格的值换算成**可执行文件**。
 ///
 /// 那格填的是 **ffmpeg 所在的目录**（不是 exe 本身），
@@ -2077,14 +2108,19 @@ pub async fn main(cmd: bool) -> Result<()> {
         "-b:v"
     };
 
+    // 输入段队列长度：位置跟着 ffmpeg 版本走（见 `thread_queue_size_is_input`），
+    // 新版要写在输出段，所以这里只决定它属于哪一段，真正拼字符串在下面两处。
+    let thread_queue_size_is_input = thread_queue_size_is_input(&ffmpeg);
+
     let mut args = "-probesize 50M -y -f rawvideo -c:v rawvideo".to_owned();
     if ffmpeg_encoder == encoder_list[0] {
         args += " -hwaccel_output_format cuda";
     }
-    write!(
-        &mut args,
-        " -s {vw}x{vh} -r {fps} -pix_fmt rgba -thread_queue_size 1024 -i pipe:0"
-    )?;
+    write!(&mut args, " -s {vw}x{vh} -r {fps} -pix_fmt rgba")?;
+    if thread_queue_size_is_input {
+        args += " -thread_queue_size 1024";
+    }
+    args += " -i pipe:0";
 
     let mut ffmpeg_audio_filter_music = if config.loudness_equalization {
         format!(
@@ -2160,7 +2196,7 @@ pub async fn main(cmd: bool) -> Result<()> {
     }
     let pixel_format = if gpu_color_convert { "rgba" } else { "yuv420p" };
 
-    let args2 = format!(
+    let mut args2 = format!(
         "-c:a {} -c:v {} -movflags +faststart -pix_fmt {} {} {} -filter_complex {} -map 0:v:0 -map [a]{} -f {}",
         if config.hires {
             "pcm_f32le"
@@ -2175,6 +2211,10 @@ pub async fn main(cmd: bool) -> Result<()> {
         vflip_filter,
         if config.hires { "mov" } else { "mp4" }
     );
+    // 新版 ffmpeg 的 `-thread_queue_size` 是输出选项：得排在所有 `-i` 之后、输出文件之前。
+    if !thread_queue_size_is_input {
+        args2.insert_str(0, "-thread_queue_size 1024 ");
+    }
 
     eprintln!(
         "Preparing Render Time: {:.2?}",

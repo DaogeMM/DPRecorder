@@ -102,6 +102,89 @@ pub fn exe_dir() -> Option<PathBuf> {
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
 }
 
+/// 日志目录：默认 **`<程序目录>/logs`**，跟 `output/`、`config/` 做邻居（便携）；
+/// 程序目录不可写时（装进 Program Files、被受控文件夹拦住……）退回数据目录下的 `logs/`。
+pub fn logs_dir() -> Result<PathBuf> {
+    let dir = match exe_dir().map(|dir| dir.join("logs")) {
+        Some(dir) if is_dir_writable(&dir) => dir,
+        _ => DATA_DIR.get().unwrap().join("logs"),
+    };
+    if dir.exists() && !dir.is_dir() {
+        bail!("logs directory is not a directory");
+    }
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// 这次运行写的那份日志文件（`init_log_file` 设的）。
+static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// 打开这次运行的日志文件：**按天一份**（`logs/dpr-YYYY-MM-DD.log`），追加写。
+///
+/// 同一个进程只做一次，返回文件路径。失败（目录不可写、文件被占住）不致命 ——
+/// 那就只打终端，程序照常跑。
+pub fn init_log_file() -> Result<PathBuf> {
+    let path = logs_dir()?.join(format!("dpr-{}.log", chrono::Local::now().format("%Y-%m-%d")));
+    // 立刻真开一次：目录不可写、文件被别的进程独占时在这里就报错，别等到写第一行才发现
+    append_log(&path, "")?;
+    dps::log::set_log_file_path(path.clone());
+    let _ = LOG_PATH.set(path.clone());
+    Ok(path)
+}
+
+/// 往日志文件里追加一行（没初始化成功就什么也不做）。
+///
+/// 行尾换行去掉，ANSI 颜色码剥掉 —— 这份文件是要给人看、给 issue 贴的纯文本。
+pub fn log_line(line: &str) {
+    let Some(path) = LOG_PATH.get() else {
+        return;
+    };
+    let _ = append_log(path, line);
+}
+
+/// 追加一行（末尾补换行）。
+///
+/// 写完就关句柄：长期占着写句柄会把文件锁住，用户就没法在程序运行时打开、拷走日志。
+/// 日志量不大，多开的这几下开销可以忽略。
+fn append_log(path: &Path, line: &str) -> Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0x0000_0007); // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+    }
+    let mut file = options.open(path)?;
+    let line = strip_ansi(line);
+    let line = line.trim_end_matches(['\r', '\n']);
+    if !line.is_empty() {
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+/// 去掉 `colored` 留下的 ANSI 转义序列（CSI：`ESC [` 之后直到某个终止字节）。
+pub fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        if chars.peek() == Some(&'[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn default_output_dir() -> Result<PathBuf> {
     let dir = if let Some(set_output_dir) = read_config()?.output_dir {
         set_output_dir

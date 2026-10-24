@@ -52,7 +52,7 @@ cargo tauri build               # 出安装包 → <仓库根>\target\release\bu
 - 只要引擎：`cargo build -p dps-main` → `target\debug\dps-main.exe`；谱面格式转换：`cargo run -p prpr-pbc -- <输入> <输出.pbc>`。
 - `cargo build -p dpr` 默认是 dev 形态（不把前端打进 exe，加载 `devUrl`，要配合 `pnpm dev`）；正式形态带 `--features custom-protocol`，`cargo tauri build` 就是。改过前端要先 `pnpm build` 才会进 exe。
 - `prpr-avc` 需要的 FFmpeg 静态库**不在仓库里**（`DPS/prpr-avc/static-lib/<TARGET>/` 被 `.gitignore` 排除），缺了编不过；目录可用 `PRPR_AVC_LIBS` 覆盖（见 `DPS/prpr-avc/build.rs`）。
-- `target/` 默认生成在仓库根、已被 `.gitignore` 排除；若用 `[build] target-dir` 指到别处，实际位置看 `cargo metadata` 的 `target_directory`。DPR 的运行时工作目录跟着 exe 走（`assets/`、`config.toml`、`appendant/`、`respack/`、`output/`、`tmp/` 都在 exe 旁边）。
+- `target/` 默认生成在仓库根、已被 `.gitignore` 排除；若用 `[build] target-dir` 指到别处，实际位置看 `cargo metadata` 的 `target_directory`。DPR 的运行时工作目录跟着 exe 走（`assets/`、`config.toml`、`appendant/`、`respack/`、`output/`、`logs/`、`tmp/` 都在 exe 旁边；`logs/` 里按天一份运行日志）。
 
 ## 许可与出处
 

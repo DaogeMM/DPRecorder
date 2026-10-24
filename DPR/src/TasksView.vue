@@ -8,6 +8,7 @@ import type { Task, TaskStatus } from './model';
 
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { openPath } from '@tauri-apps/plugin-opener';
+import * as dialog from '@tauri-apps/plugin-dialog';
 
 import moment from 'moment';
 import { toast, toastError } from './common';
@@ -544,13 +545,46 @@ function describeStatus(status: TaskStatus): string {
 
 const outputDialog = ref(false);
 const outputDialogMessage = ref('');
+// 导出要用**原始**那份（带 ANSI 颜色码的纯文本），面板里显示的这份是转好的 HTML
+const outputDialogRaw = ref('');
 const filteredOutputDialogMessage = ref('');
+const outputDialogName = ref('');
 
-function openOutputDialog(output: string) {
+function openOutputDialog(output: string, name: string = '') {
+  outputDialogName.value = name;
+  outputDialogRaw.value = output;
   outputDialogMessage.value = ansi.ansi_to_html(output);
   filteredOutputDialogMessage.value = outputDialogMessage.value;
   filter.value = [];
   outputDialog.value = true;
+}
+
+const exportingOutput = ref(false);
+
+/** 把「输出」面板里这段日志存成文件（后端落盘前会剥掉 ANSI 颜色码）。 */
+async function exportOutput() {
+  exportingOutput.value = true;
+  try {
+    // 默认存到日志目录里，文件名带任务名，免得几次导出互相覆盖
+    const safeName = (outputDialogName.value || 'task').replace(/[\\/:*?"<>|]/g, '_');
+    const fileName = `${safeName}-output.log`;
+    const logDir = await invoke<string>('get_log_dir_path').catch(() => '');
+    const outputPath = await dialog.save({
+      title: t('export-log'),
+      filters: [{ name: 'Log File', extensions: ['log', 'txt'] }],
+      defaultPath: logDir ? `${logDir}\\${fileName}` : fileName,
+    });
+    if (!outputPath) return;
+    await invoke('export_log', {
+      outputPath,
+      content: outputDialogRaw.value,
+    });
+    await dialog.message(t('export-log-success'), { title: t('export-log') });
+  } catch (e) {
+    toastError(e);
+  } finally {
+    exportingOutput.value = false;
+  }
 }
 
 const filterItems: string[] = ["INFO", "DEBUG", "WARN", "ERROR", "! INFO", "! DEBUG", "! WARN", "! ERROR"];
@@ -840,7 +874,7 @@ function coverUrl(task: Task) {
                         prepend-icon="mdi-alert-circle-outline"
                         @click="() => {
                             if (item.status.type === 'failed' || item.status.type === 'canceled') {
-                              openOutputDialog(item.status.output);
+                              openOutputDialog(item.status.output, item.name);
                             }
                           }"
                         @contextmenu="openRemoveDialog([item.id])"
@@ -868,7 +902,7 @@ function coverUrl(task: Task) {
                         @click="
                           () => {
                             if (item.status.type === 'done') {
-                              openOutputDialog(item.status.output);
+                              openOutputDialog(item.status.output, item.name);
                             }
                           }
                         "
@@ -931,6 +965,14 @@ function coverUrl(task: Task) {
           ></v-combobox>
         </v-card-text>
         <v-card-actions class="justify-end">
+          <v-btn
+            class="hover-scale"
+            variant="text"
+            prepend-icon="mdi-content-save-outline"
+            :loading="exportingOutput"
+            @click="exportOutput"
+            v-t="'export-log'"
+          ></v-btn>
           <v-btn class="hover-scale" variant="text" @click="outputDialog = false" v-t="'close'"></v-btn>
         </v-card-actions>
       </v-card>

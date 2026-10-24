@@ -307,6 +307,9 @@ pub fn run() -> Result<()> {
                 get_app_dir,
                 get_respack_dir_path,
                 get_appendant_dir_path,
+                get_log_dir_path,
+                open_log_folder,
+                export_log,
                 read_config,
                 save_config,
                 test_output_dir,
@@ -425,8 +428,21 @@ pub fn run() -> Result<()> {
     }
 
     let config = common::read_config()?;
-    if config.show_detailed_log {
+    let is_gui = std::env::args().len() == 1;
+
+    // GUI 进程始终开订阅：它得把日志写进文件。「显示详细日志」只决定渲染子进程往 stderr
+    // 打多细 —— 「输出」面板里看到的就是子进程 stderr。
+    if is_gui || config.show_detailed_log {
         log::register_with_colorize(true);
+    }
+
+    // 只有 GUI 这个进程写日志文件：渲染子进程与 CLI 渲染只打 stderr，它们的 stderr
+    // 由父进程收进「输出」面板，再逐行转写进同一份日志 —— 免得两个进程各写一遍。
+    if is_gui {
+        match common::init_log_file() {
+            Ok(path) => info!("日志文件 {}", path.display()),
+            Err(err) => warn!("日志文件不可用，只输出到终端: {err:?}"),
+        }
     }
 
     if std::env::args().len() > 1 {
@@ -1386,6 +1402,44 @@ fn get_app_dir() -> Result<String, InvokeError> {
         ))
     })?;
     Ok(dir.to_string_lossy().to_string())
+}
+
+/// 「日志」目录（默认 `<程序目录>/logs`）的绝对路径 —— 设置页那一格拿它显示，
+/// 导出日志时当前端选保存位置的默认目录。目录由 `common::logs_dir()` 解析并保证存在。
+#[tauri::command]
+fn get_log_dir_path() -> Result<String, InvokeError> {
+    common::logs_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// 在资源管理器里打开日志目录（日志文件只在启动时写，用户要自己看/拷走）。
+#[tauri::command]
+fn open_log_folder() -> Result<(), InvokeError> {
+    (|| {
+        let dir = common::logs_dir()?;
+        open_folder(&dir)
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 把一段日志写成纯文本文件（「输出」面板里那份可能带 ANSI 颜色码）。
+/// 保存位置由前端 `dialog.save` 选，这里只负责剥掉颜色码再落盘 —— 导出的文件
+/// 是给人贴进 issue 的，不该带转义序列。
+#[tauri::command]
+fn export_log(output_path: String, content: String) -> Result<(), InvokeError> {
+    (|| {
+        let path = Path::new(&output_path);
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::write(path, common::strip_ansi(&content))?;
+        info!("导出日志: {}", path.display());
+        Ok(())
+    })()
+    .map_err(InvokeError::from_anyhow)
 }
 
 /// 「资源包」目录（`<程序目录>/respack`）的绝对路径 —— 设置页那一格拿它显示成相对写法 `.\respack`。

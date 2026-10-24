@@ -20,6 +20,8 @@
     "remove-task-only": "Remove only tasks",
     "remove-task-and-file": "Remove tasks and files",
     "show-output": "Show Output",
+    "export-log": "Export Log",
+    "export-log-success": "Log exported",
     "show-in-folder": "Show in Folder",
     "open-file": "Open File",
     "pause-select": "Pause",

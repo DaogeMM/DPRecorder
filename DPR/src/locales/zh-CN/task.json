@@ -20,6 +20,8 @@
     "remove-task-only": "仅移除任务",
     "remove-task-and-file": "任务和文件都移除",
     "show-output": "查看输出",
+    "export-log": "导出日志",
+    "export-log-success": "日志已导出",
     "show-in-folder": "在文件夹中显示",
     "open-file": "打开文件",
     "pause-select": "暂停",

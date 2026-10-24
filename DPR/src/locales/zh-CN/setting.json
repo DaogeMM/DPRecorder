@@ -17,6 +17,8 @@
     "respack-path": "资源包目录",
     "appendant-path": "附带资源包目录",
     "appendant-path-tip": "皮肤包与材质包自己下载后放这里（zip 原样放入，不用解压）",
+    "log-path": "日志目录",
+    "log-path-tip": "每次运行都记在这里（按天一个文件），导出日志的默认位置也是它",
     "encoder-avc": "指定 AVC 编码器",
     "encoder-hevc": "指定 HEVC 编码器",
     "ffmpeg-path": "FFmpeg 目录",

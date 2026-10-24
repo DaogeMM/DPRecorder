@@ -17,6 +17,8 @@
     "respack-path": "Resource pack directory",
     "appendant-path": "Appendant directory",
     "appendant-path-tip": "Put the skin packs and material packs you downloaded here (zips as-is, no need to extract)",
+    "log-path": "Log directory",
+    "log-path-tip": "Every run is recorded here (one file per day); exported logs default to this folder",
     "encoder-avc": "Specify AVC Encoder",
     "encoder-hevc": "Specify HEVC Encoder",
     "ffmpeg-path": "FFmpeg directory",

@@ -152,6 +152,19 @@ async function updateAppendantDir() {
 }
 updateAppendantDir();
 
+/** 「日志」文件夹的绝对路径（默认 `<程序目录>/logs`，程序目录不可写时退回数据目录下的那一个）。
+ *  只读显示 —— 它跟着程序走，不给改；点图标在资源管理器里打开。 */
+const logDir = ref('');
+async function updateLogDir() {
+  try {
+    logDir.value = (await invoke('get_log_dir_path')) as string;
+  } catch (e) {
+    // 旧版本的二进制没有这条命令：留空，框里就退回相对写法 `.\logs`
+    logDir.value = '';
+  }
+}
+updateLogDir();
+
 /** 输出目录的默认值：后端解析出来的**完整路径**（程序目录下的 output/，或后端认定的其它可写位置）。
  *  「自定义输出目录」那格没设置时显示它 —— 默认也让用户看到完整路径，而不只是一句 `/output/`。 */
 const outputDirDefault = ref('');
@@ -213,6 +226,8 @@ const configDirShown = computed(() => asAppRelative(configDirFull.value) || '.\\
 const respackDirShown = computed(() => asAppRelative(respackDir.value) || '.\\respack');
 /** 附带资源包文件夹：同样写 `.\appendant`。 */
 const appendantDirShown = computed(() => asAppRelative(appendantDir.value) || '.\\appendant');
+/** 日志文件夹：同样写 `.\logs`。 */
+const logDirShown = computed(() => asAppRelative(logDir.value) || '.\\logs');
 const ffmpegPathShown = computed({
   // 这格写的是「exe 所在的文件夹」：老配置/后端探测给回来的可能是 exe 路径，显示时先抹成目录
   get: () => asFFmpegDir(config.value.ffmpegPath || ffmpegPathDefault.value),
@@ -357,6 +372,11 @@ function openRespackDir() {
  *  与渲染页缺包弹窗里那枚按钮是同一条命令。 */
 function openAppendantDir() {
   invoke('open_appendant_folder').catch(toastError);
+}
+
+/** 打开「日志」文件夹：后端 `open_log_folder`（不存在时先建出来）。 */
+function openLogDir() {
+  invoke('open_log_folder').catch(toastError);
 }
 
 async function openInFolder(path: string | null, isOutput: boolean = false) {
@@ -588,6 +608,12 @@ const forkedDeps = [
                    目录同样固定在程序旁边，所以只读显示、文字按常灰处理。 -->
               <CfgField :label="t('appendant-path')" :tip="t('appendant-path-tip')">
                 <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="appendantDirShown" :title="appendantDir" append-inner-icon="mdi-folder-open" @click:append-inner="openAppendantDir" @contextmenu="openAppendantDir"></v-text-field>
+              </CfgField>
+              <!-- 「日志」文件夹：运行日志按天写在这里（`<程序目录>/logs/dpr-YYYY-MM-DD.log`），
+                   程序目录不可写时退回数据目录下的那一份。目录跟着程序走、不给改，
+                   所以只读显示、点图标打开。 -->
+              <CfgField :label="t('log-path')" :tip="t('log-path-tip')">
+                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="logDirShown" :title="logDir" append-inner-icon="mdi-folder-open" @click:append-inner="openLogDir" @contextmenu="openLogDir"></v-text-field>
               </CfgField>
               <!-- 配置文件目录：显示与打开的**都是目录** `\config`（不是 `config/presets.toml`）。
                    文字**始终**灰色：这格只读、位置也不给改，显示的就是程序旁边那份 config 目录；
