@@ -79,6 +79,15 @@ pub struct Config {
     pub offset: f64,
     pub particle: bool,
     pub particle_square: bool,
+    /// 打击特效随机反转：按概率把打击特效贴图做中心对称翻转（同时左右 + 上下，等价于把贴图转 180°）。
+    /// 只作用于 Tap / Drag / Flick 的判定特效（一次判定发一颗，于是每颗 note 翻一次）；
+    /// Hold 按住期间的持续粒子不参与
+    pub hit_fx_random_flip: bool,
+    /// 打击特效随机反转的概率（0~1）：每颗打击特效粒子各自按它决定翻不翻，0 = 永不翻转
+    pub hit_fx_random_flip_chance: f32,
+    /// 打击特效跟随按键旋转：开启时打击特效贴图跟着按键的判定线旋转角一起转；
+    /// 关闭时沿用资源包 `info.yml` 里的 `hitFxRotate`
+    pub hit_fx_follow_rotation: bool,
     pub player_name: String,
     pub player_rks: f32,
     pub res_pack_path: Option<String>,
@@ -583,6 +592,9 @@ impl Default for Config {
             offset: 0.0,
             particle: true,
             particle_square: true,
+            hit_fx_random_flip: false,
+            hit_fx_random_flip_chance: 0.5,
+            hit_fx_follow_rotation: false,
             player_name: "Guest".to_string(),
             player_rks: 15.,
             res_pack_path: None,

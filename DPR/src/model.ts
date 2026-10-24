@@ -142,6 +142,12 @@ export interface RenderConfig {
   noteScale: number;
   particle: boolean;
   particleSquare: boolean;
+  /** 打击特效随机反转：按概率把打击特效贴图做中心对称翻转（同时左右 + 上下，等价于把贴图转 180°）；只作用于 Tap / Drag / Flick，Hold 不翻 */
+  hitFxRandomFlip: boolean;
+  /** 打击特效随机反转的概率（0~1）：每颗打击特效粒子各自按它决定翻不翻，0 = 永不翻转 */
+  hitFxRandomFlipChance: number;
+  /** 打击特效跟随按键旋转：开着时打击特效贴图跟着按键的判定线旋转角一起转 */
+  hitFxFollowRotation: boolean;
   playerAvatar: string | null;
   playerName: string;
   playerRks: number;
@@ -505,6 +511,10 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   noteScale: 1,
   particle: true,
   particleSquare: true,
+  // 打击特效反转 / 跟随旋转默认都关；概率给 0.5，打开开关就是「一半翻一半不翻」
+  hitFxRandomFlip: false,
+  hitFxRandomFlipChance: 0.5,
+  hitFxFollowRotation: false,
   playerAvatar: null,
   // 玩家名：填上后端 RenderConfig::default() 的默认值（src-tauri/src/render.rs 里是 "DaogeMM"），
   // 否则界面里这个输入框是空的，而后端不带参数渲染时用的是 DaogeMM

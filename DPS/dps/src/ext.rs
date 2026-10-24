@@ -13,14 +13,12 @@ use macroquad::prelude::*;
 use miniquad::{gl::GLenum, BlendFactor, BlendState, BlendValue, CompareFunc, Equation, PrimitiveType, StencilFaceState, StencilOp, StencilState};
 use once_cell::sync::Lazy;
 use ordered_float::{Float, NotNan};
-use regex::Regex;
 use sasa::AudioManager;
 use serde::Deserialize;
 use std::{
     collections::VecDeque, future::Future, ops::Deref, pin::Pin, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}, task::{Poll, RawWaker, RawWakerVTable, Waker}
 };
 use tracing::{debug, info_span};
-use lazy_static::lazy_static;
 
 pub type LocalTask<R> = Option<Pin<Box<dyn Future<Output = R>>>>;
 
@@ -653,18 +651,29 @@ pub fn ease_in_out_quintic(t: f32) -> f32 {
     }
 }
 
-lazy_static! {
-    static ref RE_FILTER: Regex = Regex::new(r##"[^a-zA-Z0-9!"'#$%&'()*+,\-.\/:;<=>?@\\\[\]^_`{|}~ΜΟΒСՕⅭОмвＣＯＭＢМⅯВϹȮΌϺϺƁ]"##).unwrap();
-    static ref RE_VALIDATE: Regex = Regex::new(r"^[CСⅭＣϹ][OՕΟ0ОＯȮΌ][MΜмＭМⅯϺϺ][BΒ8вＢВ][OՕΟ0ОＯȮΌ]$").unwrap();
+/// COMBO 的每个字母还能写成哪些字：大小写、全角，以及西里尔 / 希腊 / 数字这类同形字。
+fn combo_letter(c: char) -> Option<char> {
+    Some(match c {
+        'c' | 'C' | 'с' | 'С' | 'ϲ' | 'Ϲ' | 'ⅽ' | 'Ⅽ' | 'ｃ' | 'Ｃ' => 'C',
+        'o' | 'O' | 'о' | 'О' | 'օ' | 'Օ' | 'ο' | 'Ο' | '0' | 'ȯ' | 'Ȯ' | 'ό' | 'Ό' | 'ｏ' | 'Ｏ' => 'O',
+        'm' | 'M' | 'м' | 'М' | 'ⅿ' | 'Ⅿ' | 'ϻ' | 'Ϻ' | 'ｍ' | 'Ｍ' => 'M',
+        'b' | 'B' | 'в' | 'В' | 'ь' | 'Ь' | '8' | 'Ɓ' | 'β' | 'Β' | 'ｂ' | 'Ｂ' => 'B',
+        _ => return None,
+    })
 }
 
+/// `combo` 这格文本是不是在冒充游戏原本的「COMBO」字样。
+///
+/// 只看字母：大小写、全角、同形字都折算成大写 ASCII，标点 / 空格 / 其他文字直接忽略 ——
+/// `combo`、`Combo`、`ｃｏｍｂｏ`、`ＣＯＭＢＯ`、`сΟМВΟ`、`C.O.M.B.O`、`combo!` 都算冒充（命中时改画 `AUTOPLAY`）。
+/// `AUTOPLAY` / `RECORD` 本来就是允许的写法（前者还是默认值），不算冒充。超长的文本不受这里管，渲染侧另有长度上限。
 pub fn validate_combo(value: &String) -> bool {
-    if value == "AUTOPLAY" || value == "RECORD" {
+    if value.eq_ignore_ascii_case("AUTOPLAY") || value.eq_ignore_ascii_case("RECORD") {
         return false;
     }
 
-    let filtered_value = RE_FILTER.replace_all(value, "").trim().to_string();
-    return RE_VALIDATE.is_match(&filtered_value);
+    let folded = value.chars().filter_map(combo_letter).collect::<String>();
+    folded == "COMBO"
 }
 
 pub fn get_latency(audio: &AudioManager, frame_times: &VecDeque<f64>) -> f64 {
@@ -739,4 +748,19 @@ uniform sampler2D Texture;
 void main() {
     gl_FragColor = color * texture2D(Texture, uv);
 }"#;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_combo;
+
+    #[test]
+    fn combo_text_impersonation() {
+        for value in ["COMBO", "combo", "Combo", "ｃｏｍｂｏ", "ＣＯＭＢＯ", "сΟМВΟ", "C.O.M.B.O", "combo!", "连击combo"] {
+            assert!(validate_combo(&value.to_string()), "{value}");
+        }
+        for value in ["RECALL", "", "COMBOO", "mycombo", "连击", "bomb", "AUTOPLAY", "autoplay", "RECORD", "record"] {
+            assert!(!validate_combo(&value.to_string()), "{value}");
+        }
+    }
 }

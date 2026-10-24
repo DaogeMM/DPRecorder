@@ -19,6 +19,23 @@ export function isString(s: unknown): s is string {
   return typeof s === 'string';
 }
 
+/** COMBO 的每个字母还能写成哪些字：大小写、全角、同形字。与后端 `validate_combo` 保持一致。 */
+const COMBO_LETTERS: Record<string, string> = {
+  c: 'C', C: 'C', 'с': 'C', 'С': 'C', 'ϲ': 'C', 'Ϲ': 'C', 'ⅽ': 'C', 'Ⅽ': 'C', 'ｃ': 'C', 'Ｃ': 'C',
+  o: 'O', O: 'O', 'о': 'O', 'О': 'O', 'օ': 'O', 'Օ': 'O', 'ο': 'O', 'Ο': 'O', '0': 'O', 'ȯ': 'O', 'Ȯ': 'O', 'ό': 'O', 'Ό': 'O', 'ｏ': 'O', 'Ｏ': 'O',
+  m: 'M', M: 'M', 'м': 'M', 'М': 'M', 'ⅿ': 'M', 'Ⅿ': 'M', 'ϻ': 'M', 'Ϻ': 'M', 'ｍ': 'M', 'Ｍ': 'M',
+  b: 'B', B: 'B', 'в': 'B', 'В': 'B', 'ь': 'B', 'Ь': 'B', '8': 'B', 'Ɓ': 'B', 'β': 'B', 'Β': 'B', 'ｂ': 'B', 'Ｂ': 'B',
+};
+
+/** `combo` 这格文本是不是在冒充「COMBO」：大小写、全角、同形字、夹杂标点都算。
+ *  `AUTOPLAY` / `RECORD` 是允许的写法（前者还是默认值），不算冒充。 */
+function isComboText(value: string) {
+  if (/^autoplay$/i.test(value) || /^record$/i.test(value)) return false;
+  let folded = '';
+  for (const ch of value) folded += COMBO_LETTERS[ch] ?? '';
+  return folded === 'COMBO';
+}
+
 export const RULES = {
   notEmpty: (value: string) => value.trim().length > 0 || i18n.global.t('rules.not-empty'),
   notNull: (value: string) => (value != null) || i18n.global.t('rules.not-null'),
@@ -55,11 +72,10 @@ export const RULES = {
   nonSpaces: (value: string) => !/\s/.test(value) || i18n.global.t('rules.non-spaces'),
   notZero: (value: string) => (Number(value) != 0) || i18n.global.t('rules.not-zero'),
   notCOMBO: (value: string) => {
-    const filteredValue = value.replace(/[^a-zA-Z0-9!"'#$%&'()*+,\-.\/:;<=>?@\\\[\]^_`{|}~ΜΟΒСՕⅭОмвＣＯＭＢМⅯВϹȮΌϺϺƁ]/g, '').trim();
     if (value.length > 50) {
       return i18n.global.t('rules.long');
     }
-    return !/^[CСⅭＣϹ][OՕΟ0ОＯȮΌ][MΜмＭМⅯϺϺ][BΒ8вＢВ][OՕΟ0ОＯȮΌ]$/.test(filteredValue) || i18n.global.t('rules.not-combo');
+    return !isComboText(value) || i18n.global.t('rules.not-combo');
   },
   hexColorOptional: (value: string) => {
     const val = value.trim();

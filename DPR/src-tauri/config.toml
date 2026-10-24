@@ -83,6 +83,10 @@ previewEnd = 0.0           # 预览结束时间（秒，默认 0 = 到谱面结�
 offset = 0.0               # 谱面偏移（秒；界面上按毫秒编辑，默认 0）
 particle = true
 particleSquare = true
+# 打击特效随机反转：按概率把贴图做中心对称翻转（转 180°）；只作用于 Tap / Drag / Flick，Hold 不翻
+hitFxRandomFlip = false        # 打击特效随机反转：按概率把打击特效贴图做中心对称翻转（同时左右+上下，等价于转 180°）
+hitFxRandomFlipChance = 0.5    # 打击特效随机反转的概率 0~1：每颗打击特效粒子各自按它决定翻不翻
+hitFxFollowRotation = false    # 打击特效跟随按键旋转：开着时贴图跟着按键的判定线旋转角一起转
 renderExtra = true
 pureConfigChart = false       # 纯配置谱面：把判定线的移动/旋转/消失/速度全部拍平，只保留按键在屏幕上的横向位置（谱面文件不受影响）
 pureConfigChartLineY = 0.1    # 纯配置谱面：判定线钉在哪个高度，0 = 屏幕底边、1 = 屏幕顶边、0.5 = 正中

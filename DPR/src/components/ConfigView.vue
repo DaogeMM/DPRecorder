@@ -181,6 +181,7 @@ const {
   resolution, endingLength, renderLoading, hires, chartDebugLine, chartDebugLineFields, chartDebugNote, chartDebugNoteFields, chartRatio,
   fps, dynamicBitrateControl, bitrate, aggressiveChart, aggressiveNote,
   aggressiveParticle, challengeColor, challengeRank, noteScale, particle, particleSquare,
+  hitFxRandomFlip, hitFxRandomFlipChance, hitFxFollowRotation,
   playerAvatar, playerName, playerRks, sampleCount, speed, volumeMusic, volumeSfx, watermark,
   notecolor, rrHitFxColor, rrHitFxScale, rrHitFxSpeed, hitcolor, linecolor, roman, chinese, combo, difficulty, judgeOffset, forceLimit,
   limitThreshold,
@@ -960,6 +961,16 @@ defineExpose({
           <!-- 拖影效果 = 「保留帧缓冲」：每帧先把上一帧整屏铺回来再叠本帧，残影一直留着。
                画在单采样的累积缓冲上，所以开着时抗锯齿会被强制关掉，见 `config/useRenderConfig.ts`。 -->
           <CfgSwitch :label="t('preserve-framebuffer')" v-model="preserveFramebuffer" :tip="t('preserve-framebuffer-tips')" />
+          <!-- 打击特效随机反转：按概率把打击特效贴图做中心对称翻转（同时左右 + 上下 = 转 180°），
+               概率收在这一行的齿轮弹窗里；「打击特效」关掉时没有东西可翻，整行跟着禁用。 -->
+          <PhiSubMenu id="sec3-hit-fx-flip" :label="t('hit-fx-random-flip')" :tip="t('hit-fx-random-flip-tip')" :disabled="!particle" v-model="hitFxRandomFlip">
+            <div class="cfg-grid">
+              <CfgField :label="t('hit-fx-random-flip-chance')" :tip="t('hit-fx-random-flip-chance-tip')"><v-text-field density="compact" hide-details="auto" v-model="hitFxRandomFlipChance" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <!-- 打击特效跟随按键旋转：总开关，开着时贴图跟着按键的判定线旋转角一起转；
+               关掉时仍沿用资源包 `info.yml` 里的 `hitFxRotate`。 -->
+          <CfgSwitch :label="t('hit-fx-follow-rotation')" v-model="hitFxFollowRotation" :disabled="!particle" :tip="t('hit-fx-follow-rotation-tip')" />
           <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
                横向位置；判定时刻接近竖直的按键另分到左右两条竖判定线上；判定时刻落在噪域里的按键
                在它周围长出一块噪域矩形。开关与它的参数（判定线高度 / 按键流速 / 竖判定线的两个参数 /

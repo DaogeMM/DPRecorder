@@ -616,6 +616,12 @@ impl GameScene {
             res.res_pack.info.particle_count = res.config.baoying_sp_particle_count as usize;
         }
 
+        // 打击特效跟随按键旋转：总开关压过资源包的 `hitFxRotate`。放在「报应SP」那段之后，
+        // 于是两处都开时以这里为准（关掉时仍沿用资源包自己的设置，不改旧行为）。
+        if res.config.hit_fx_follow_rotation {
+            res.res_pack.info.hit_fx_rotate = true;
+        }
+
         Ok(Self {
             should_exit: false,
             next_scene: None,

@@ -474,6 +474,8 @@ impl ParticleEmitter {
             initial_velocity: 0.0,                   // 初速度为0，停留在生成点
             // 贴图图集配置：行列取自资源包信息
             atlas: Some(AtlasConfig::new(res_pack.info.hit_fx.0 as _, res_pack.info.hit_fx.1 as _, ..)),
+            // 打击特效随机反转：按配置的概率把每颗标记粒子的贴图做中心对称翻转
+            flip_center_chance: if config.hit_fx_random_flip { config.hit_fx_random_flip_chance.clamp(0., 1.) } else { 0. },
             emitting: false,      // 创建时不自动持续发射
             colors_curve,         // 复用统一透明度渐变曲线
             ..Default::default()  // 其余字段使用默认值
@@ -899,6 +901,15 @@ impl Resource {
     }
 
     pub fn emit_at_origin(&mut self, rotation: f32, color: Color) {
+        self.emit_at_origin_with_flip(rotation, color, true);
+    }
+
+    /// 同 [`Self::emit_at_origin`]，但由调用方指定这一次发射**允不允许**做中心对称翻转。
+    ///
+    /// Tap / Drag / Flick 的判定特效走 [`Self::emit_at_origin`]：一次判定只发一颗标记粒子，
+    /// 于是「每颗 note 翻一次」。Hold 按住期间是隔几拍连续发的，一串粒子各自掷骰会让同一条长条
+    /// 上正反夹杂，所以它传 `false`（Hold 的打击特效不反转）。
+    pub fn emit_at_origin_with_flip(&mut self, rotation: f32, color: Color, allow_flip: bool) {
         if !self.config.particle {
             return;
         }
@@ -927,11 +938,18 @@ impl Resource {
             }
         }
 
+        // 不允许翻转的一次发射（Hold 的持续粒子）：临时把概率压成 0，发完再还原，
+        // 免得影响别的发射器 / 后续的判定特效。
+        let chance = self.emitter.emitter.config.flip_center_chance;
+        if !allow_flip {
+            self.emitter.emitter.config.flip_center_chance = 0.0;
+        }
         self.emitter.emit_at(
             vec2(if self.config.flip_x() { -pt.x } else { pt.x }, -pt.y),
             if self.res_pack.info.hit_fx_rotate { rotation.to_radians() } else { 0. },
             color,
         );
+        self.emitter.emitter.config.flip_center_chance = chance;
     }
 
     /// 是否处于「拖影」模式 —— 要求上一帧的画面留在这一帧上。

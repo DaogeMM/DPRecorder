@@ -102,6 +102,12 @@ pub struct RenderConfig {
     //pub offset: f32,
     pub particle: bool,
     pub particle_square: bool,
+    /// 打击特效随机反转：按概率把打击特效贴图做中心对称翻转（同时左右 + 上下，等价于把贴图转 180°）
+    pub hit_fx_random_flip: bool,
+    /// 打击特效随机反转的概率（0~1）：每颗打击特效粒子各自按它决定翻不翻，0 = 永不翻转
+    pub hit_fx_random_flip_chance: f32,
+    /// 打击特效跟随按键旋转：开启时打击特效贴图跟着按键的判定线旋转角一起转
+    pub hit_fx_follow_rotation: bool,
     pub player_avatar: Option<String>,
     pub player_name: String,
     pub player_rks: f32,
@@ -455,6 +461,9 @@ impl RenderConfig {
             //offset: self.offset,
             particle: self.particle,
             particle_square: self.particle_square,
+            hit_fx_random_flip: self.hit_fx_random_flip,
+            hit_fx_random_flip_chance: self.hit_fx_random_flip_chance,
+            hit_fx_follow_rotation: self.hit_fx_follow_rotation,
             player_name: self.player_name.clone(),
             player_rks: self.player_rks,
             sample_count: self.sample_count,
@@ -679,6 +688,9 @@ impl Default for RenderConfig {
             note_scale: 1.0,
             particle: true,
             particle_square: true,
+            hit_fx_random_flip: false,
+            hit_fx_random_flip_chance: 0.5,
+            hit_fx_follow_rotation: false,
             player_name: "DaogeMM".to_string(),
             player_rks: 17.0,
             sample_count: 8,

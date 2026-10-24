@@ -187,6 +187,13 @@ pub struct EmitterConfig {
     /// If none the whole texture will be used.
     pub atlas: Option<AtlasConfig>,
 
+    /// 每颗粒子发射时按这个概率把贴图做中心对称翻转：uv 矩形同时左右 + 上下镜像
+    /// （等价于把这张贴图转 180°，对角上的像素换位）。
+    /// 0 = 永不翻转（默认），1 = 每颗都翻转；只影响贴图朝向，不改位置 / 大小 / 旋转。
+    /// 由调用方决定哪些发射参与：打击特效里 Tap / Drag / Flick 每次判定发一颗，
+    /// Hold 的持续粒子则把概率临时压成 0（见 `Resource::emit_at_origin_with_flip`）。
+    pub flip_center_chance: f32,
+
     /// Custom material used to shade each particle.
     pub material: Option<ParticleMaterial>,
 
@@ -381,6 +388,7 @@ impl Default for EmitterConfig {
             gravity: vec2(0.0, 0.0),
             texture: None,
             atlas: None,
+            flip_center_chance: 0.0,
             material: None,
             post_processing: None,
         }
@@ -405,6 +413,9 @@ struct CpuParticle {
     initial_size: f32,
     color: Color,
     frame: u16,
+    /// 这颗的贴图是否中心对称翻转（发射时按 `EmitterConfig::flip_center_chance` 掷一次，
+    /// 整颗生命周期内不再变）
+    center_flip: bool,
 }
 
 pub struct Emitter {
@@ -619,6 +630,18 @@ impl Emitter {
         let angular_velocity = self.config.initial_angular_velocity
             - self.config.initial_angular_velocity * rand::gen_range(0.0, self.config.initial_angular_velocity_randomness);
 
+        // 中心对称翻转：每颗按概率掷一次。有自带 rng 时走它（固定种子下表现可复现），否则用全局随机。
+        let center_flip = if self.config.flip_center_chance > 0.0 {
+            let roll = if let Some(rng) = self.config.rng.as_mut() {
+                map_u64_to_f32(rng.next_u64(), 0.0, 1.0)
+            } else {
+                rand::gen_range(0.0, 1.0)
+            };
+            roll < self.config.flip_center_chance
+        } else {
+            false
+        };
+
         self.particles_spawned += 1;
         self.gpu_particles.push(particle);
         self.cpu_counterpart.push(CpuParticle {
@@ -631,6 +654,7 @@ impl Emitter {
             frame: 0,
             initial_size: r,
             color: self.config.base_color,
+            center_flip,
         });
     }
 
@@ -735,10 +759,14 @@ impl Emitter {
                 let x = cpu.frame % atlas.n;
                 let y = cpu.frame / atlas.n;
 
-                gpu.uv.x = x as f32 * inv_n;
-                gpu.uv.y = y as f32 * inv_m;
-                gpu.uv.z = inv_n;
-                gpu.uv.w = inv_m;
+                // 中心对称翻转：uv 原点到格子的右下角、宽高取负，采样方向整个反过来
+                let (u0, du) = if cpu.center_flip { ((x as f32 + 1.0) * inv_n, -inv_n) } else { (x as f32 * inv_n, inv_n) };
+                let (v0, dv) = if cpu.center_flip { ((y as f32 + 1.0) * inv_m, -inv_m) } else { (y as f32 * inv_m, inv_m) };
+
+                gpu.uv = vec4(u0, v0, du, dv);
+            } else if cpu.center_flip {
+                // 没有图集时 uv 就是整张贴图 (0,0,1,1)，翻转只需把原点挪到对角、宽高取反
+                gpu.uv = vec4(1.0, 1.0, -1.0, -1.0);
             }
         }
 

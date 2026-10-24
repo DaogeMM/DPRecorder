@@ -443,8 +443,10 @@ impl Note {
         if let Some(color) = color {
             self.init_ctrl_obj(ctrl_obj, line_height);
             let rotation = if self.above { 0. } else { 180. };
+            // Hold 按住期间每几拍发一颗，整条长条应当保持同一个朝向 ⇒ 这一路的粒子不参与
+            // 「打击特效随机反转」（Tap / Drag / Flick 的判定特效才翻）。
             res.with_model(parent_tr * self.now_transform(res, ctrl_obj, 0., 0., false, false), |res| {
-                res.emit_at_origin(parent_rot + rotation, color)
+                res.emit_at_origin_with_flip(parent_rot + rotation, color, false)
             });
         }
     }
