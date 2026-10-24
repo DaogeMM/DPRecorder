@@ -66,6 +66,14 @@ pub const SPAS_FILES: &[&str] = &["spasmodic_chan.png", "mopemope.png", "guang.p
 /// 「QZKAGO」演出包的必需文件，下标与 `qzkago_sp` 里那张图的上场顺序一致。
 pub const QZK_FILES: &[&str] = &["qzk_0.png", "qzk_1.png", "qzk_2.png", "qzk_3.png", "qzk_4.png", "qzk_5.png", "qzk_6.png"];
 
+/// 噪域皮肤「已激活」那一档的贴图名：`noise_on.gif`（动画）优先，没有就用 `noise_on.png`。
+pub const NOISE_ON_FILES: &[&str] = &["noise_on.png", "noise_on.gif"];
+
+/// 噪域皮肤「未激活」那一档的贴图名：`noise_off.gif`（动画）优先，没有就用 `noise_off.png`。
+///
+/// 未生效（`appear..enable`）与生效结束后的淡出段（`disable..disappear`）都用这一档。
+pub const NOISE_OFF_FILES: &[&str] = &["noise_off.png", "noise_off.gif"];
+
 
 /// `appendant/` 的绝对路径。取不到程序路径时返回 `None`。
 pub fn dir() -> Option<PathBuf> {
@@ -137,6 +145,14 @@ pub fn has_entry(pack: &Path, path: &str) -> bool {
     };
     let suffix = format!("/{path}");
     (0..zip.len()).any(|index| zip.name_for_index(index).is_some_and(|name| name == path || name.ends_with(&suffix)))
+}
+
+/// 皮肤包是不是自带**完整的**噪域皮肤：`noise_on.*` 与 `noise_off.*` 两档各至少一张。
+///
+/// 只给了一档不算数 —— 少一档就整包当没带噪域贴图，噪域照旧用官方岩浆贴图。
+pub fn has_noise_skin(pack: &Path) -> bool {
+    let has = |files: &[&'static str]| files.iter().any(|path| has_entry(pack, path));
+    has(NOISE_ON_FILES) && has(NOISE_OFF_FILES)
 }
 
 /// 包里缺了哪些文件（包整个不在就整张表都算缺）。顺序与 `files` 一致。
@@ -236,6 +252,53 @@ mod tests {
         assert_eq!(pack_in(&root, WATER), Some(zip_path.clone()));
         assert_eq!(missing_files(&zip_path, WATER_FILES), vec!["hit/hit-2.mp3"]);
         assert!(!has_files(&zip_path, WATER_FILES));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 噪域皮肤要两档齐全（`noise_on.*` + `noise_off.*`），只给一档不算；
+    /// 每档 gif 与 png 都认。
+    #[test]
+    fn noise_skin_needs_both_states() {
+        let root = temp_root("noise");
+        let pack = root.join("skin");
+        std::fs::create_dir_all(&pack).unwrap();
+
+        std::fs::write(pack.join("noise_on.gif"), b"gif").unwrap();
+        assert!(!has_noise_skin(&pack), "只有一档不算带噪域皮肤");
+
+        std::fs::write(pack.join("noise_off.png"), b"png").unwrap();
+        assert!(has_noise_skin(&pack));
+        // 两档都认 gif 与 png：换成 noise_on.png / noise_off.gif 一样成立。
+        std::fs::write(pack.join("noise_on.png"), b"png").unwrap();
+        std::fs::write(pack.join("noise_off.gif"), b"gif").unwrap();
+        assert!(has_noise_skin(&pack));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 皮肤包可以是一个**目录**（`respack/我的皮肤/info.yml` …），不一定是 zip；
+    /// 目录包里的 `noise_on.*` / `noise_off.*` 同样算数，引擎也照常从目录里读文件。
+    #[test]
+    fn respack_folder_is_a_pack() {
+        let root = temp_root("respack-dir");
+        let pack = root.join("我的皮肤");
+        std::fs::create_dir_all(&pack).unwrap();
+        for file in SKIN_FILES {
+            std::fs::write(pack.join(file), b"x").unwrap();
+        }
+        std::fs::write(pack.join("info.yml"), "name: 皮肤\n".as_bytes()).unwrap();
+        std::fs::write(pack.join("noise_on.png"), b"png").unwrap();
+        std::fs::write(pack.join("noise_off.png"), b"png").unwrap();
+
+        assert!(missing_files(&pack, SKIN_FILES).is_empty(), "目录包不许按缺文件处理");
+        assert!(has_noise_skin(&pack));
+
+        // 引擎按路径打开皮肤包时走 `fs_from_file`：目录走 `ExternalFileSystem`，zip 走归档。
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let mut fs = crate::fs::fs_from_file(&pack).unwrap();
+        assert_eq!(runtime.block_on(fs.load_file("info.yml")).unwrap(), "name: 皮肤\n".as_bytes());
+        assert_eq!(runtime.block_on(fs.load_file("noise_on.png")).unwrap(), b"png");
 
         let _ = std::fs::remove_dir_all(&root);
     }

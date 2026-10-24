@@ -10,7 +10,7 @@ use lyon::{
     path::{builder::BorderRadii, Path, Winding},
 };
 use macroquad::prelude::*;
-use miniquad::{gl::GLenum, BlendFactor, BlendState, BlendValue, CompareFunc, Equation, PrimitiveType, StencilFaceState, StencilOp, StencilState};
+use miniquad::{gl::GLenum, BlendFactor, BlendState, BlendValue, CompareFunc, Equation, PrimitiveType, StencilFaceState, StencilOp, StencilState, TextureWrap};
 use once_cell::sync::Lazy;
 use ordered_float::{Float, NotNan};
 use sasa::AudioManager;
@@ -121,6 +121,20 @@ impl Clone for SafeTexture {
     fn clone(&self) -> Self {
         Self(Arc::clone(&self.0))
     }
+}
+
+/// 把一张已解码的 RGBA 图变成「点采样 + 指定环绕」的纹理。
+///
+/// 导出的 PNG / GIF 行序自顶向下，而采样这类素材时以 (0, 0) 为左下，所以这里翻一次；
+/// 点采样让像素风贴图不被线性过滤糊掉，环绕则是为了能平铺。
+pub fn tex_from_rgba(source: &image::RgbaImage, wrap: TextureWrap) -> Texture2D {
+    let source = image::imageops::flip_vertical(source);
+    let texture = Texture2D::from_rgba8(source.width() as u16, source.height() as u16, source.as_raw());
+    texture.set_filter(FilterMode::Nearest);
+    texture
+        .raw_miniquad_texture_handle()
+        .set_wrap(unsafe { get_internal_gl() }.quad_context, wrap);
+    texture
 }
 
 impl Deref for SafeTexture {

@@ -131,19 +131,22 @@ export function useRenderConfig() {
 
   /* ------------------------ 材质包（异步） ------------------------ */
   type Respack = RespackItem;
-  const DEFAULT_RESPACK: Respack = { name: t('respack-default'), path: null, index: 0, present: true };
+  const DEFAULT_RESPACK: Respack = { name: t('respack-default'), path: null, index: 0, present: true, keys: true, noise: false };
   const respacks = ref<Respack[]>([DEFAULT_RESPACK]);
 
   /** 下拉框里的资源包：内置默认皮肤 + `respack/` 里用户自备的 zip。包在但缺文件的项也列着
-   *  （`present` 假，`missing` 说明缺什么），选中后点预览 / 渲染时再提示 —— 不列出来就没法选中去修。 */
+   *  （`present` 假，`missing` 说明缺什么），选中后点预览 / 渲染时再提示 —— 不列出来就没法选中去修。
+   *  带 `keys` / `noise` 的包分别提供按键皮肤与噪域贴图，界面按这两个标记点亮对应图标。 */
   async function getRespacks(): Promise<Respack[]> {
-    const list = (await invoke('get_respacks')) as { name: string; path: string; present?: boolean; missing?: string[] }[];
+    const list = (await invoke('get_respacks')) as { name: string; path: string; present?: boolean; keys?: boolean; missing?: string[]; noise?: boolean }[];
     return [DEFAULT_RESPACK, ...list].map((obj, index) => ({
       name: obj.name,
       path: obj.path,
       index: index + 1,
       present: obj.present,
+      keys: obj.keys,
       missing: obj.missing,
+      noise: obj.noise,
     }));
   }
 
@@ -382,7 +385,14 @@ export function useRenderConfig() {
     const current = ui.respack as Respack | undefined;
     const next = respacks.value.find((x) => x.name === current?.name) || respacks.value[0];
     if (!next) return false;
-    if (current && next.name === current.name && next.path === current.path && !current.present === !next.present)
+    // `noise` 也要比：换了包里的噪域贴图时界面上的图标得跟着变
+    if (
+      current &&
+      next.name === current.name &&
+      next.path === current.path &&
+      !current.present === !next.present &&
+      !current.noise === !next.noise
+    )
       return false;
     ui.respack = next;
     return true;

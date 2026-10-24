@@ -32,12 +32,52 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     rc::Rc,
-    sync::atomic::{AtomicBool, Ordering as AtomicOrdering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering},
     sync::Arc,
     time::{Duration, Instant},
 };
 use std::{ffi::OsStr, fmt::Write as _};
-use tempfile::NamedTempFile;
+
+/// 交给 ffmpeg 写的临时文件：**只占一个路径，不预先建文件**。
+///
+/// 为什么不跟别处一样用 `tempfile::NamedTempFile`：这里的文件马上要交给**另一个进程**
+/// （ffmpeg）创建并写入。Windows 上「本进程先建好、再让 ffmpeg 带写权限打开」会撞上共享
+/// 冲突 / 删除挂起，而 ffmpeg 把 `ERROR_SHARING_VIOLATION` 与 `ERROR_ACCESS_DENIED` 一律
+/// 报成 `Permission denied`（就是 `Error opening output file …` 那条）。让 ffmpeg 自己用
+/// `-y` 建，就没有这个交接。
+///
+/// 顺带解决另一个问题：`tmp/` 目录里会堆满历史遗留的 `.tmpXXXXXX`（渲染进程被取消时
+/// 来不及析构），这里用 `Drop` 明确删掉自己那份。
+struct TempPath {
+    path: PathBuf,
+}
+
+impl TempPath {
+    fn new(label: &str) -> Self {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seq = SEQ.fetch_add(1, AtomicOrdering::Relaxed);
+        Self {
+            path: std::env::temp_dir().join(format!(
+                "dpr-{label}-{}-{seq}-{nanos}.wav",
+                std::process::id()
+            )),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// 渲染配置：GUI、`config.toml`(CLI)、预设文件共用这一个结构。
 ///
@@ -1905,9 +1945,9 @@ pub async fn main(cmd: bool) -> Result<()> {
     if ipc {
         send(IPCEvent::Mixing);
     }
-    let output_music_temp = NamedTempFile::new()?;
-    let output_sfx_temp = NamedTempFile::new()?;
-    let output_ending_temp = NamedTempFile::new()?;
+    let output_music_temp = TempPath::new("music");
+    let output_sfx_temp = TempPath::new("sfx");
+    let output_ending_temp = TempPath::new("ending");
 
     {
         let output_audio_time = Instant::now();
@@ -2430,7 +2470,7 @@ pub async fn main(cmd: bool) -> Result<()> {
     // （同一位置、同一素材 ⇒ 精确抵消，而且发生在任何滤镜之前，不受 limiter 影响），
     // 写成第二条 wav 交给下面那趟 remux。
     let drowned_notes = dps::core::water::take_drowned_notes();
-    let mut sfx_wav: Option<NamedTempFile> = None;
+    let mut sfx_wav: Option<TempPath> = None;
     // 注意：主 ffmpeg 那一趟的打击音轨是**静音占位**（见上面的 `write_silent_wav`），
     // 真正的打击音一律由这里写出的 `sfx_wav` 在最后的 remux 里混进去。
     // 因此只要铺过音（`sfx_placed` 非空）就必须写出这条 wav，否则普通渲染会丢掉全部打击音。
@@ -2455,7 +2495,7 @@ pub async fn main(cmd: bool) -> Result<()> {
         if removed > 0 {
             eprintln!("[water] 已从打击音轨里去掉 {removed} 个溺水按键的音效");
         }
-        let wav = NamedTempFile::new()?;
+        let wav = TempPath::new("sfx");
         write_audio_wav(
             &ffmpeg,
             wav.path(),
@@ -2667,7 +2707,7 @@ fn mix_water_sfx(
     }
 
     // 3) 写成采样率与音轨一致的 wav
-    let water_wav = NamedTempFile::new()?;
+    let water_wav = TempPath::new("water");
     {
         let mut proc = cmd_hidden(ffmpeg)
             .args(

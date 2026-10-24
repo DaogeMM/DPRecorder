@@ -34,6 +34,12 @@ uniform mediump sampler2D uNoiseTex;
 uniform mediump sampler2D _LavaTex;
 uniform mediump float _LavaMode;
 uniform mediump float _LavaScale;
+// 噪域皮肤（资源包自带 `noise_on.*` / `noise_off.*`）的贴图坐标怎么算，由 `_LavaUVMode` 选：
+// 0 = 平铺（`_LavaScale` 格锚定屏幕，官方岩浆噪域也走这条），
+// 1 = 一张图拉伸满整屏（噪域露出自己盖住的那一块），
+// 2 = 拉伸进每个噪域（`_LavaUV` 是 CPU 烘好的逐噪域局部坐标：每个噪域各显示一整张图）。
+uniform mediump sampler2D _LavaUV;
+uniform mediump float _LavaUVMode;
 vec4 snapshotSample(vec2 uv);
 float composeSample(vec2 uv);
 vec2 effectSample(vec2 uv);
@@ -42,6 +48,18 @@ float hoverSample(vec2 uv);
 uniform 	vec4 uUnityTime;
 uniform 	vec4 _ScreenParams;
 uniform 	vec4 _EffectRT_TexelSize;
+// 噪域填充贴图的采样坐标。`uv` 是屏幕 UV（`sceneUV`，原点在左下、0~1）。
+// 平铺档按 `_LavaScale`（每屏高几格）缩放，于是贴图锚定屏幕、不跟着噪域变形；
+// 整屏档直接用它，一张图铺满屏幕；拉伸进噪域档改采 CPU 烘好的逐噪域局部坐标。
+vec2 lavaUV(vec2 uv) {
+    if (_LavaUVMode < 0.5) {
+        return uv * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y), _LavaScale);
+    }
+    if (_LavaUVMode < 1.5) {
+        return uv;
+    }
+    return texture2D(_LavaUV, uv).rg;
+}
 uniform 	mediump vec4 _EdgeColor;
 uniform 	mediump float _EdgeOpacity;
 uniform 	mediump vec4 _FillColor;
@@ -180,7 +198,7 @@ mediump float u_xlat16_13;
     if (_LavaMode < 0.5) {
         u_xlat16_1.xyz = blockPalette(uDisabledFillColor.xyz, rgb) * vec3(uDisabledFillOpacity);
     } else {
-        vec2 u_lavaUV = sceneUV * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y), _LavaScale);
+        vec2 u_lavaUV = lavaUV(sceneUV);
         u_xlat16_1.xyz = texture2D(_LavaTex, u_lavaUV).xyz * vec3(uDisabledFillOpacity);
     }
     u_xlat16_1.xyz = u_xlat4.xyz * vec3(uDisabledSparkOpacity) + u_xlat16_1.xyz;
@@ -357,7 +375,7 @@ vec4 fullActive() {
         if (_LavaMode < 0.5) {
             u_xlat16_3.xyz = (-vec3(u_xlat16_35)) * vec3(vec3(_DisplaceBlendIntensity, _DisplaceBlendIntensity, _DisplaceBlendIntensity)) + blockPalette(_FillColor.xyz, rgb);
         } else {
-            vec2 u_lavaUV = sceneUV * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y), _LavaScale);
+            vec2 u_lavaUV = lavaUV(sceneUV);
             u_xlat16_3.xyz = texture2D(_LavaTex, u_lavaUV).xyz;
         }
         u_xlat16_5.xyz = u_xlat1.xyz + (-u_xlat16_3.xyz);

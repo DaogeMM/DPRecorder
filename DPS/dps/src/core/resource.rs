@@ -2,7 +2,7 @@ use super::{MSRenderTarget, Matrix, Point, NOTE_WIDTH_RATIO_BASE};
 use crate::{
     config::Config,
     core::{tween::Tweenable, HitSound},
-    ext::{create_audio_manger, nalgebra_to_glm, SafeTexture},
+    ext::{create_audio_manger, nalgebra_to_glm, tex_from_rgba, SafeTexture},
     fs::FileSystem,
     health::Health,
     info::ChartInfo,
@@ -72,6 +72,32 @@ fn default_particle_count() -> usize {
     4
 }
 
+/// 噪域皮肤的平铺密度默认值：屏幕高铺 16 格，与官方那两张 MC 贴图（16×16）的颗粒感一致。
+#[inline]
+fn default_noise_tiles() -> f32 {
+    16.
+}
+
+/// 噪域皮肤贴图怎么铺（`info.yml` 的 `noiseMode`）。
+///
+/// 三档都**不是**「按噪域裁一块屏幕图」以外的东西，区别只在贴图坐标怎么算：
+/// * [`NoiseMode::Tile`]：屏幕锚定的平铺，格子边长 = 屏幕高 / `noiseTiles`（官方岩浆噪域同款）。
+/// * [`NoiseMode::Zone`]：整张图被拉伸进**每一个**噪域自己的矩形里（噪域多大图就多大，
+///   长宽比跟着噪域变形，不重复）。
+/// * [`NoiseMode::Screen`]：整张图被拉伸到**整个屏幕**，噪域像窗户一样露出它盖住的那一块
+///   （图不动、不变形，噪域移动时从它下面滑过）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoiseMode {
+    /// 平铺（默认）：屏幕锚定、`noiseTiles` 格。
+    #[default]
+    Tile,
+    /// 拉伸进每个噪域：每个噪域各显示一整张图。
+    Zone,
+    /// 拉伸满整屏：一张图铺满屏幕，噪域露出自己那一块。
+    Screen,
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +143,14 @@ pub struct ResPackInfo {
     pub color_perfect_line: (f32, f32, f32, f32),
     #[serde(default = "default_good_line")]
     pub color_good_line: (f32, f32, f32, f32),
+
+    /// 噪域皮肤（包里的 `noise_on.*` / `noise_off.*`）的平铺密度：屏幕高里铺几格
+    #[serde(default = "default_noise_tiles")]
+    pub noise_tiles: f32,
+
+    /// 噪域皮肤贴图怎么铺（平铺 / 拉伸进每个噪域 / 拉伸满整屏），默认平铺。
+    #[serde(default)]
+    pub noise_mode: NoiseMode,
 
     #[serde(default)]
     pub description: String,
@@ -212,6 +246,46 @@ pub struct DigitStyle {
     pub title: SafeTexture,
 }
 
+/// 「噪域皮肤」：资源包里自带的两档贴图，顶掉官方岩浆噪域那两张 MC 贴图
+/// （`appendant/appendant.lava.zip` 里的 netherrock / lava）。
+///
+/// 两档都**必须**有，少一档就整包当没带噪域贴图（照旧用官方噪域）；每档可以是 `png`（静态）
+/// 或 `gif`（动画，优先）。
+pub struct NoiseSkin {
+    /// 「已激活」那一档（`noise_on.*`）：生效中（`enable..disable`）。
+    pub on: NoiseClip,
+    /// 「未激活」那一档（`noise_off.*`）：还没生效（`appear..enable`）与生效结束后的淡出段
+    /// （`disable..disappear`）。
+    pub off: NoiseClip,
+    /// 屏幕高铺几格（`info.yml` 的 `noiseTiles`）。
+    pub tiles: f32,
+    /// 贴图怎么铺（`info.yml` 的 `noiseMode`）。
+    pub mode: NoiseMode,
+}
+
+/// 噪域皮肤里的一档：逐帧纹理 + 每帧的结束时刻。
+pub struct NoiseClip {
+    /// 逐帧纹理；静态图只有一帧。
+    frames: Vec<Texture2D>,
+    /// 每帧的结束时刻（秒，累积），长度与 `frames` 相同。静态图只有一项，且是 `INFINITY`。
+    ends: Vec<f32>,
+}
+
+impl NoiseClip {
+    /// 当前该绑哪一帧：按 GIF 自带的逐帧延时轮换，静态图永远是那一张。
+    ///
+    /// 用 `time`（渲染时钟）而不是自增计数，所以每一层噪域、每一次重绑都取到同一帧。
+    pub fn texture(&self, time: f32) -> Texture2D {
+        if self.frames.len() == 1 {
+            return self.frames[0];
+        }
+        let total = self.ends.last().copied().unwrap_or(1.);
+        let t = if total > 0. { time.rem_euclid(total) } else { 0. };
+        let index = self.ends.iter().position(|end| t < *end).unwrap_or(self.frames.len() - 1);
+        self.frames[index]
+    }
+}
+
 pub struct ResourcePack {
     pub info: ResPackInfo,
     pub note_style: NoteStyle,
@@ -222,6 +296,8 @@ pub struct ResourcePack {
     pub endings: [AudioClip; 8],
     pub hit_fx: SafeTexture,
     pub digit_style: Option<DigitStyle>,
+    /// 噪域皮肤贴图；包里没带齐 `noise_on.*` 与 `noise_off.*` 时是 `None`（= 官方噪域）。
+    pub noise: Option<NoiseSkin>,
 }
 
 impl ResourcePack {
@@ -306,6 +382,51 @@ impl ResourcePack {
             }
             _ => None,
         };
+
+        // 「噪域皮肤」：皮肤包里可选带 `noise_on.*`（已激活）与 `noise_off.*`（未激活）两档，
+        // 每档可以是 `gif`（逐帧动画，优先）或 `png`（静态）。少一档就整包当没带，静默退回
+        // `None`（噪域照旧用官方岩浆贴图）。
+        async fn load_noise_clip(fs: &mut dyn FileSystem, base: &str) -> Option<NoiseClip> {
+            let mut frames = Vec::new();
+            let mut ends = Vec::new();
+            if let Some(data) = fs.load_file(&format!("{base}.gif")).await.ok() {
+                use image::AnimationDecoder;
+                if let Ok(decoder) = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(data)) {
+                    if let Ok(decoded) = decoder.into_frames().collect_frames() {
+                        let mut end = 0.;
+                        for frame in decoded {
+                            // 帧延时按百分之一秒记在 gif 里；0 按浏览器的惯例当 100ms，
+                            // 不这么兜的话这类 gif（很常见）会永远停在第一帧。
+                            let (numer, denom) = frame.delay().numer_denom_ms();
+                            let seconds = if numer == 0 || denom == 0 { 0.1 } else { numer as f32 / denom as f32 };
+                            frames.push(tex_from_rgba(frame.buffer(), TextureWrap::Repeat));
+                            end += seconds.max(0.01);
+                            ends.push(end);
+                        }
+                    }
+                }
+            }
+            if frames.is_empty() {
+                // 没有（或读不出）gif 才退回 png；两样都没有就是 `None`。
+                let still = fs
+                    .load_file(&format!("{base}.png"))
+                    .await
+                    .ok()
+                    .and_then(|data| image::load_from_memory(&data).ok())
+                    .map(|image| tex_from_rgba(&image.to_rgba8(), TextureWrap::Repeat))?;
+                frames.push(still);
+                ends.push(f32::INFINITY);
+            }
+            Some(NoiseClip { frames, ends })
+        }
+        async fn load_noise(fs: &mut dyn FileSystem, tiles: f32, mode: NoiseMode) -> Option<NoiseSkin> {
+            let on = load_noise_clip(fs, "noise_on").await?;
+            let off = load_noise_clip(fs, "noise_off").await?;
+            Some(NoiseSkin { on, off, tiles, mode })
+        }
+        // 密度填 0 或负数就等于「不铺」，那还不如用默认值；包里的 `noiseTiles` 才是作者意图。
+        let noise_tiles = if info.noise_tiles > 0. { info.noise_tiles } else { default_noise_tiles() };
+        let noise = load_noise(&mut *fs, noise_tiles, info.noise_mode).await;
 
         macro_rules! load_clip {
             ($path:literal) => {
@@ -399,6 +520,7 @@ impl ResourcePack {
             ],
             hit_fx,
             digit_style,
+            noise,
         })
     }
 }
@@ -1043,5 +1165,36 @@ impl Resource {
         unsafe { get_internal_gl() }.quad_gl.push_model_matrix(nalgebra_to_glm(mat));
         f(self);
         unsafe { get_internal_gl() }.quad_gl.pop_model_matrix();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `noiseTiles` 可以不写：缺省 16 格，写了就按写的来（噪域皮肤贴图的平铺密度）。
+    #[test]
+    fn respack_info_noise_tiles_is_optional() {
+        let head = "name: a\nauthor: b\nhitFx: [1, 1]\nholdAtlas: [0, 0]\nholdAtlasMH: [0, 0]\n";
+        let info: ResPackInfo = serde_yaml::from_str(head).unwrap();
+        assert_eq!(info.noise_tiles, 16.);
+
+        let info: ResPackInfo = serde_yaml::from_str(&format!("{head}noiseTiles: 8\n")).unwrap();
+        assert_eq!(info.noise_tiles, 8.);
+    }
+
+    /// `noiseMode` 决定噪域贴图怎么铺：缺省平铺，可写 `zone`（拉伸进每个噪域）与
+    /// `screen`（拉伸满整屏）。
+    #[test]
+    fn respack_info_noise_mode_is_optional() {
+        let head = "name: a\nauthor: b\nhitFx: [1, 1]\nholdAtlas: [0, 0]\nholdAtlasMH: [0, 0]\n";
+        let info: ResPackInfo = serde_yaml::from_str(head).unwrap();
+        assert_eq!(info.noise_mode, NoiseMode::Tile);
+
+        let info: ResPackInfo = serde_yaml::from_str(&format!("{head}noiseMode: zone\n")).unwrap();
+        assert_eq!(info.noise_mode, NoiseMode::Zone);
+
+        let info: ResPackInfo = serde_yaml::from_str(&format!("{head}noiseMode: screen\n")).unwrap();
+        assert_eq!(info.noise_mode, NoiseMode::Screen);
     }
 }

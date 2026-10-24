@@ -74,6 +74,14 @@ pub(super) struct Masks {
     warp_y: Vec<(f32, usize)>,
     enabled_compose: Vec<u8>,
     point_aux: Vec<[u8; 3]>,
+    /// 「噪域皮肤」拉伸进噪域那一档用的逐纹素局部坐标（RGBA8，只有 R/G 有意义，`bw × bh`）。
+    /// 每个噪域把自己的矩形映射成 0~1，片元按它采样，整张图就被拉伸进这个噪域。
+    ///
+    /// 与掩码同源、在同一趟栅格化里写出；重叠处**后画的噪域**覆盖先画的（与绘制顺序一致）。
+    /// 只有包的 `noiseMode` 是 `zone` 时才上传，其它模式一个字节都不传。
+    /// 用 RGBA8（而不是 RG8）是为了跟其它平面一样走 `Texture2D::from_rgba8`，
+    /// miniquad 的 `RG8` 上传路径在几个后端表现不一致。
+    pub lava_uv: Vec<u8>,
     /// 彩色噪域的两张颜色平面（RGBA、与 `rgba` 同尺寸）：`uActiveColors` / `uDisabledColors`。
     ///
     /// 只有 [`Masks::colored`] 为真时才烘；否则保持空 —— 上传侧据此绑空纹理，片元走
@@ -162,6 +170,8 @@ impl Masks {
             self.raw_disabled_green.fill(0);
             self.ready_green.resize(bw * bh, 0);
             self.ready_green.fill(0);
+            self.lava_uv.resize(bw * bh * 4, 0);
+            self.lava_uv.fill(0);
             // 六台官方相机分别抓：enabled N/S、disabled N/S（含 ready）、ready-only N/S。
             // BlockSprite 的混合是 SrcAlpha, One；每个减算 sprite 的 alpha 是 0.1。
             // 只有会画出来的方块。合成块（`judge_cover > 0`）走下面 `covers` 那半边 —
@@ -170,9 +180,25 @@ impl Masks {
             for z in zones {
                 let layer = if z.active { usize::from(z.invert) } else { 2 + usize::from(z.invert) };
                 let opacity = if z.invert { 0.1 } else { z.opacity };
+                // 「拉伸进每个噪域」那档要的逐纹素局部坐标：顺手在同一次栅格化里写，
+                // 免得为它再跑一遍 `raster_rows`。映射是每个噪域自己的仿射变换
+                // （先减中心、再转回去、再按半宽半高归一化），所以整张图正好铺满这个矩形。
+                let (s, c) = z.angle.sin_cos();
+                let (ux, uy) = (0.5 / z.half.x, 0.5 / z.half.y);
+                // 纹素中心的局部坐标 → 0~1 的贴图坐标。整张图铺满这个矩形；出了矩形
+                // 就是 0~1 以外，普通块靠采样器的环绕接上（减算块见下面那段）。
+                let uv_at = |x: usize, y: usize| {
+                    let py = ((y as f32 + 0.5) * 2. / bh as f32 - 1.) / aspect - z.center.y;
+                    let px = (x as f32 + 0.5) * 2. / bw as f32 - 1. - z.center.x;
+                    [(c * px + s * py) * ux + 0.5, (c * py - s * px) * uy + 0.5]
+                };
                 raster_rows(bw, bh, aspect, z, |y, first, last| {
                     for x in first..last {
                         let i = y * bw + x;
+                        let uv = uv_at(x, y);
+                        self.lava_uv[i * 4] = unorm(uv[0]);
+                        self.lava_uv[i * 4 + 1] = unorm(uv[1]);
+                        self.lava_uv[i * 4 + 3] = 255;
                         self.layers[layer][i] = unorm(self.layers[layer][i] as f32 / 255. + opacity);
                         if z.invert && !z.active {
                             self.raw_disabled_green[i] = unorm(self.raw_disabled_green[i] as f32 / 255. + 0.1 * z.opacity);
@@ -186,6 +212,21 @@ impl Masks {
                         }
                     }
                 });
+                if z.invert {
+                    // 减算块画的是矩形**外面**那一圈，所以它的贴图坐标也要铺满整屏：
+                    // 只写矩形内部的话，外面那圈全落在同一个纹素上，整块就变成一个纯色。
+                    // 外面那些纹素落在 0~1 以外，这里先对 1 取余，于是贴图在外面重复铺开
+                    // （不取余就只能得到放大后的边缘像素，看起来是一条条色带）。
+                    for y in 0..bh {
+                        for x in 0..bw {
+                            let i = y * bw + x;
+                            let uv = uv_at(x, y);
+                            self.lava_uv[i * 4] = unorm(uv[0].rem_euclid(1.));
+                            self.lava_uv[i * 4 + 1] = unorm(uv[1].rem_euclid(1.));
+                            self.lava_uv[i * 4 + 3] = 255;
+                        }
+                    }
+                }
             }
         }
         // 颜色归属只在层变化时重算（它只依赖几何），位移每帧都会把颜色搬到输出平面。
@@ -1023,6 +1064,48 @@ mod tests {
         masks.render_displaced(320, 180, 1., &[disabled], 0.);
         let center = ((masks.height / 2) * masks.width + masks.width / 2) * 4;
         assert_eq!(&masks.disabled_colors[center..center + 3], &[0, 255, 0]);
+    }
+
+    /// 每一个噪域自己的矩形都要映射成整张 0~1 的贴图坐标（「拉伸进噪域」那一档），
+    /// 而贴图**不**随屏幕走：同一个噪域缩小时，它的贴图仍然铺满那个矩形。
+    #[test]
+    fn noise_skin_projection_stretches_the_texture_into_each_zone() {
+        /// 取 `lava_uv` 某个纹素的某个通道：0 = u、1 = v、3 = alpha（覆盖标记）。
+        fn uv(masks: &Masks, x: usize, y: usize, channel: usize) -> u8 {
+            let bw = masks.width / 2;
+            masks.lava_uv[(y * bw + x) * 4 + channel]
+        }
+        let mut masks = official_masks();
+        // 先来一个占满屏幕的噪域：uv 从左到右、从下到上各跑一遍 0~1。
+        masks.render_displaced(800, 800, 1., &[zone(0., 0., 1., 1., 0., false)], 1.);
+        let (bw, bh) = (masks.width / 2, masks.height / 2);
+        assert!(uv(&masks, 0, 0, 0) <= 2 && uv(&masks, bw - 1, 0, 0) >= 253, "左右要铺满整张图");
+        assert!(uv(&masks, 0, 0, 1) <= 2 && uv(&masks, 0, bh - 1, 1) >= 253, "上下要铺满整张图");
+        assert_eq!(uv(&masks, bw / 2, bh / 2, 3), 255, "噪域内部的 alpha 要写满");
+
+        // 再来一个只占屏幕中间四分之一的小噪域：它自己的贴图照样铺满这个矩形，
+        // 而不是从大图上截一块 —— 判据是覆盖区里的 uv 仍然从 0 跑到 1。
+        masks.render_displaced(800, 800, 1., &[zone(0., 0., 0.25, 0.25, 0., false)], 1.);
+        let covered: Vec<(usize, usize)> = (0..bh)
+            .flat_map(|y| (0..bw).map(move |x| (x, y)))
+            .filter(|&(x, y)| uv(&masks, x, y, 3) == 255)
+            .collect();
+        assert!(!covered.is_empty(), "小噪域至少要盖住几个纹素");
+        assert!(covered.len() < bw * bh, "小噪域不该盖满整屏");
+        for channel in 0..2 {
+            let low = covered.iter().map(|&(x, y)| uv(&masks, x, y, channel)).min().unwrap();
+            let high = covered.iter().map(|&(x, y)| uv(&masks, x, y, channel)).max().unwrap();
+            assert!(low <= 6 && high >= 249, "小噪域里也要把整张图铺满");
+        }
+
+        // 减算块（`invert`）画的是矩形**外面**那一圈：坐标同样要铺满整屏，否则外面那圈
+        // 所有纹素都落在同一个坐标上，整块会退化成一个纯色。
+        masks.render_displaced(800, 800, 1., &[zone(0., 0., 0.25, 0.25, 0., true)], 1.);
+        assert!((0..bw * bh).all(|i| masks.lava_uv[i * 4 + 3] == 255), "减算块的坐标要铺满整屏");
+        let mut values: Vec<u8> = (0..bw * bh).map(|i| masks.lava_uv[i * 4]).collect();
+        values.sort_unstable();
+        values.dedup();
+        assert!(values.len() > 4, "减算块外面的坐标要跟着位置变");
     }
 
     /// 原生 `render_gray_rings`（照抄），只用于上面的逐位对照。

@@ -51,10 +51,15 @@ vec2 size = max(floor(_ScreenParams.xy / max(_SnapshotPixelScale, 1.0)), vec2(1.
 uniform mediump sampler2D _LavaTex;   // 本仓库新增：下界岩 / 岩浆的当前动画帧
 uniform mediump float _LavaMode;      // 0 = 关闭（官方原样），1 = 用 _LavaTex 填
 uniform mediump float _LavaScale;     // 每屏高铺多少格，默认 16
-vec2 u_lavaUV = sceneUV * vec2(_LavaScale * (_ScreenParams.x / _ScreenParams.y), _LavaScale);
+uniform mediump sampler2D _LavaUV;    // 逐噪域局部坐标（RG8），只在 _LavaUVMode == 2 时采
+uniform mediump float _LavaUVMode;    // 0 = 平铺（官方那支），1 = 拉伸满整屏，2 = 拉伸进每个噪域
+vec2 lavaUV(vec2 uv);                 // 按 _LavaUVMode 折算采样坐标
 ```
 
 * `sceneUV`（`block_shader_full.vert:22`）= 屏幕 UV ⇒ 贴图**锚定屏幕**、噪域移动时从它下面滑过。
+* `_LavaUVMode` 是「噪域皮肤」的三档：`0` 与官方那支逐位相同；`1` 直接拿 `sceneUV` 采
+  （一张图铺满屏幕，噪域露出自己盖住的那块）；`2` 改采 `_LavaUV`（CPU 在每个噪域自己的矩形里
+  把坐标归一化成 0~1，整张图被拉伸进这个噪域）。后两档只由资源包的 `noiseMode` 打开。
 * 素材取自 `assets/Minecraft/{netherrock.png, lava.gif}`（仓库根唯一一份资源目录；16×16 / 32×32×16 帧），
   由 `native/shader.rs:109` / `:111` 用 `include_bytes!` 打进二进制，不走 `assets/blockarea`。
 * 本仓库改动后的完整 MD5 `785B422FBFC838295ADB5D24A90B1AC3`（580 行）。

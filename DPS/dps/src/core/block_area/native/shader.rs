@@ -105,21 +105,7 @@ impl Zone {
 
 fn tex(bytes: &[u8], wrap: TextureWrap) -> Texture2D {
     let source = image::load_from_memory(bytes).unwrap().to_rgba8();
-    tex_from_rgba(&source, wrap)
-}
-
-/// 把一张已经解码好的 RGBA 图变成点采样纹理（GIF 的逐帧解码也走这里）。
-///
-/// 导出的 PNG / GIF 行序自顶向下；Unity GLES 采样这些纹理素材时以 (0,0) 为左下。
-/// macroquad 原样上传图像字节，所以这里翻一次。
-fn tex_from_rgba(source: &image::RgbaImage, wrap: TextureWrap) -> Texture2D {
-    let source = image::imageops::flip_vertical(source);
-    let texture = Texture2D::from_rgba8(source.width() as u16, source.height() as u16, source.as_raw());
-    texture.set_filter(FilterMode::Nearest);
-    texture
-        .raw_miniquad_texture_handle()
-        .set_wrap(unsafe { get_internal_gl() }.quad_context, wrap);
-    texture
+    crate::ext::tex_from_rgba(&source, wrap)
 }
 
 static DISPLACE_TEX: Lazy<Texture2D> = Lazy::new(|| tex(include_bytes!("../../../../../../assets/blockarea/BlockNoise1.png"), TextureWrap::Mirror));
@@ -149,7 +135,7 @@ static LAVA_FRAMES: Lazy<Vec<Texture2D>> = Lazy::new(|| {
         return Vec::new();
     };
     match decoder.into_frames().collect_frames() {
-        Ok(frames) => frames.iter().map(|frame| tex_from_rgba(frame.buffer(), TextureWrap::Repeat)).collect(),
+        Ok(frames) => frames.iter().map(|frame| crate::ext::tex_from_rgba(frame.buffer(), TextureWrap::Repeat)).collect(),
         Err(_) => Vec::new(),
     }
 });
@@ -211,6 +197,9 @@ const FLOATS: &[(&str, f32)] = &[
     // `_LavaScale` 是每屏高铺多少格，16 ⇒ 720p 下 45px 一格。
     ("_LavaMode", 0.),
     ("_LavaScale", LAVA_CELLS_PER_SCREEN_HEIGHT),
+    // 噪域皮肤贴图怎么铺：0 = 平铺（`_LavaScale` 格锚定屏幕），1 = 一张图拉伸满整屏，
+    // 2 = 拉伸进每个噪域（按 `_LavaUV` 里烘好的局部坐标采样）。官方岩浆噪域恒走 0。
+    ("_LavaUVMode", 0.),
     ("uDisabledFillOpacity", 0.4),
     ("uDisabledSparkOpacity", 3.5),
     ("uDisabledSparkIntensity", 2.29),
@@ -331,6 +320,10 @@ struct FrameTextures {
     color_textures: [Option<Texture2D>; 2],
     /// 颜色平面当前对应的掩码 `revision`（与 `uploaded_masks` 同一套判据）。
     uploaded_colors: Option<u64>,
+    /// 「拉伸进每个噪域」那档的逐纹素局部坐标（`u_LavaUV`），尺寸是掩码的 `bw × bh`
+    /// （掩码本身是它的 2× 上采样）。只有该模式且有噪域贴图时才建出来并上传。
+    lava_uv: Option<Texture2D>,
+    uploaded_lava_uv: Option<u64>,
     scene: Option<Texture2D>,
     /// `copy_scene` 的写入端 framebuffer：把 `scene` 那张纹理挂上去，
     /// 这样场景副本走 GPU 端 `glBlitFramebuffer`，不必读回 CPU。
@@ -410,6 +403,9 @@ fn load_block_material(disabled: bool, hover: bool, colored: bool) -> Result<Mat
             "uAuxMasks".to_owned(),
             "uNoiseTex".to_owned(),
             "_LavaTex".to_owned(),
+            // 拉伸进噪域那一档的逐噪域局部坐标（RG8）。其它档绑空纹理、
+            // `_LavaUVMode` 不是 2，片元不会去采它。
+            "_LavaUV".to_owned(),
             // 彩色噪域的两张颜色图。没有彩色噪域时绑 1x1 空纹理、`uColored` 归零，
             // 片元里的 `uColored == 0` 分支不会去采它们。
             "uActiveColors".to_owned(),
@@ -544,7 +540,7 @@ fn warm_up() {
                 material.set_texture("uDisplaceTex", *DISPLACE_TEX);
                 material.set_texture("uSparkTex", *SPARK_TEX);
                 material.set_texture("uNoiseTex", *NOISE_TEX);
-                for sampler in ["uMasks", "uAuxMasks", "uScene", "_LavaTex", "uActiveColors", "uDisabledColors"] {
+                for sampler in ["uMasks", "uAuxMasks", "uScene", "_LavaTex", "_LavaUV", "uActiveColors", "uDisabledColors"] {
                     material.set_texture(sampler, empty);
                 }
                 material.set_uniform("uView", vec3(1., 1., 1.));
@@ -580,19 +576,21 @@ pub fn draw_disabled_zones(res: &mut Resource, aspect: f32, zones: &[Zone]) {
     draw_phases(res, aspect, zones, time, true, &[]);
 }
 
-/// 这一趟该给 `zone` 贴哪张贴图：0 = 不贴（纯色）、1 = netherrock、2 = lava。
+/// 这一趟该给 `zone` 贴哪一档贴图：0 = 不贴（纯色）、1 = 「未激活」那一档、2 = 「已激活」那一档。
 ///
-/// 「还没生效」（`appearTime..enableTime`）印石头，「生效中」与「生效结束后」印岩浆。
+/// 官方岩浆噪域：`appearTime..enableTime` 印 netherrock，「生效中」与「生效结束后」印岩浆。
+/// 噪域皮肤：`noise_off` / `noise_on` 两档，且「生效结束后」也算未激活 —— 那一小段是淡出，
+/// 贴图先退回未激活那张再淡出（与官方那段的取向不同，所以两种来源分界不一样）。
 /// `index == usize::MAX` 是强制定位/反向强制定位合成的方块（不印号的那些），
 /// 它们与 `is_subtract` 一样保持纯色。
 /// 只在**完整噪域**（`!simplified`）那一支里被调用：「岩浆噪域」只在非简化噪域下生效。
-fn lava_fill(zone: &Zone, lava: bool, disabled: bool) -> u8 {
+fn lava_fill(zone: &Zone, lava: bool, disabled: bool, skin: bool) -> u8 {
     if !lava || zone.index == usize::MAX {
         return 0;
     }
-    if !disabled {
-        2
-    } else if zone.before_enable {
+    // `disabled` 为真就是 disabled 那一趟（`Disabled` 与 `DisabledOut` 两段共用这个通道）。
+    let off = if skin { disabled || zone.before_enable } else { zone.before_enable };
+    if off {
         1
     } else {
         2
@@ -631,10 +629,13 @@ fn draw_phases(res: &mut Resource, aspect: f32, zones: &[Zone], time: f32, disab
         // 一趟里画不出「石头 + 岩浆」两种贴图。
         // 完整噪域本来就只有一趟（`isSubtract` 的块靠 `enabled_compose` 的异或语义挖洞，
         // 不分正负两趟），所以这里的分组不动任何几何/掩码语义。
-        let lava = res.config.block_area_lava;
+        // 选中的皮肤包自带完整的噪域皮肤（`noise_on.*` + `noise_off.*`）就当作开着：
+        // 皮肤自带填充贴图，不再看「岩浆噪域」那个开关（没带皮肤的包仍只看它，老行为逐位不变）。
+        let skin = res.res_pack.noise.is_some();
+        let lava = res.config.block_area_lava || skin;
         let mut groups: [Vec<Zone>; 3] = Default::default();
         for zone in zones.iter().cloned() {
-            groups[lava_fill(&zone, lava, disabled) as usize].push(zone);
+            groups[lava_fill(&zone, lava, disabled, skin) as usize].push(zone);
         }
         for (fill, group) in groups.iter().enumerate() {
             if !group.is_empty() {
@@ -906,16 +907,53 @@ fn draw_layer_at(
         m.set_texture("uAuxMasks", frame.aux.unwrap());
         m.set_texture("uNoiseTex", *NOISE_TEX);
         // 「岩浆噪域」：`lava` 0 = 关闭（绑空纹理并把 `_LavaMode` 归零 ⇒ 官方原样），
-        // 1 = netherrock（还没生效那一段），2 = lava 的当前动画帧。只有简化噪域会传非 0；
+        // 1 = netherrock（还没生效那一段），2 = lava 的当前动画帧。只有完整噪域会传非 0；
         // 附带资源包缺素材时 `lava_mode` 已经把它折回 0。
-        let lava = lava_mode(lava);
+        // 「噪域皮肤」：`noise_off` / `noise_on` 两档顶掉 netherrock 与 lava，档位编号照旧用
+        // `lava`（1 = 未激活，2 = 已激活）—— 片元里 `_LavaMode` 只区分「有没有贴图」。
+        // 皮肤与附带的岩浆包无关，所以不能跟着 `lava_mode` 一起被折掉。
+        let noise = res.res_pack.noise.as_ref();
+        let lava = if lava == 0 { 0 } else if noise.is_some() { lava } else { lava_mode(lava) };
         match lava {
-            1 => m.set_texture("_LavaTex", NETHERROCK_TEX.unwrap_or(*EMPTY_TEX)),
-            2 => m.set_texture("_LavaTex", lava_frame(time)),
+            1 => m.set_texture("_LavaTex", noise.map(|noise| noise.off.texture(time)).or(*NETHERROCK_TEX).unwrap_or(*EMPTY_TEX)),
+            2 => m.set_texture("_LavaTex", noise.map(|noise| noise.on.texture(time)).unwrap_or_else(|| lava_frame(time))),
             _ => m.set_texture("_LavaTex", *EMPTY_TEX),
         }
         m.set_uniform("_LavaMode", if lava == 0 { 0.0_f32 } else { 1.0_f32 });
-        m.set_uniform("_LavaScale", LAVA_CELLS_PER_SCREEN_HEIGHT);
+        // 一屏高铺几格：皮肤包里可用 `info.yml` 的 `noiseTiles` 配，没有就是官方的 16 格。
+        m.set_uniform("_LavaScale", noise.map(|noise| noise.tiles).unwrap_or(LAVA_CELLS_PER_SCREEN_HEIGHT));
+        // 贴图怎么铺（皮肤包的 `noiseMode`）：平铺 / 拉伸满整屏 / 拉伸进每个噪域。后一档要一份
+        // 逐噪域的局部坐标，跟着掩码的 `revision` 上传 —— 噪域几何变了它才变。
+        let mode = noise.map(|noise| noise.mode).unwrap_or(crate::core::resource::NoiseMode::Tile);
+        let uv_mode = match (lava, mode) {
+            (0, _) | (_, crate::core::resource::NoiseMode::Tile) => 0.0_f32,
+            (_, crate::core::resource::NoiseMode::Screen) => 1.0,
+            (_, crate::core::resource::NoiseMode::Zone) => 2.0,
+        };
+        m.set_uniform("_LavaUVMode", uv_mode);
+        if uv_mode == 2. {
+            // 源尺寸是掩码的一半（掩码是 `bw × bh` 的 2× 上采样）。映射在每个噪域内部是仿射的，
+            // 线性采样插值出来就是准确值，不必按掩码分辨率烘。
+            let dim = ((frame.masks.width / 2) as u32, (frame.masks.height / 2) as u32);
+            let resized = frame.lava_uv.is_none_or(|texture| (texture.width() as u32, texture.height() as u32) != dim);
+            if resized {
+                let texture = Texture2D::from_rgba8(dim.0 as u16, dim.1 as u16, &frame.masks.lava_uv);
+                texture.set_filter(FilterMode::Linear);
+                if let Some(old) = frame.lava_uv.replace(texture) {
+                    old.delete();
+                }
+            } else if frame.uploaded_lava_uv != Some(frame.masks.revision) {
+                frame
+                    .lava_uv
+                    .unwrap()
+                    .raw_miniquad_texture_handle()
+                    .update(unsafe { get_internal_gl() }.quad_context, &frame.masks.lava_uv);
+            }
+            frame.uploaded_lava_uv = Some(frame.masks.revision);
+            m.set_texture("_LavaUV", frame.lava_uv.unwrap());
+        } else {
+            m.set_texture("_LavaUV", *EMPTY_TEX);
+        }
         // 彩色噪域：本帧至少一块带颜色才把 `uColored` 置 1 并绑上颜色平面。没有颜色的帧
         // 把 `uColored` 归零、两张颜色绑空纹理 —— 片元走的是 `blockPalette` 恒等分支，
         // 逐像素与加颜色之前相同。
@@ -945,7 +983,9 @@ fn draw_layer_at(
         // 「噪域打击光晕半径」：官方默认 0.5，这里允许按配置放大 / 缩小。
         m.set_uniform("_TouchPosRadius", res.config.block_area_hover_radius.max(0.));
         let simplified = frame.simplified || res.config.simplified_block_area;
-        set_fill_style(m, disabled, simplified, invert, &res.config);
+        // 皮肤包自带噪域贴图时也按「岩浆噪域」那套强制关闭三项（理由见 `set_fill_style`）
+        let lava = res.config.block_area_lava || res.res_pack.noise.is_some();
+        set_fill_style(m, disabled, simplified, invert, &res.config, lava);
         // `chart_to_base` 把这台四边形从 chart 归一化空间送到当前基础空间：全屏四边形
         // 就是 chart 空间的 (-1,-1/aspect)-(1,1/aspect)，于是官方顶点着色器逐字成立。
         res.apply_model_of(&chart_to_base, |_| {
@@ -973,14 +1013,15 @@ fn draw_layer_at(
 ///
 /// 另外注意 active 材质是**预乘**混合，而 `_FillOpacity` 只进 `result.w`（`frag:339`），
 /// 所以 rgb 必须先乘 alpha，否则 `block_area_alpha < 1` 时颜色会偏亮。
-fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, cfg: &crate::config::Config) {
+/// `lava` 是「这一帧该不该按岩浆 / 噪域皮肤那套压掉三项」—— 由调用方算好传进来，
+/// 因为开没开岩浆噪域与皮肤包有没有噪域贴图是两个不同的来源。
+fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, cfg: &crate::config::Config, lava: bool) {
     if !simplified {
         // 「岩浆噪域」只在完整噪域下生效，且开启它时「噪声斑点 / 噪域扭曲 /
         // 噪域火花」三项**强制关闭**：岩浆 / 下界岩必须是一整张干净的贴图 —— 噪声斑点会糊在
         // 贴图上、填充位移会把矩形边缘撕出锯齿、火花点阵也是多余的一层。
         // 这里只改「有效值」，不动用户存下来的配置本身：关掉岩浆噪域后三项照旧生效。
         // 三项的强制关闭**只发生在这里**：前端不再因岩浆噪域而禁用 / 清零这三项，界面里照旧可勾。
-        let lava = cfg.block_area_lava;
         // `_SnapshotPixelScale` 是本仓库新增的 uniform（场景快照的降采样倍率，官方在
         // `frag` 里写死 3.0）：两趟都先复位成官方默认值，避免「噪域扭曲」从关到开时
         // 上一帧写下的 1.0 留在材质上。

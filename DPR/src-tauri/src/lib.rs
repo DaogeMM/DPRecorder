@@ -1196,41 +1196,58 @@ struct RespackInfo {
     present: bool,
     /// 包里缺哪些文件（齐全时为空）。
     missing: Vec<String>,
+    /// 包里带不带按键皮肤（`SKIN_FILES` 齐全）：界面用它在资源包那一栏点一个按键图标，
+    /// 有就亮到原色、没有就压成淡色。内置的「默认」项自带按键贴图，所以恒为 true。
+    keys: bool,
+    /// 包里带不带完整的噪域皮肤（`noise_on.*` 与 `noise_off.*` 两档齐全）：带了就用它当噪域
+    /// 皮肤，缺一档就整包当没带（照旧用官方噪域）。界面拿它标个图标，不拦选择。
+    noise: bool,
 }
 
-/// 资源包下拉框的候选：`respack/` 里的 zip 与**同名的皮肤目录**（用户自己做的皮肤包），再加上
-/// 前端的「默认」项。目录要有 `info.yml` 才认，免得把随便一个子目录列成资源包。
-#[tauri::command]
-fn get_respacks() -> Result<Vec<RespackInfo>, InvokeError> {
-    (|| {
-        let dir = respack_dir()?;
-        let mut list = Vec::new();
-        let Ok(entries) = dir.read_dir() else {
-            return Ok(list);
-        };
-        for entry in entries.flatten() {
+/// `respack/` 里的皮肤包候选（zip 文件，或装着一个包的目录）。
+fn pack_candidates(dir: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = dir.read_dir() else {
+        return Vec::new();
+    };
+    let mut list: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
             let path = entry.path();
             let is_zip = path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
             let is_pack_dir = path.is_dir() && path.join("info.yml").is_file();
-            if !is_pack_dir && !(path.is_file() && is_zip) {
-                continue;
-            }
-            let missing: Vec<String> = appendant::missing_files(&path, appendant::SKIN_FILES)
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-            list.push(RespackInfo {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                path: path.display().to_string(),
-                present: missing.is_empty(),
-                missing,
-            });
-        }
-        list.sort_by(|x, y| x.name.cmp(&y.name));
-        Ok(list)
+            (is_pack_dir || (path.is_file() && is_zip)).then(|| (entry.file_name().to_string_lossy().into_owned(), path))
+        })
+        .collect();
+    list.sort_by(|x, y| x.0.cmp(&y.0));
+    list
+}
+
+/// 资源包下拉框的候选：`respack/` 里的 zip 与**同名的皮肤目录**（用户自己做的皮肤包），再加上
+/// 前端的「默认」项。
+#[tauri::command]
+fn get_respacks() -> Result<Vec<RespackInfo>, InvokeError> {
+    (|| {
+        let dir = respack_dir()?;
+        Ok(pack_candidates(&dir)
+            .into_iter()
+            .map(|(name, path)| {
+                let missing: Vec<String> = appendant::missing_files(&path, appendant::SKIN_FILES)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                RespackInfo {
+                    name,
+                    path: path.display().to_string(),
+                    present: missing.is_empty(),
+                    keys: missing.is_empty(),
+                    missing,
+                    noise: appendant::has_noise_skin(&path),
+                }
+            })
+            .collect())
     })()
     .map_err(InvokeError::from_anyhow)
 }
