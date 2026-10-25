@@ -355,6 +355,39 @@ impl Judge {
         self.blocked_finger_ids.clear();
     }
 
+    /// 播放头回退到 `time` 之后调用：把判定进度退回到 `time`。
+    ///
+    /// 回退点之后已经判过的记录要撤掉（`judgements` 里逐条删），分数 / 连击 / 准确率按剩下的
+    /// 记录重建 —— 只挪游标不撤记录的话，那段音符会被判第二次，分数直接算重。
+    /// 回退点之前的判定原样保留。
+    pub fn rewind_to(&mut self, chart: &Chart, time: f64) {
+        let num_of_notes = chart.lines.iter().map(|it| it.notes.iter().filter(|it| !it.fake).count() as u32).sum();
+        let mut inner = JudgeInner::new(num_of_notes);
+        let mut judgements = self.judgements.borrow_mut();
+        judgements.retain(|(t, line_id, note_id, what)| {
+            let note_time = chart.lines[*line_id as usize].notes[*note_id as usize].time;
+            let kept = note_time < time;
+            if let (true, Ok(what)) = (kept, what) {
+                // 长条的按下动作记成 `Err(..)`，不进 `inner`，这里同样跳过。
+                // 第二项是「判定时刻 - 音符时刻」，用来还原 early / late 统计的符号。
+                inner.commit(what.clone(), t - note_time);
+            }
+            kept
+        });
+        drop(judgements);
+        self.inner = inner;
+        for (line, (idx, cursor)) in chart.lines.iter().zip(self.notes.iter_mut()) {
+            // `idx` 在 `Judge::new` 里按音符时刻排过序，`partition_point` 就是第一个 `time >= time`
+            // 的音符的位置。
+            *cursor = idx.partition_point(|id| line.notes[*id as usize].time < time);
+        }
+        self.trackers.clear();
+        self.blocked_finger_ids.clear();
+        self.key_down_count = 0;
+        // 触摸事件的时间戳按「上一帧时刻 → 这一帧时刻」插值，回退后不跟上的话会插到未来去。
+        self.last_time = time;
+    }
+
     pub fn commit(&mut self, t: f64, what: Judgement, line_id: u32, note_id: u32, diff: f64) {
         self.judgements.borrow_mut().push((t, line_id, note_id, Ok(what)));
         self.inner.commit(what, diff);

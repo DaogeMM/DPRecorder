@@ -542,11 +542,17 @@ impl Main {
         match self.scenes.last_mut().unwrap().next_scene(&mut self.tm) {
             NextScene::None => {}
             NextScene::Pop => {
-                self.scenes.pop();
-                self.tm.seek_to(self.times.pop().unwrap());
+                if self.scenes.len() > 1 {
+                    self.scenes.pop();
+                    self.tm.seek_to(self.times.pop().unwrap());
+                }
                 self.scenes.last_mut().unwrap().enter(&mut self.tm, self.target_chooser.choose())?;
             }
             NextScene::PopN(num) => {
+                // 栈底那一层不弹：预览窗口的栈只有「BaseScene + 游戏」两层，
+                // 结束界面的「重试」要弹两层，真弹空之后没有场景可渲染，下一帧就 panic。
+                // 少弹一层正好让游戏层重新 `enter`（它会重置谱面从头再来），也就是重试本身。
+                let num = num.min(self.scenes.len().saturating_sub(1));
                 for _ in 0..num {
                     self.scenes.pop();
                     self.tm.seek_to(self.times.pop().unwrap());
@@ -554,12 +560,15 @@ impl Main {
                 self.scenes.last_mut().unwrap().enter(&mut self.tm, self.target_chooser.choose())?;
             }
             NextScene::PopWithResult(result) => {
-                self.scenes.pop();
-                self.tm.seek_to(self.times.pop().unwrap());
+                if self.scenes.len() > 1 {
+                    self.scenes.pop();
+                    self.tm.seek_to(self.times.pop().unwrap());
+                }
                 self.scenes.last_mut().unwrap().on_result(&mut self.tm, result)?;
                 self.scenes.last_mut().unwrap().enter(&mut self.tm, self.target_chooser.choose())?;
             }
             NextScene::PopNWithResult(num, result) => {
+                let num = num.min(self.scenes.len().saturating_sub(1));
                 for _ in 0..num {
                     self.scenes.pop();
                     self.tm.seek_to(self.times.pop().unwrap());

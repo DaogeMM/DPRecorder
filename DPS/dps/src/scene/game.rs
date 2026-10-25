@@ -313,6 +313,34 @@ macro_rules! reset {
     }};
 }
 
+/// 播放头往回跳（`←` 键、拖动进度条、预览副窗口同步时间）之后调用：等同于「从回退处重新开始
+/// 游玩」——回退点之后的音符重新变成「还没到来」，之前的已经判定按键原样保留（分数、连击都
+/// 不清零）。不复位的话，已经判定完的音符早被 `JudgeLine::update` 从 `update_order` 里永久
+/// 剔除，回退后那段按键就再也不画了。
+///
+/// 补判那一下的打击音效与打击粒子静音 `REWIND_MUTE` 秒。
+///
+/// `$res` 传 `&mut self.res` 或已经借着 `self.res` 的 `res` 都行：展开后每条语句各借一个字段。
+macro_rules! rewind {
+    ($self:ident, $res:expr, $tm:ident, $time:expr) => {{
+        $self.bad_notes.clear();
+        // 先用 `chart` 把回退点之后的音符放回「还没判」，再让判定器把游标挪到它们身上；
+        // 顺序反了的话判定器扫的是旧状态。
+        $self.chart.rewind_to($time);
+        $self.judge.rewind_to(&$self.chart, $time);
+        $res.reset();
+        $res.disable_hit_fx = true;
+        $self.pause_rewind = PauseRewind {
+            time: Some($tm.now()),
+            duration: Some(REWIND_MUTE),
+            dim: false,
+        };
+    }};
+}
+
+/// 回退后静音打击音效与打击粒子的时长（秒），用 `pause_rewind` 的倒计时机制自动恢复。
+const REWIND_MUTE: f64 = 0.3;
+
 macro_rules! reset_music_speed {
     ($self:ident, $res:expr, $tm:ident) => {{
         debug!("recreate music");
@@ -1895,7 +1923,15 @@ impl Scene for GameScene {
         } else {
             (time - self.offset()).max(0.)
         };
+        let previous_time = self.res.time;
         self.res.time = time;
+        // 播放头被往回拖（进度条、预览副窗口同步都会直接跳时间）等于「从回退处重新开始游玩」：
+        // 判定（分数 / 连击 / 准确率）与谱面一起复位。不复位的话，已经判定完的音符早被
+        // `JudgeLine::update` 从 `update_order` 里永久剔除，回退后那段按键再也不画了。
+        // 键盘的 `←` 不走这里（它在后面直接改 `res.time`），单独调 `rewind!`。
+        if time + 1e-3 < previous_time {
+            rewind!(self, self.res, tm, time);
+        }
         if !tm.paused() && (self.res.config.autoplay() || self.pause_rewind.time.is_none()) && self.mode != GameMode::View {
             self.gl.quad_gl.viewport(self.res.camera.viewport);
 
@@ -1970,6 +2006,10 @@ impl Scene for GameScene {
                 let dst = (self.music.position() - 2.).max(0.);
                 self.music.seek_to(dst)?;
                 tm.seek_to(dst as f64);
+                // 这条路径直接改 `res.time`，主更新里那处「往回跳」判断看不见它，所以在跳完
+                // 这里自己复位一次（`res` 已经借着 `self.res`，和其余字段互不冲突）。
+                let now = res.time;
+                rewind!(self, res, tm, now);
             }
             if is_key_pressed(KeyCode::Right) {
                 res.time += 5.;

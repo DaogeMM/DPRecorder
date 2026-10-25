@@ -191,6 +191,29 @@ impl Chart {
         super::block_area::reset_native_block_effects();
     }
 
+    /// 播放头被往回拖到 `time` 之后调用：等价于「从 `time` 处重新开局」——`time` 之前的音符
+    /// 保持已经判定的样子（不参与判定、也不再出现在屏幕上），之后的音符回到「还没到来」。
+    ///
+    /// ⚠️ 不能改用 `reset()`：它把每个音符都改成 `NotJudged`、动画时刻归零，判定器重扫时会
+    /// 把回退点之前的音符**一口气全判掉**，音符也会以开局那一刻的样子堆在判定线上。
+    pub fn rewind_to(&mut self, time: f64) {
+        self.lines.iter_mut().flat_map(|it| it.notes.iter_mut()).for_each(|note| {
+            if note.time >= time {
+                note.judge = JudgeStatus::NotJudged;
+            } else if matches!(note.judge, JudgeStatus::Hold(..)) {
+                // 回退点落在一根长条中间：那根长条已经按不下去了，直接结束掉，
+                // 免得它带着「正在按住」的状态挂在屏幕上。
+                note.judge = JudgeStatus::Judged;
+            }
+            note.protected = false;
+            note.object.set_time(time);
+        });
+        for line in &mut self.lines {
+            line.cache.reset(&mut line.notes);
+        }
+        super::block_area::reset_native_block_effects();
+    }
+
     pub fn update(&mut self, res: &mut Resource) {
         for line in &mut self.lines {
             line.object.set_time(res.time);
