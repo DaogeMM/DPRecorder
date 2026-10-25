@@ -1263,6 +1263,120 @@ fn encoder_accepts_rgba_input(ffmpeg: &String, encoder: &str) -> bool {
     matches!(output, Ok(output) if output.status.success())
 }
 
+/// 把整帧 RGB 打包成 `yuv420p` 字节流的顶点着色器。
+///
+/// 全屏矩形摆在裁剪空间里（`Camera2D` 的 zoom 取 1、target 取 0 时世界坐标就是裁剪坐标），
+/// 这样片元里的 `uv` 正好就是「本片元在打包贴图里的位置」。`color0` 只是为了让 GPU 的
+/// 顶点格式（position / texcoord / color0）对得上，片元侧不读它。
+const YUV_VERTEX_SHADER: &str = r#"#version 100
+attribute vec3 position;
+attribute vec2 texcoord;
+attribute vec4 color0;
+
+// uv 必须 highp：它要乘上帧宽再取整，`lowp` 只有 8 位，1920 列会被压成 256 段。
+varying highp vec2 uv;
+varying lowp vec4 color;
+
+uniform mat4 Model;
+uniform mat4 Projection;
+
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1);
+    uv = texcoord;
+    color = color0 / 255.0;
+}"#;
+
+/// 把整帧 RGB 打包成 `yuv420p` 字节流的片元着色器，见 [`YUV_VERTEX_SHADER`] 与
+/// `render` 里创建打包贴图的那段注释。每个片元写 4 个字节，字节流按
+/// `[Y: w×h][U: (w/2)×(h/2)][V: (w/2)×(h/2)]` 排，所以贴图行数 = ceil(高 × 3 / 8)。
+///
+/// 两个必须注意的地方：
+/// - **行序**：源贴图是自下而上存的（GL 行 0 是画面最底行），而 `yuv420p` 的字节流自上而下。
+///   这里取样时把行号倒过来（`screenSize.y - 1 - y`），ffmpeg 那一侧就不必再挂 `-vf vflip`，
+///   连同「先在显存里 blit 翻一遍」也可以省掉。
+/// - **精度**：字节位置最大到 `宽 × 高 × 1.5`，`highp float` 能精确表示的整数上限是 2^24
+///   （约 1670 万），也就是 4K 以内的分辨率都安全；再大就该改成按行分段传参。
+const YUV_FRAGMENT_SHADER: &str = r#"#version 100
+#ifdef GL_ES
+precision highp float;
+#endif
+
+varying highp vec2 uv;
+
+uniform sampler2D screenTexture;
+/// 渲染分辨率（打包之前那一帧的宽高）
+uniform vec2 screenSize;
+
+/// 取画面自左向上数第 y 行、第 x 列那个像素。`+0.5` 取像素中心（不取会落到四个像素之间）。
+vec3 getPixel(float x, float y) {
+    return texture2D(
+        screenTexture,
+        (vec2(x, screenSize.y - 1.0 - y) + 0.5) / screenSize
+    ).rgb;
+}
+
+/// 2×2 平均后再取色度：与 swscale 把 RGB 转 4:2:0 的做法一致。
+vec3 getPixel2x2(float cx, float cy) {
+    float x = cx * 2.0;
+    float y = cy * 2.0;
+    return (getPixel(x, y) + getPixel(x + 1.0, y) + getPixel(x, y + 1.0) + getPixel(x + 1.0, y + 1.0)) * 0.25;
+}
+
+// BT.601 + 有限范围（tv range），与 swscale 默认的 RGB→YUV420P 一致。
+float rgb2y(vec3 c) {
+    return 16.0 / 255.0 + (65.738 * c.r + 129.057 * c.g + 25.064 * c.b) / 256.0;
+}
+float rgb2u(vec3 c) {
+    return 128.0 / 255.0 + (-37.945 * c.r - 74.494 * c.g + 112.439 * c.b) / 256.0;
+}
+float rgb2v(vec3 c) {
+    return 128.0 / 255.0 + (112.439 * c.r - 94.154 * c.g - 18.285 * c.b) / 256.0;
+}
+
+/// 字节流里第 b 个字节该填什么。b 落进哪个平面就按哪个平面算坐标。
+float byteAt(float b, float w, float h, float yBytes, float cBytes) {
+    if (b < yBytes) {
+        // Y：一字节一像素，行宽 w
+        float y = floor(b / w);
+        float x = b - y * w;
+        return rgb2y(getPixel(x, y));
+    }
+    b = b - yBytes;
+    if (b < cBytes) {
+        // U：一字节一个 2×2 块，行宽 w/2
+        float cw = w * 0.5;
+        float cy = floor(b / cw);
+        return rgb2u(getPixel2x2(b - cy * cw, cy));
+    }
+    // V：同 U
+    b = b - cBytes;
+    float cw = w * 0.5;
+    float cy = floor(b / cw);
+    return rgb2v(getPixel2x2(b - cy * cw, cy));
+}
+
+void main() {
+    float w = screenSize.x;
+    float h = screenSize.y;
+    // 打包贴图的行数（宽与高都是整数，除法在这里是精确的）
+    float th = ceil(h * 3.0 / 8.0);
+    float idx = (floor(uv.y * th) * w + floor(uv.x * w)) * 4.0;
+
+    float yBytes = w * h;
+    float cBytes = (w * 0.5) * (h * 0.5);
+    if (idx >= yBytes + 2.0 * cBytes) {
+        // 打包贴图比字节流多出来的尾巴：写 0，ffmpeg 不读这些字节
+        gl_FragColor = vec4(0.0);
+        return;
+    }
+    gl_FragColor = vec4(
+        byteAt(idx, w, h, yBytes, cBytes),
+        byteAt(idx + 1.0, w, h, yBytes, cBytes),
+        byteAt(idx + 2.0, w, h, yBytes, cBytes),
+        byteAt(idx + 3.0, w, h, yBytes, cBytes)
+    );
+}"#;
+
 pub fn get_encoder(
     ffmpeg: &String,
     config: &RenderConfig,
@@ -2221,11 +2335,36 @@ pub async fn main(cmd: bool) -> Result<()> {
     // 新版要写在输出段，所以这里只决定它属于哪一段，真正拼字符串在下面两处。
     let thread_queue_size_is_input = thread_queue_size_is_input(&ffmpeg);
 
+    // 帧读回来的时候顺手让 GPU 打包成 `yuv420p`（见 `YUV_FRAGMENT_SHADER`）：
+    // - 显存→内存每像素从 4 B 降到 1.5 B（1080p 一帧少搬 5.2 MB），而且 `glReadPixels`
+    //   每帧只有一次，它搬多少就是多少；
+    // - 读回来的字节流 ffmpeg 直接能编码，CPU 侧的 swscale（RGB→YUV）整段省掉。
+    // 色度按 2×2 下采样，宽高必须是偶数；奇数分辨率退回原来的 RGBA 读回。
+    let gpu_yuv = vw % 2 == 0 && vh % 2 == 0;
+    // 打包贴图的行数：一个像素装 4 字节，整帧 1.5 B/px ⇒ 行数 = 高 × 3 / 8（向上取整）。
+    let yuv_height = (vh * 3 + 7) / 8;
+    // 一帧交给 ffmpeg 的字节数。
+    let byte_size = if gpu_yuv {
+        (vw * vh * 3 / 2) as usize
+    } else {
+        (vw * vh * 4) as usize
+    };
+    // 打包贴图要读回多少字节：最后一行的尾巴可能比 byte_size 长，多出来的丢掉。
+    let packed_byte_size = if gpu_yuv {
+        (vw * yuv_height * 4) as usize
+    } else {
+        byte_size
+    };
+
     let mut args = "-probesize 50M -y -f rawvideo -c:v rawvideo".to_owned();
     if ffmpeg_encoder == encoder_list[0] {
         args += " -hwaccel_output_format cuda";
     }
-    write!(&mut args, " -s {vw}x{vh} -r {fps} -pix_fmt rgba")?;
+    write!(
+        &mut args,
+        " -s {vw}x{vh} -r {fps} -pix_fmt {}",
+        if gpu_yuv { "yuv420p" } else { "rgba" }
+    )?;
     if thread_queue_size_is_input {
         args += " -thread_queue_size 1024";
     }
@@ -2287,9 +2426,9 @@ pub async fn main(cmd: bool) -> Result<()> {
     );
 
     // `-vf vflip`：原料是自下而上读回来的，这里整帧翻回来。
-    // 高性能模式下这一步已经在 `glReadPixels` 里由 GPU 做完（`READBACK_FLIP`），
-    // 再翻一次就会上下颠倒 ⇒ 那种情况下整段 `-vf` 都不写（只写了 vflip，没别的滤镜）。
-    let vflip_filter = if READBACK_FLIP.load(AtomicOrdering::Relaxed) {
+    // GPU 打包时行序已经在着色器里翻过了（`gpu_yuv`），高性能模式的读回翻转在显存里做
+    // （`READBACK_FLIP`），这两种情况都不能再翻 —— 再翻一次就上下颠倒。
+    let vflip_filter = if gpu_yuv || READBACK_FLIP.load(AtomicOrdering::Relaxed) {
         ""
     } else {
         " -vf vflip"
@@ -2297,7 +2436,9 @@ pub async fn main(cmd: bool) -> Result<()> {
 
     // 高性能模式的第三件事：连 RGB→YUV 也交给显卡。`-pix_fmt rgba` 让 NVENC 直接吃渲染出来的
     // RGBA 帧（驱动在显卡上转 YUV），这样 ffmpeg 那一侧完全没有 swscale。只有探测通过才用。
-    let gpu_color_convert = READBACK_FLIP.load(AtomicOrdering::Relaxed)
+    // GPU 已经把帧打包成 yuv420p 时（`gpu_yuv`）不需要它，那条路连显存里那一趟转换都省了。
+    let gpu_color_convert = !gpu_yuv
+        && READBACK_FLIP.load(AtomicOrdering::Relaxed)
         && nvenc_native_rgba(&ffmpeg_encoder)
         && encoder_accepts_rgba_input(&ffmpeg, &ffmpeg_encoder);
     if gpu_color_convert {
@@ -2362,7 +2503,25 @@ pub async fn main(cmd: bool) -> Result<()> {
         .with_context(|| tl!("run-ffmpeg-failed"))?;
     let mut input = proc.stdin.take().unwrap();
 
-    let byte_size = vw as usize * vh as usize * 4;
+    // GPU 打包器：一张「宽 × yuv_height」的离屏贴图 + 一个把画面写成 yuv420p 字节的材质。
+    // 贴图里每个像素装 4 个字节，所以读回来的字节流就是 ffmpeg 要的原始帧。
+    let yuv_pack: Option<(RenderTarget, Material)> = if gpu_yuv {
+        let target = render_target(vw, yuv_height);
+        let material = load_material(
+            YUV_VERTEX_SHADER,
+            YUV_FRAGMENT_SHADER,
+            MaterialParams {
+                uniforms: vec![("screenSize".to_owned(), UniformType::Float2)],
+                textures: vec!["screenTexture".to_owned()],
+                ..Default::default()
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("load yuv pack material failed: {e:?}"))?;
+        material.set_uniform("screenSize", vec2(vw as f32, vh as f32));
+        Some((target, material))
+    } else {
+        None
+    };
 
     const N: usize = 5; // Buffer Size
     let mut pbos: [GLuint; N] = [0; N];
@@ -2373,7 +2532,7 @@ pub async fn main(cmd: bool) -> Result<()> {
             glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
             glBufferData(
                 GL_PIXEL_PACK_BUFFER,
-                (vw as u64 * vh as u64 * 4) as _,
+                packed_byte_size as _,
                 std::ptr::null(),
                 GL_STREAM_READ,
             );
@@ -2452,40 +2611,67 @@ pub async fn main(cmd: bool) -> Result<()> {
             );
         }
 
-        unsafe {
-            // 高性能模式（`READBACK_FLIP`）：先用 `glBlitFramebuffer` 在显存里上下翻一遍再读回，
-            // 省掉 ffmpeg 那一趟 CPU 的 `-vf vflip`。
-            //
-            // 这里**不能**用「`glReadPixels` 传负高度」那套（那样整段视频会全黑）：
-            // 规格里 ReadPixels 的 width/height 必须非负，负高度只会得到 `GL_INVALID_VALUE`，
-            // PBO 里留着全零 ⇒ 黑帧。`glBlitFramebuffer` 的源/目标矩形则**允许** y0 > y1，
-            // 所以镜像交给它做（目标矩形 y 从 vh 到 0 就是上下翻转），全程在 GPU 上。
-            let flip = READBACK_FLIP.load(AtomicOrdering::Relaxed);
-            if flip {
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, internal_id(mst.output()));
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, flip_fbo);
-                glBlitFramebuffer(
-                    0,
-                    0,
-                    vw as _,
-                    vh as _,
-                    0,
-                    vh as _,
-                    vw as _,
-                    0,
-                    GL_COLOR_BUFFER_BIT,
-                    GL_NEAREST,
-                );
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, flip_fbo);
-            } else {
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, internal_id(mst.output()));
+        // 本帧的「显存 → 内存」：GPU 打包时先跑一趟 YUV 着色器，再从打包贴图读回；
+        // 否则退回原来的 RGBA 读回（高性能模式下还会先在显存里翻一遍）。
+        let readback_fbo;
+        let (read_w, read_h);
+        if let Some((yuv_target, yuv_material)) = &yuv_pack {
+            yuv_material.set_texture("screenTexture", mst.output().texture);
+            // zoom 取 1、target/offset 取 0 ⇒ 世界坐标就是裁剪坐标，
+            // 所以下面那个 2×2 的矩形正好盖满整个打包贴图。
+            set_camera(&Camera2D {
+                zoom: vec2(1., 1.),
+                render_target: Some(*yuv_target),
+                ..Default::default()
+            });
+            gl_use_material(*yuv_material);
+            draw_rectangle(-1., -1., 2., 2., WHITE);
+            gl_use_default_material();
+            gl.flush();
+            readback_fbo = internal_id(*yuv_target);
+            read_w = vw;
+            read_h = yuv_height;
+        } else {
+            unsafe {
+                // 高性能模式（`READBACK_FLIP`）：先用 `glBlitFramebuffer` 在显存里上下翻一遍再读回，
+                // 省掉 ffmpeg 那一趟 CPU 的 `-vf vflip`。
+                //
+                // 这里**不能**用「`glReadPixels` 传负高度」那套（那样整段视频会全黑）：
+                // 规格里 ReadPixels 的 width/height 必须非负，负高度只会得到 `GL_INVALID_VALUE`，
+                // PBO 里留着全零 ⇒ 黑帧。`glBlitFramebuffer` 的源/目标矩形则**允许** y0 > y1，
+                // 所以镜像交给它做（目标矩形 y 从 vh 到 0 就是上下翻转），全程在 GPU 上。
+                if READBACK_FLIP.load(AtomicOrdering::Relaxed) {
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, internal_id(mst.output()));
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, flip_fbo);
+                    glBlitFramebuffer(
+                        0,
+                        0,
+                        vw as _,
+                        vh as _,
+                        0,
+                        vh as _,
+                        vw as _,
+                        0,
+                        GL_COLOR_BUFFER_BIT,
+                        GL_NEAREST,
+                    );
+                    readback_fbo = flip_fbo;
+                } else {
+                    readback_fbo = internal_id(mst.output());
+                }
             }
+            read_w = vw;
+            read_h = vh;
+        }
+
+        unsafe {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, readback_fbo);
             glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[frame as usize % N]);
             glReadPixels(
                 0,
                 0,
-                vw as _,
-                vh as _,
+                read_w as _,
+                read_h as _,
                 GL_RGBA,
                 GL_UNSIGNED_BYTE,
                 std::ptr::null_mut(),
@@ -2495,6 +2681,7 @@ pub async fn main(cmd: bool) -> Result<()> {
                 let src: *const u8 =
                     glMapBuffer(GL_PIXEL_PACK_BUFFER, 0x88B8 /* GL_READ_ONLY */);
                 if !src.is_null() {
+                    // 打包贴图比字节流长的那点尾巴（最多 3 字节）不能喂给 ffmpeg
                     input.write_all(&std::slice::from_raw_parts(src, byte_size))?;
                 }
                 glUnmapBuffer(GL_PIXEL_PACK_BUFFER);

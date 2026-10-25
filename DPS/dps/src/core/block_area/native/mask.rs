@@ -8,6 +8,7 @@
 use super::shader::DEFAULT_BLOCK_COLOR;
 use super::Zone;
 use once_cell::sync::Lazy;
+use rayon::prelude::*;
 
 static DISPLACE: Lazy<image::RgbImage> = Lazy::new(|| {
     let source = image::load_from_memory(include_bytes!("../BlockNoise1.png")).unwrap().to_rgb8();
@@ -66,6 +67,9 @@ pub(super) struct Masks {
     /// 方块那半边（贵的那半边）就会每帧被重新栅格化一遍 —— 详见 `render_displaced_covers`。
     last_covers: Vec<Zone>,
     last_time: Option<f32>,
+    /// 上一帧是否栅格化了 `lava_uv`。这个开关翻面的那一帧必须强制重算：否则这张平面会
+    /// 停在旧尺寸 / 旧内容上，而上传侧是按当前的 `masks.width / 2` 读的（尺寸不符会崩）。
+    last_need_lava_uv: bool,
     layers: [Vec<u8>; 6],
     ready_green: Vec<u8>,
     gray_ping: Vec<u8>,
@@ -103,6 +107,79 @@ pub(super) struct Masks {
     color_owners: Vec<usize>,
 }
 
+/// 位移采样那一趟（源像素 → 2×2 输出）的只读输入。
+///
+/// 抽成一个结构体是为了按行分工：逐行并行时每个线程借同一份 `&Displace`，
+/// 输出平面则按行切成互不相交的可变切片传进去。
+struct Displace<'a> {
+    bw: usize,
+    bh: usize,
+    ew: usize,
+    d: f32,
+    edge: f32,
+    warp_x: &'a [(f32, usize, usize)],
+    warp_y: &'a [(f32, usize)],
+    noise: &'a [u8],
+    centered: &'a [f32; 256],
+    enabled_compose: &'a [u8],
+    point_aux: &'a [[u8; 3]],
+    color_grid: (&'a [u8], &'a [u8]),
+    colored: bool,
+}
+
+impl Displace<'_> {
+    /// 铺一个源像素行的两行输出。`rgba2` / `aux2`（以及颜色平面）都是 `2 * ew * 4` 字节，
+    /// `act2` 是 `2 * stride` 个 u64：第一行在 `[0, stride)`、第二行在 `[stride, 2 * stride)`。
+    fn row(&self, y: usize, rgba2: &mut [u8], aux2: &mut [u8], colors2: Option<(&mut [u8], &mut [u8])>, act2: &mut [u64]) {
+        let (bw, bh, ew, d, edge) = (self.bw, self.bh, self.ew, self.d, self.edge);
+        let row_len = ew * 4;
+        let stride = ew.div_ceil(64);
+        let (mut active_out, mut disabled_out) = match colors2 {
+            Some((active, disabled)) => (Some(active), Some(disabled)),
+            None => (None, None),
+        };
+        let (v, row) = self.warp_y[y];
+        for x in 0..bw {
+            let (u, xa, xb) = self.warp_x[x];
+            let a = self.centered[self.noise[row + xa] as usize];
+            let b = self.centered[self.noise[row + xb] as usize];
+            let duv = [(d * a + b * -d) * edge + u, (d * a + b * d) * edge + v];
+            let sx = (duv[0] * bw as f32).floor().clamp(0., (bw - 1) as f32) as usize;
+            let sy = (duv[1] * bh as f32).floor().clamp(0., (bh - 1) as f32) as usize;
+            let i = y * bw + x;
+            let di = sy * bw + sx;
+            let mask = self.enabled_compose[di];
+            let [ready_n, ready_s, disabled] = self.point_aux[i];
+            let rgba = [mask, 0, 0, disabled, mask, 0, 0, disabled];
+            let aux = [ready_n, ready_s, disabled, 0, ready_n, ready_s, disabled, 0];
+            // 片元两张颜色平面都用**未位移**的 `fieldUV` 采样，所以颜色要跟掩码那条通道
+            // 取同一个源像素：active 跟位移后的 `di`（与 `uMasks.r` 同源），disabled 跟
+            // 未位移的 `i`（与 `uMasks.a` 同源）。每个源像素铺成 2×2 的同色块，与掩码一致。
+            let mut active8 = [0_u8; 8];
+            let mut disabled8 = [0_u8; 8];
+            if active_out.is_some() {
+                let active = di * 4;
+                active8[..4].copy_from_slice(&self.color_grid.0[active..active + 4]);
+                active8[4..].copy_from_slice(&self.color_grid.0[active..active + 4]);
+                disabled8[..4].copy_from_slice(&self.color_grid.1[i * 4..i * 4 + 4]);
+                disabled8[4..].copy_from_slice(&self.color_grid.1[i * 4..i * 4 + 4]);
+            }
+            for r in 0..2 {
+                let dst = r * row_len + x * 2 * 4;
+                rgba2[dst..dst + 8].copy_from_slice(&rgba);
+                aux2[dst..dst + 8].copy_from_slice(&aux);
+                if let (Some(active), Some(disabled)) = (active_out.as_deref_mut(), disabled_out.as_deref_mut()) {
+                    active[dst..dst + 8].copy_from_slice(&active8);
+                    disabled[dst..dst + 8].copy_from_slice(&disabled8);
+                }
+                if mask != 0 {
+                    act2[r * stride + x * 2 / 64] |= 3 << ((x * 2) % 64);
+                }
+            }
+        }
+    }
+}
+
 impl Masks {
     /// `width` / `height` 是**屏幕**尺寸：内部先按 `self.cell` 像素降采样（上游是固定的
     /// 1/8，即原生相机的降采样比），再横向 2× 上采样成 effect RT 尺寸（`bw*2 x bh*2`）。
@@ -110,7 +187,8 @@ impl Masks {
         // 单切片入口（测试 / 调试用）：按老语义把合成块筛出来。
         // 生产调用点走 `render_displaced_covers`，自己就把两者分开了，不会每帧多两次分配。
         let (covers, layers): (Vec<Zone>, Vec<Zone>) = zones.iter().cloned().partition(|z| z.judge_cover > 0);
-        self.render_displaced_covers(width, height, aspect, &layers, &covers, time);
+        // 单切片入口保持「整套都算」：测试要读到 `lava_uv`。
+        self.render_displaced_covers(width, height, aspect, &layers, &covers, time, true);
     }
 
     /// `width` / `height` 是**屏幕**尺寸：内部先按 `self.cell` 像素降采样（上游是固定的
@@ -129,6 +207,11 @@ impl Masks {
     /// 1080p60）：只有噪域 80.3 FPS → 再加一整套跟随音符的覆盖度（当时是判定范围）15.5 FPS。
     /// 分开缓存后方块那半边照旧命中缓存，只有位图与合成每帧重算（那一半在 `A` 组与 `C` 组里
     /// 都便宜到测不出来）。
+    ///
+    /// `need_lava_uv` 为假时**不栅格化** `lava_uv`（那张逐噪域的局部坐标平面）。
+    /// 只有噪域皮肤包的 `noiseMode` 是 `Zone` 时才有人读它（`shader.rs` 那边
+    /// `uv_mode == 2.` 才上传），其余所有配置下它都是白写的：一张全屏的减算块每帧要
+    /// 多铺 `bw * bh` 格、每个方块内部再多写 3 个字节。跳过它逐像素结果不变。
     pub fn render_displaced_covers(
         &mut self,
         width: usize,
@@ -137,6 +220,7 @@ impl Masks {
         zones: &[Zone],
         covers: &[Zone],
         time: f32,
+        need_lava_uv: bool,
     ) {
         let cell = if self.cell == 0 { 8 } else { self.cell };
         // 「谱面缩放」：`cell_scale < 1` 时提高掩码分辨率（而不是把整数 `cell` 乘小，
@@ -152,13 +236,15 @@ impl Masks {
         // 便宜的那半边（覆盖度位图 + 合成）只认 `covers`。
         let layers_dirty = self.last_dim != dim || self.last_zones != zones;
         let covers_dirty = self.last_dim != dim || self.last_covers != covers;
+        let lava_dirty = self.last_need_lava_uv != need_lava_uv;
+        self.last_need_lava_uv = need_lava_uv;
         // 颜色是整帧的性质：只要有一块噪域带色，这一帧就整张走彩色材质（材质里的
         // `uColored` 是编译期常量，不能逐噪域切）。
         self.colored = zones.iter().any(Zone::is_colored);
-        if !layers_dirty && !covers_dirty && self.last_time == Some(time) {
+        if !layers_dirty && !covers_dirty && !lava_dirty && self.last_time == Some(time) {
             return;
         }
-        if layers_dirty {
+        if layers_dirty || lava_dirty {
             self.last_dim = dim;
             self.last_zones.clear();
             self.last_zones.extend_from_slice(zones);
@@ -170,8 +256,10 @@ impl Masks {
             self.raw_disabled_green.fill(0);
             self.ready_green.resize(bw * bh, 0);
             self.ready_green.fill(0);
-            self.lava_uv.resize(bw * bh * 4, 0);
-            self.lava_uv.fill(0);
+            if need_lava_uv {
+                self.lava_uv.resize(bw * bh * 4, 0);
+                self.lava_uv.fill(0);
+            }
             // 六台官方相机分别抓：enabled N/S、disabled N/S（含 ready）、ready-only N/S。
             // BlockSprite 的混合是 SrcAlpha, One；每个减算 sprite 的 alpha 是 0.1。
             // 只有会画出来的方块。合成块（`judge_cover > 0`）走下面 `covers` 那半边 —
@@ -180,6 +268,15 @@ impl Masks {
             for z in zones {
                 let layer = if z.active { usize::from(z.invert) } else { 2 + usize::from(z.invert) };
                 let opacity = if z.invert { 0.1 } else { z.opacity };
+                // 层的累加是 `unorm(旧值/255 + alpha)`，等价于「饱和加 `round(alpha * 255)`」：
+                // `round(n + f) == n + round(f)`（`n` 是整数），钳位两边也一样。换成整数饱和加
+                // 之后逐像素结果完全相同，但省掉每格两次浮点除法 / 一次 `round`。
+                let add = unorm(opacity);
+                let add_green = unorm(0.1 * z.opacity);
+                let ready_layer = 4 + usize::from(z.invert);
+                let ready = z.ready;
+                let green = z.invert && !z.active;
+                let ready_green = ready && z.invert;
                 // 「拉伸进每个噪域」那档要的逐纹素局部坐标：顺手在同一次栅格化里写，
                 // 免得为它再跑一遍 `raster_rows`。映射是每个噪域自己的仿射变换
                 // （先减中心、再转回去、再按半宽半高归一化），所以整张图正好铺满这个矩形。
@@ -195,24 +292,29 @@ impl Masks {
                 raster_rows(bw, bh, aspect, z, |y, first, last| {
                     for x in first..last {
                         let i = y * bw + x;
-                        let uv = uv_at(x, y);
-                        self.lava_uv[i * 4] = unorm(uv[0]);
-                        self.lava_uv[i * 4 + 1] = unorm(uv[1]);
-                        self.lava_uv[i * 4 + 3] = 255;
-                        self.layers[layer][i] = unorm(self.layers[layer][i] as f32 / 255. + opacity);
-                        if z.invert && !z.active {
-                            self.raw_disabled_green[i] = unorm(self.raw_disabled_green[i] as f32 / 255. + 0.1 * z.opacity);
+                        if need_lava_uv {
+                            let uv = uv_at(x, y);
+                            self.lava_uv[i * 4] = unorm(uv[0]);
+                            self.lava_uv[i * 4 + 1] = unorm(uv[1]);
+                            self.lava_uv[i * 4 + 3] = 255;
                         }
-                        if z.ready {
-                            let ready = 4 + usize::from(z.invert);
-                            self.layers[ready][i] = unorm(self.layers[ready][i] as f32 / 255. + opacity);
-                            if z.invert {
-                                self.ready_green[i] = unorm(self.ready_green[i] as f32 / 255. + 0.1 * z.opacity);
+                        let cell = &mut self.layers[layer];
+                        cell[i] = cell[i].saturating_add(add);
+                        if green {
+                            let g = &mut self.raw_disabled_green;
+                            g[i] = g[i].saturating_add(add_green);
+                        }
+                        if ready {
+                            let cell = &mut self.layers[ready_layer];
+                            cell[i] = cell[i].saturating_add(add);
+                            if ready_green {
+                                let g = &mut self.ready_green;
+                                g[i] = g[i].saturating_add(add_green);
                             }
                         }
                     }
                 });
-                if z.invert {
+                if z.invert && need_lava_uv {
                     // 减算块画的是矩形**外面**那一圈，所以它的贴图坐标也要铺满整屏：
                     // 只写矩形内部的话，外面那圈全落在同一个纹素上，整块就变成一个纯色。
                     // 外面那些纹素落在 0~1 以外，这里先对 1 取余，于是贴图在外面重复铺开
@@ -314,52 +416,50 @@ impl Masks {
             (v, noise_index(dt + v * 1.02, texture.height()) as usize * texture_stride)
         }));
         let centered = &*CENTERED_NOISE;
-        for y in 0..bh {
-            for x in 0..bw {
-                let (u, xa, xb) = self.warp_x[x];
-                let (v, row) = self.warp_y[y];
-                let a = centered[pixels[row + xa] as usize];
-                let b = centered[pixels[row + xb] as usize];
-                // 「边缘破碎」：这个位移幅度就是边缘那圈锯齿的来源（见 `edge_noise` 字段）。
-                let edge = 0.1 * self.edge_noise;
-                let duv = [(d * a + b * -d) * edge + u, (d * a + b * d) * edge + v];
-                let sx = (duv[0] * bw as f32).floor().clamp(0., (bw - 1) as f32) as usize;
-                let sy = (duv[1] * bh as f32).floor().clamp(0., (bh - 1) as f32) as usize;
-                let i = y * bw + x;
-                let di = sy * bw + sx;
-                let mask = self.enabled_compose[di];
-                let [ready_n, ready_s, disabled] = self.point_aux[i];
-                let rgba = [mask, 0, 0, disabled, mask, 0, 0, disabled];
-                let aux = [ready_n, ready_s, disabled, 0, ready_n, ready_s, disabled, 0];
-                // 片元两张颜色平面都用**未位移**的 `fieldUV` 采样，所以颜色要跟掩码那条通道
-                // 取同一个源像素：active 跟位移后的 `di`（与 `uMasks.r` 同源），disabled 跟
-                // 未位移的 `i`（与 `uMasks.a` 同源）。每个源像素铺成 2×2 的同色块，与掩码一致。
-                let (active_colors, disabled_colors) = if self.colored {
-                    let active = di * 4;
-                    let disabled = i * 4;
-                    let mut active_colors = [0_u8; 8];
-                    active_colors[..4].copy_from_slice(&self.color_grid[0][active..active + 4]);
-                    active_colors[4..].copy_from_slice(&self.color_grid[0][active..active + 4]);
-                    let mut disabled_colors = [0_u8; 8];
-                    disabled_colors[..4].copy_from_slice(&self.color_grid[1][disabled..disabled + 4]);
-                    disabled_colors[4..].copy_from_slice(&self.color_grid[1][disabled..disabled + 4]);
-                    (active_colors, disabled_colors)
-                } else {
-                    ([0_u8; 8], [0_u8; 8])
-                };
-                for yy in [y * 2, y * 2 + 1] {
-                    let dst = (yy * ew + x * 2) * 4;
-                    self.rgba[dst..dst + 8].copy_from_slice(&rgba);
-                    self.aux_rgba[dst..dst + 8].copy_from_slice(&aux);
-                    if self.colored {
-                        self.active_colors[dst..dst + 8].copy_from_slice(&active_colors);
-                        self.disabled_colors[dst..dst + 8].copy_from_slice(&disabled_colors);
-                    }
-                    if mask != 0 {
-                        self.active[yy * stride + x * 2 / 64] |= 3 << ((x * 2) % 64);
-                    }
-                }
-            }
+        let displace = Displace {
+            bw,
+            bh,
+            ew,
+            d,
+            // 「边缘破碎」：这个位移幅度就是边缘那圈锯齿的来源（见 `edge_noise` 字段）。
+            edge: 0.1 * self.edge_noise,
+            warp_x: &self.warp_x,
+            warp_y: &self.warp_y,
+            noise: pixels,
+            centered,
+            enabled_compose: &self.enabled_compose,
+            point_aux: &self.point_aux,
+            color_grid: (&self.color_grid[0], &self.color_grid[1]),
+            colored: self.colored,
+        };
+        // 逐**源像素行**并行：一个源像素铺成两行输出，`rgba` / `aux_rgba` / 两张颜色平面 /
+        // `active` 位图的那两行都只由这一行写，所以各线程碰的是互不相交的区间，
+        // 合并结果与串行逐位相同。
+        let row_len = ew * 4;
+        if self.colored {
+            let mut rows: Vec<_> = self
+                .rgba
+                .chunks_mut(row_len * 2)
+                .zip(self.aux_rgba.chunks_mut(row_len * 2))
+                .zip(self.active_colors.chunks_mut(row_len * 2))
+                .zip(self.disabled_colors.chunks_mut(row_len * 2))
+                .zip(self.active.chunks_mut(stride * 2))
+                .map(|((((rgba2, aux2), active2), disabled2), act2)| (rgba2, aux2, active2, disabled2, act2))
+                .collect();
+            rows.par_iter_mut().enumerate().for_each(|(y, (rgba2, aux2, active2, disabled2, act2))| {
+                displace.row(y, rgba2, aux2, Some((active2, disabled2)), act2);
+            });
+        } else {
+            let mut rows: Vec<_> = self
+                .rgba
+                .chunks_mut(row_len * 2)
+                .zip(self.aux_rgba.chunks_mut(row_len * 2))
+                .zip(self.active.chunks_mut(stride * 2))
+                .map(|((rgba2, aux2), act2)| (rgba2, aux2, act2))
+                .collect();
+            rows.par_iter_mut()
+                .enumerate()
+                .for_each(|(y, (rgba2, aux2, act2))| displace.row(y, rgba2, aux2, None, act2));
         }
         self.render_rings();
         self.last_time = Some(time);

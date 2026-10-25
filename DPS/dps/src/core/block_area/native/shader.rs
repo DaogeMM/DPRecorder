@@ -784,7 +784,18 @@ fn draw_layer_at(
         let scaled_covers: Vec<Zone> = if scale_needed { covers.iter().map(scale_zone).collect() } else { Vec::new() };
         let mask_zones: &[Zone] = if scaled_zones.is_empty() { zones } else { scaled_zones.as_slice() };
         let mask_covers: &[Zone] = if scaled_covers.is_empty() { covers } else { scaled_covers.as_slice() };
-        frame.masks.render_displaced_covers(width, height, aspect, mask_zones, mask_covers, time);
+        // 「拉伸进每个噪域」是唯一会读 `lava_uv` 的配置（`uv_mode == 2.`，见下面的上传段）：
+        // 没有噪域皮肤包、或包的 `noiseMode` 不是 `Zone`、或这一趟根本不贴图时，那张平面
+        // 没人读，掩码侧就不必逐格铺坐标 —— 一张全屏的减算块每帧要多铺 `bw * bh` 格。
+        let need_lava_uv = lava != 0
+            && res
+                .res_pack
+                .noise
+                .as_ref()
+                .is_some_and(|noise| matches!(noise.mode, crate::core::resource::NoiseMode::Zone));
+        frame
+            .masks
+            .render_displaced_covers(width, height, aspect, mask_zones, mask_covers, time, need_lava_uv);
         if !disabled {
             frame.touch.update_fingers(touches, time);
         }
