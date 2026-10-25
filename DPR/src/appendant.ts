@@ -48,6 +48,7 @@ export const APPENDANT_FILES = [
   'appendant.spas.zip',
   'appendant.qzk.zip',
   'appendant.rr.zip',
+  'appendant.cp.zip',
 ] as const;
 
 /** 读取附带资源包状态（目录 + 每个包在不在、缺不缺文件）。 */
@@ -155,6 +156,17 @@ export function isQzkagoChart(path: string | null | undefined): boolean {
   if (!path) return false;
   const name = path.replace(/\\/g, '/').split('/').pop() ?? '';
   return name.startsWith('QZKagoRequiem.tpazolite.100');
+}
+
+/**
+ * 输入谱面是不是「Clock Paradox」特殊演出用的那张。
+ *
+ * 三个难度的文件名都是 `ClockParadox.WyvernP.100.<难度>.pez`，按前缀认。
+ */
+export function isClockParadoxChart(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const name = path.replace(/\\/g, '/').split('/').pop() ?? '';
+  return name.startsWith('ClockParadox.WyvernP.100');
 }
 
 /**

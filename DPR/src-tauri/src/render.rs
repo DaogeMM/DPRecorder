@@ -266,6 +266,25 @@ pub struct RenderConfig {
     pub qzkago_sp_white_in: f64,
     /// 「QZKAGO」演出：白屏渐出时长（秒）。
     pub qzkago_sp_white_out: f64,
+    /// 「Clock Paradox」演出：由输入谱面的文件名强制开启（见 `is_clock_paradox_chart`），不是配置项。
+    /// `to_config()` 把它透传成 `dps::config::Config::clock_paradox_sp`。
+    pub clock_paradox_sp: bool,
+    /// 「Clock Paradox」演出：表盘大小倍率（1 = 与参考录像一致）。
+    pub clock_paradox_sp_scale: f32,
+    /// 「Clock Paradox」演出：表盘圆心水平偏移（像素，按 1920×1080 计）。
+    pub clock_paradox_sp_offset_x: f32,
+    /// 「Clock Paradox」演出：表盘圆心垂直偏移（像素，正值向上）。
+    pub clock_paradox_sp_offset_y: f32,
+    /// 「Clock Paradox」演出：第 1~4 次出现的亮起时刻（秒）。
+    pub clock_paradox_sp_flash1_on: f64,
+    pub clock_paradox_sp_flash2_on: f64,
+    pub clock_paradox_sp_flash3_on: f64,
+    pub clock_paradox_sp_flash4_on: f64,
+    /// 「Clock Paradox」演出：第 1~4 次出现的开始淡出时刻（秒）。
+    pub clock_paradox_sp_flash1_fade: f64,
+    pub clock_paradox_sp_flash2_fade: f64,
+    pub clock_paradox_sp_flash3_fade: f64,
+    pub clock_paradox_sp_flash4_fade: f64,
     /// 「もぺもぺSP」演出：由输入谱面的文件名强制开启（见 `is_mopemope_sp_chart`），不是配置项。
     /// `to_config()` 把它透传成 `dps::config::Config::mopemope_sp_mode`。
     pub mopemope_sp: bool,
@@ -594,6 +613,18 @@ impl RenderConfig {
             qzkago_sp_start: self.qzkago_sp_start,
             qzkago_sp_white_in: self.qzkago_sp_white_in,
             qzkago_sp_white_out: self.qzkago_sp_white_out,
+            clock_paradox_sp: self.clock_paradox_sp,
+            clock_paradox_sp_scale: self.clock_paradox_sp_scale,
+            clock_paradox_sp_offset_x: self.clock_paradox_sp_offset_x,
+            clock_paradox_sp_offset_y: self.clock_paradox_sp_offset_y,
+            clock_paradox_sp_flash1_on: self.clock_paradox_sp_flash1_on,
+            clock_paradox_sp_flash2_on: self.clock_paradox_sp_flash2_on,
+            clock_paradox_sp_flash3_on: self.clock_paradox_sp_flash3_on,
+            clock_paradox_sp_flash4_on: self.clock_paradox_sp_flash4_on,
+            clock_paradox_sp_flash1_fade: self.clock_paradox_sp_flash1_fade,
+            clock_paradox_sp_flash2_fade: self.clock_paradox_sp_flash2_fade,
+            clock_paradox_sp_flash3_fade: self.clock_paradox_sp_flash3_fade,
+            clock_paradox_sp_flash4_fade: self.clock_paradox_sp_flash4_fade,
             mopemope_sp_mode: self.mopemope_sp,
             rr_sp: self.rr_sp,
             mopemope_sp_color_a: self.mopemope_sp_color_a,
@@ -827,6 +858,18 @@ impl Default for RenderConfig {
             qzkago_sp_start: 77.07,
             qzkago_sp_white_in: 65. / 60.,
             qzkago_sp_white_out: 30. / 60.,
+            clock_paradox_sp: false,
+            clock_paradox_sp_scale: 1.,
+            clock_paradox_sp_offset_x: 0.,
+            clock_paradox_sp_offset_y: 0.,
+            clock_paradox_sp_flash1_on: 108.020,
+            clock_paradox_sp_flash2_on: 109.720,
+            clock_paradox_sp_flash3_on: 111.42,
+            clock_paradox_sp_flash4_on: 142.287,
+            clock_paradox_sp_flash1_fade: 108.453,
+            clock_paradox_sp_flash2_fade: 110.170,
+            clock_paradox_sp_flash3_fade: 111.870,
+            clock_paradox_sp_flash4_fade: 145.077,
             mopemope_sp: false,
             rr_sp: false,
             mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
@@ -1367,6 +1410,18 @@ fn is_rr_chart(path: &Path) -> bool {
     }
 }
 
+/// 「Clock Paradox」特殊演出的谱面名。三个难度的文件名都是 `<这段>.<EZ/HD/IN>.pez`，判据同样是前缀。
+const CLOCK_PARADOX_CHART_STEM: &str = "ClockParadox.WyvernP.100";
+
+/// 判断输入路径是不是「Clock Paradox」特殊演出的谱面。
+fn is_clock_paradox_chart(path: &Path) -> bool {
+    let name = path.file_name().and_then(|it| it.to_str());
+    match name {
+        Some(name) => name.starts_with(CLOCK_PARADOX_CHART_STEM),
+        None => false,
+    }
+}
+
 /// 「Rr」谱面要用的资源包路径。
 ///
 /// 这个演出的按键贴图与 AP 打击特效在 `appendant.rr` 包里，跟着配置里选的皮肤走会缺图，所以该
@@ -1467,6 +1522,7 @@ pub async fn generate_resource(
         config.jingluan_sp = is_jingluan_sp_chart(Path::new(&path));
         config.mopemope_sp = is_mopemope_sp_chart(Path::new(&path));
         config.qzkago_sp = is_qzkago_chart(Path::new(&path));
+        config.clock_paradox_sp = is_clock_paradox_chart(Path::new(&path));
         if is_baoying_sp_chart(Path::new(&path)) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
@@ -1530,6 +1586,7 @@ pub async fn generate_resource(
         config.jingluan_sp = is_jingluan_sp_chart(&path);
         config.mopemope_sp = is_mopemope_sp_chart(&path);
         config.qzkago_sp = is_qzkago_chart(&path);
+        config.clock_paradox_sp = is_clock_paradox_chart(&path);
         if is_baoying_sp_chart(&path) {
             config.baoying_sp = true;
             // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载

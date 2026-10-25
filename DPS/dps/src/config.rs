@@ -290,6 +290,26 @@ pub struct Config {
     pub qzkago_sp_white_in: f64,
     /// 「QZKAGO」演出：白屏渐出时长（秒）；整段总长跟着它走。
     pub qzkago_sp_white_out: f64,
+    /// 「Clock Paradox」演出：画面正中那只白线大表盘在四个时刻硬切出现、停留、再淡出。
+    /// 由输入谱面文件名强制开启，不暴露成配置项。
+    pub clock_paradox_sp: bool,
+    /// 「Clock Paradox」演出：表盘大小倍率（1 = 与参考录像一致）。
+    pub clock_paradox_sp_scale: f32,
+    /// 「Clock Paradox」演出：表盘圆心水平偏移（像素，按 1920×1080 计）。
+    pub clock_paradox_sp_offset_x: f32,
+    /// 「Clock Paradox」演出：表盘圆心垂直偏移（像素，正值向上）。
+    pub clock_paradox_sp_offset_y: f32,
+    /// 「Clock Paradox」演出：第 1~4 次出现的亮起时刻（秒，`Resource::time`）。
+    /// 每次都是硬切进入，再从对应的「开始淡出」时刻线性退掉。
+    pub clock_paradox_sp_flash1_on: f64,
+    pub clock_paradox_sp_flash2_on: f64,
+    pub clock_paradox_sp_flash3_on: f64,
+    pub clock_paradox_sp_flash4_on: f64,
+    /// 「Clock Paradox」演出：第 1~4 次出现的开始淡出时刻（秒）。
+    pub clock_paradox_sp_flash1_fade: f64,
+    pub clock_paradox_sp_flash2_fade: f64,
+    pub clock_paradox_sp_flash3_fade: f64,
+    pub clock_paradox_sp_flash4_fade: f64,
     /// 「もぺもぺSP」演出：整屏乘一层红（`背景 × 红`），只压背景（判定线、按键、粒子与界面都在它上面）。
     /// 由输入谱面文件名强制开启，不暴露成配置项。
     pub mopemope_sp_mode: bool,
@@ -705,6 +725,18 @@ impl Default for Config {
             qzkago_sp_start: 77.07,
             qzkago_sp_white_in: 65. / 60.,
             qzkago_sp_white_out: 30. / 60.,
+            clock_paradox_sp: false,
+            clock_paradox_sp_scale: 1.,
+            clock_paradox_sp_offset_x: 0.,
+            clock_paradox_sp_offset_y: 0.,
+            clock_paradox_sp_flash1_on: 108.020,
+            clock_paradox_sp_flash2_on: 109.720,
+            clock_paradox_sp_flash3_on: 111.42,
+            clock_paradox_sp_flash4_on: 142.287,
+            clock_paradox_sp_flash1_fade: 108.453,
+            clock_paradox_sp_flash2_fade: 110.170,
+            clock_paradox_sp_flash3_fade: 111.870,
+            clock_paradox_sp_flash4_fade: 145.077,
             mopemope_sp_mode: false,
             mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
             mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],

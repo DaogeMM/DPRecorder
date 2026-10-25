@@ -349,6 +349,17 @@ const CHART = {
   qzkagoSpStart: { widget: 'number' },
   qzkagoSpWhiteIn: { widget: 'number' },
   qzkagoSpWhiteOut: { widget: 'number' },
+  clockParadoxSpScale: { widget: 'number' },
+  clockParadoxSpOffsetX: { widget: 'number' },
+  clockParadoxSpOffsetY: { widget: 'number' },
+  clockParadoxSpFlash1On: { widget: 'number' },
+  clockParadoxSpFlash1Fade: { widget: 'number' },
+  clockParadoxSpFlash2On: { widget: 'number' },
+  clockParadoxSpFlash2Fade: { widget: 'number' },
+  clockParadoxSpFlash3On: { widget: 'number' },
+  clockParadoxSpFlash3Fade: { widget: 'number' },
+  clockParadoxSpFlash4On: { widget: 'number' },
+  clockParadoxSpFlash4Fade: { widget: 'number' },
 } satisfies Partial<FieldTable>;
 
 /* ========================= 判定 / 染色 =========================== */

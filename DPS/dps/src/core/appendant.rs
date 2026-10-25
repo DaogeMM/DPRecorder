@@ -40,6 +40,9 @@ pub const QZK: &str = "appendant.qzk";
 /// 皮肤包：「Rr」谱面用的按键贴图与 AP 打击特效。
 pub const RR: &str = "appendant.rr";
 
+/// 演出包：「Clock Paradox」谱面里那只正中大表盘的贴图。
+pub const CP: &str = "appendant.cp";
+
 /// 皮肤包里的必需文件：与 `core::resource::ResourcePack::load` 读的那几张一一对应，缺一个都加载失败。
 pub const SKIN_FILES: &[&str] = &[
     "info.yml",
@@ -65,6 +68,9 @@ pub const SPAS_FILES: &[&str] = &["spasmodic_chan.png", "mopemope.png", "guang.p
 
 /// 「QZKAGO」演出包的必需文件，下标与 `qzkago_sp` 里那张图的上场顺序一致。
 pub const QZK_FILES: &[&str] = &["qzk_0.png", "qzk_1.png", "qzk_2.png", "qzk_3.png", "qzk_4.png", "qzk_5.png", "qzk_6.png"];
+
+/// 「Clock Paradox」演出包的必需文件：那只白线表盘。
+pub const CP_FILES: &[&str] = &["clock.png"];
 
 /// 噪域皮肤「已激活」那一档的贴图名：`noise_on.gif`（动画）优先，没有就用 `noise_on.png`。
 pub const NOISE_ON_FILES: &[&str] = &["noise_on.png", "noise_on.gif"];
@@ -203,6 +209,11 @@ pub fn spas_mopemope_image() -> Option<Vec<u8>> {
 /// 「QZKAGO」演出包里第 `index` 张图（0..7，顺序见 `QZK_FILES`）。
 pub fn qzk_image(index: usize) -> Option<Vec<u8>> {
     entry(QZK, QZK_FILES.get(index)?)
+}
+
+/// 「Clock Paradox」演出包里的表盘贴图（白线，形状在 alpha 里）。
+pub fn cp_clock_image() -> Option<Vec<u8>> {
+    entry(CP, "clock.png")
 }
 
 #[cfg(test)]

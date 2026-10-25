@@ -21,6 +21,7 @@ import {
   isBaoyingSpChart,
   isJingluanSpChart,
   isOptionalAppendant,
+  isClockParadoxChart,
   isQzkagoChart,
   isRrChart,
   lavaPack,
@@ -296,6 +297,8 @@ async function checkAppendants(config: RenderConfig) {
   if (isQzkagoChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.qzk.zip'));
   // 「Rr」的按键贴图与 AP 打击特效只有 appendant.rr.zip 里有，缺包会退回默认皮肤
   if (isRrChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.rr.zip'));
+  // 「Clock Paradox」的表盘贴图只有 appendant.cp.zip 里有，缺了那四次出现就什么都不画
+  if (isClockParadoxChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.cp.zip'));
   if (!missing.length) return true;
   appendantDir.value = status.dir;
   appendantMissing.value = missing;

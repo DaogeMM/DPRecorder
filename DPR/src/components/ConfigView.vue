@@ -91,6 +91,8 @@ const mopemopeSpDebug = ref(true);
 const rrDebug = ref(true);
 /** 「谱面 · 调试」里那一行「QZKAGO」三级菜单的开关（同上）。 */
 const qzkagoSpDebug = ref(true);
+/** 「谱面 · 调试」里那一行「Clock Paradox」三级菜单的开关（同上）。 */
+const clockParadoxSpDebug = ref(true);
 /** 「报应SP」那两个开关（数字倒着写 / 打击特效旋转）收进的齿轮弹窗。 */
 const baoyingSpSwitchDialog = ref(false);
 /** 齿轮弹窗的宽度：与上面几个弹窗同一套算法（内容区的 60%，打开时量一次）。 */
@@ -237,6 +239,10 @@ const {
   mopemopeSpColorA, mopemopeSpColorB,
   // 「QZKAGO」特殊演出的起点与白屏渐变时长（谱面 → 调试）
   qzkagoSpStart, qzkagoSpWhiteIn, qzkagoSpWhiteOut,
+  // 「Clock Paradox」特殊演出的表盘大小与位置（谱面 → 调试）
+  clockParadoxSpScale, clockParadoxSpOffsetX, clockParadoxSpOffsetY,
+  // 四次出现的亮起与开始淡出时刻（单位秒，谱面时间）
+  clockParadoxSpFlash1On, clockParadoxSpFlash1Fade, clockParadoxSpFlash2On, clockParadoxSpFlash2Fade, clockParadoxSpFlash3On, clockParadoxSpFlash3Fade, clockParadoxSpFlash4On, clockParadoxSpFlash4Fade,
   // 界面独占的槽位
   hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
 } = toRefs(ui);
@@ -1075,6 +1081,21 @@ defineExpose({
            （参数收进齿轮弹窗），以后再加别的调试就再摆一行。 -->
       <PhiSection v-if="debugEnabled" id="sec-chart-debug" :title="t('title.xuejiang-sp-debug')">
         <div class="cfg-grid">
+          <PhiSubMenu id="sec3-clock-paradox-sp" :label="t('clock-paradox-sp-group')" :tip="t('clock-paradox-sp-group-tip')" v-model="clockParadoxSpDebug" no-toggle>
+            <div class="cfg-grid">
+              <CfgField :label="t('clock-paradox-sp-scale')" :tip="t('clock-paradox-sp-scale-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpScale" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-offset-x')" :tip="t('clock-paradox-sp-offset-x-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpOffsetX" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-offset-y')" :tip="t('clock-paradox-sp-offset-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpOffsetY" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash1-on')" :tip="t('clock-paradox-sp-flash1-on-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash1On" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash1-fade')" :tip="t('clock-paradox-sp-flash1-fade-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash1Fade" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash2-on')" :tip="t('clock-paradox-sp-flash2-on-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash2On" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash2-fade')" :tip="t('clock-paradox-sp-flash2-fade-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash2Fade" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash3-on')" :tip="t('clock-paradox-sp-flash3-on-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash3On" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash3-fade')" :tip="t('clock-paradox-sp-flash3-fade-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash3Fade" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash4-on')" :tip="t('clock-paradox-sp-flash4-on-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash4On" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('clock-paradox-sp-flash4-fade')" :tip="t('clock-paradox-sp-flash4-fade-tip')"><v-text-field density="compact" hide-details="auto" v-model="clockParadoxSpFlash4Fade" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
           <PhiSubMenu id="sec3-qzkago-sp" :label="t('qzkago-sp-group')" :tip="t('qzkago-sp-group-tip')" v-model="qzkagoSpDebug" no-toggle>
             <div class="cfg-grid">
               <CfgField :label="t('qzkago-sp-start')" :tip="t('qzkago-sp-start-tip')"><v-text-field density="compact" hide-details="auto" v-model="qzkagoSpStart" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>

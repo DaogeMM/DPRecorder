@@ -323,6 +323,28 @@ export interface RenderConfig {
   qzkagoSpWhiteIn: number;
   /** 「QZKAGO」演出：白屏渐出时长（秒） */
   qzkagoSpWhiteOut: number;
+  /** 「Clock Paradox」演出：表盘大小倍率（1 = 与参考录像一致） */
+  clockParadoxSpScale: number;
+  /** 「Clock Paradox」演出：表盘圆心水平偏移（像素，按 1920×1080 计） */
+  clockParadoxSpOffsetX: number;
+  /** 「Clock Paradox」演出：表盘圆心垂直偏移（像素，正值向上） */
+  clockParadoxSpOffsetY: number;
+  /** 「Clock Paradox」演出：第 1 次出现的亮起时刻（秒） */
+  clockParadoxSpFlash1On: number;
+  /** 「Clock Paradox」演出：第 1 次出现的开始淡出时刻（秒） */
+  clockParadoxSpFlash1Fade: number;
+  /** 「Clock Paradox」演出：第 2 次出现的亮起时刻（秒） */
+  clockParadoxSpFlash2On: number;
+  /** 「Clock Paradox」演出：第 2 次出现的开始淡出时刻（秒） */
+  clockParadoxSpFlash2Fade: number;
+  /** 「Clock Paradox」演出：第 3 次出现的亮起时刻（秒） */
+  clockParadoxSpFlash3On: number;
+  /** 「Clock Paradox」演出：第 3 次出现的开始淡出时刻（秒） */
+  clockParadoxSpFlash3Fade: number;
+  /** 「Clock Paradox」演出：第 4 次出现的亮起时刻（秒） */
+  clockParadoxSpFlash4On: number;
+  /** 「Clock Paradox」演出：第 4 次出现的开始淡出时刻（秒） */
+  clockParadoxSpFlash4Fade: number;
   renderBg: boolean;
   renderBgDim: boolean;
   /** 背景暗淡：黑色遮罩的不透明度（0~1），覆盖谱面信息里的同名值，默认 0.1 */
@@ -622,6 +644,17 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   qzkagoSpStart: 77.07,
   qzkagoSpWhiteIn: 65 / 60,
   qzkagoSpWhiteOut: 30 / 60,
+  clockParadoxSpScale: 1,
+  clockParadoxSpOffsetX: 0,
+  clockParadoxSpOffsetY: 0,
+  clockParadoxSpFlash1On: 108.020,
+  clockParadoxSpFlash1Fade: 108.453,
+  clockParadoxSpFlash2On: 109.720,
+  clockParadoxSpFlash2Fade: 110.170,
+  clockParadoxSpFlash3On: 111.42,
+  clockParadoxSpFlash3Fade: 111.870,
+  clockParadoxSpFlash4On: 142.287,
+  clockParadoxSpFlash4Fade: 145.077,
   renderBg: true,
   renderBgDim: true,
   backgroundDim: 0.1,

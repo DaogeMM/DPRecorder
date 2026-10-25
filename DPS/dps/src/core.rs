@@ -24,6 +24,8 @@ pub mod appendant;
 mod chart;
 pub use chart::{Chart, ChartExtra, ChartSettings, HitSoundMap};
 
+pub mod clock_paradox_sp;
+
 mod effect;
 pub use effect::{Effect, Uniform};
 

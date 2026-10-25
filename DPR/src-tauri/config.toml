@@ -193,3 +193,16 @@ speed = 1.0
 alphaTint = false
 roman = false
 chinese = false
+
+# SP 演出（可选）：Clock Paradox 的表盘。演出由谱面文件名强制开启，这里只是画法参数。
+clockParadoxSpScale = 1.0            # 表盘大小倍率（1 = 参考录像的尺寸）
+clockParadoxSpOffsetX = 0.0          # 表盘圆心水平偏移（像素，正值向右）
+clockParadoxSpOffsetY = 0.0          # 表盘圆心垂直偏移（像素，正值向上）
+clockParadoxSpFlash1On = 108.020           # 第 1 次出现的亮起时刻（秒，谱面时间）
+clockParadoxSpFlash1Fade = 108.453         # 第 1 次出现的开始淡出时刻（秒）
+clockParadoxSpFlash2On = 109.720           # 第 2 次出现的亮起时刻（秒，谱面时间）
+clockParadoxSpFlash2Fade = 110.170         # 第 2 次出现的开始淡出时刻（秒）
+clockParadoxSpFlash3On = 111.42            # 第 3 次出现的亮起时刻（秒，谱面时间）
+clockParadoxSpFlash3Fade = 111.870         # 第 3 次出现的开始淡出时刻（秒）
+clockParadoxSpFlash4On = 142.287           # 第 4 次出现的亮起时刻（秒，谱面时间）
+clockParadoxSpFlash4Fade = 145.077        # 第 4 次出现的开始淡出时刻（秒）

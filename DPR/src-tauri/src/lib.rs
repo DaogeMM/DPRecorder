@@ -1176,7 +1176,7 @@ async fn move_task(queue: State<'_, TaskQueue>, id: u32, index: usize) -> Result
 ///
 /// `appendant/` 里的皮肤不进资源包下拉框 —— 那是一组程序自己按场合挑的包（official 当默认、
 /// retri 给「报应SP」、spas 给「痉挛SP」、qzk 给「QZKAGO」、rr 给「Rr」），不是给用户选的。
-const APPENDANT_PACKS: [(&str, &str, &[&str]); 8] = [
+const APPENDANT_PACKS: [(&str, &str, &[&str]); 9] = [
     (appendant::OFFICIAL, "appendant.official.zip", appendant::SKIN_FILES),
     (appendant::OLD, "appendant.old.zip", appendant::SKIN_FILES),
     (appendant::RETRI, "appendant.retri.zip", appendant::SKIN_FILES),
@@ -1185,6 +1185,7 @@ const APPENDANT_PACKS: [(&str, &str, &[&str]); 8] = [
     (appendant::SPAS, "appendant.spas.zip", appendant::SPAS_FILES),
     (appendant::QZK, "appendant.qzk.zip", appendant::QZK_FILES),
     (appendant::RR, "appendant.rr.zip", appendant::SKIN_FILES),
+    (appendant::CP, "appendant.cp.zip", appendant::CP_FILES),
 ];
 
 #[derive(Serialize)]
