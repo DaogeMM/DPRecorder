@@ -87,6 +87,12 @@ const baoyingSpDebug = ref(true);
 const jingluanSpDebug = ref(true);
 /** 「谱面 · 调试」里那一行「もぺもぺSP」三级菜单的开关（同上）。 */
 const mopemopeSpDebug = ref(true);
+/**
+ * 「谱面 · 更多」里「落点模拟」那一行的入口开关。
+ * 功能本身（配置项 `touchSim` / `touchSimWidth`、引擎侧的合成触点判定与落点绘制）都保留着，
+ * 只是界面上暂时不摆出来：把它改回 `true` 就回到「更多」里。
+ */
+const SHOW_TOUCH_SIM = false;
 /** 「谱面 · 调试」里那一行「Rr」三级菜单的开关（同上）。 */
 const rrDebug = ref(true);
 /** 「谱面 · 调试」里那一行「QZKAGO」三级菜单的开关（同上）。 */
@@ -212,7 +218,7 @@ const {
   blockAreaEdgeNoise, directBlockHollow, blockAreaDistort, renderJudgeRange, judgeRangeWidth,
   judgeRangeWidthFlick, judgeRangeNoiseOcclusion,
   judgeRangeLength, judgeRangeTime, judgeRangeAlpha, judgeRangeColor, preserveFramebuffer,
-  renderExtra, bgBlurriness, playStartTime, playEndTime, fade, alphaTint,
+  renderExtra, bgBlurriness, playStartTime, playEndTime, fade, alphaTint, touchSim, touchSimWidth,
   // 「雪降SP」特殊演出的调试参数（谱面 → 调试）
   xuejiangSpFakeNotes, xuejiangSpFakeBarSeconds, xuejiangSpBurstCombo, xuejiangSpRollScale,
   xuejiangSpDiffFake, xuejiangSpDiffReal, xuejiangSpVolumePercentile, xuejiangSpVolumeGamma,
@@ -967,6 +973,14 @@ defineExpose({
           <!-- 拖影效果 = 「保留帧缓冲」：每帧先把上一帧整屏铺回来再叠本帧，残影一直留着。
                画在单采样的累积缓冲上，所以开着时抗锯齿会被强制关掉，见 `config/useRenderConfig.ts`。 -->
           <CfgSwitch :label="t('preserve-framebuffer')" v-model="preserveFramebuffer" :tip="t('preserve-framebuffer-tips')" />
+          <!-- 落点模拟：AUTOPLAY 下不再无条件 Perfect —— 每颗按键由一根合成的手指自动点击，
+               判定走真实游玩那条链路，判定线把按键带离固定落点太远就断连。
+               「落点宽度」（方框半宽，0 = 跟随判定范围）收在这一行的齿轮弹窗里。 -->
+          <PhiSubMenu v-if="SHOW_TOUCH_SIM" id="sec3-touch-sim" :label="t('touch-sim')" :tip="t('touch-sim-tip')" v-model="touchSim">
+            <div class="cfg-grid">
+              <CfgField :label="t('touch-sim-width')" :tip="t('touch-sim-width-tip')"><v-text-field density="compact" hide-details="auto" v-model="touchSimWidth" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
           <!-- 打击特效随机反转：按概率把打击特效贴图做中心对称翻转（同时左右 + 上下 = 转 180°），
                概率收在这一行的齿轮弹窗里；「打击特效」关掉时没有东西可翻，整行跟着禁用。 -->
           <PhiSubMenu id="sec3-hit-fx-flip" :label="t('hit-fx-random-flip')" :tip="t('hit-fx-random-flip-tip')" :disabled="!particle" v-model="hitFxRandomFlip">

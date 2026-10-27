@@ -302,6 +302,16 @@ impl Chart {
             drop(guard);
 
             res.note_buffer.borrow_mut().draw_all();
+
+            // 「落点模拟」：每根固定落点画成一个半透明的蓝色球，压在按键之上 —— 它模拟的是手指按在
+            // 屏幕上的触点，半径就是「落点宽度」，所以球边到落点中心的距离就是断连判据。
+            for &(x, y, half, _) in &res.sim_touch_points {
+                // 一圈柔光晕 + 半透明球体 + 偏左上的高光，模拟按在屏幕上的触点（`draw_circle` 没有渐变）。
+                draw_circle(x, y, half * 1.16, Color::new(0.3, 0.7, 1., 0.10));
+                draw_circle(x, y, half, Color::new(0.3, 0.7, 1., 0.30));
+                draw_circle(x, y, half * 0.74, Color::new(0.42, 0.78, 1., 0.14));
+                draw_circle(x - half * 0.30, y - half * 0.30, half * 0.24, Color::new(0.88, 0.96, 1., 0.30));
+            }
             if res.config.aggressive_note {
                 res.note_pos_map.clear();
             }

@@ -309,8 +309,40 @@ pub struct Judge {
 
     key_down_count: u32,
 
+    /// 「落点模拟」（`config.touch_sim`）：AUTOPLAY 的替代驱动 —— 每帧为到点的按键合成一根
+    /// 「自动点击的手指」，判定走真实游玩那条链路。
+    sim_fingers: Vec<SimFinger>,
+    /// 已经替它按过的按键 `(判定线 id, 按键 id)`，防止同一颗按键被按第二下。
+    sim_pressed: FxHashSet<(u32, u32)>,
+    /// 合成手指的 id 序号（加在 `SIM_FINGER_ID_BASE` 上，跟真实触点 id 分开）。
+    sim_finger_seq: u64,
+
     pub(crate) inner: JudgeInner,
     pub judgements: RefCell<Vec<(f64, u32, u32, Result<Judgement, bool>)>>,
+}
+
+/// 合成触点的 id 基址：跟真实触点的 id 拉开，免得撞号。
+const SIM_FINGER_ID_BASE: u64 = 0x5349_4d00_0000_0000;
+
+/// 一颗「落点模拟」合成出来的手指。
+///
+/// 按下那一刻把落点钉在按键中心，之后就定在屏幕上不动 —— 判定完全走真实游玩那条链路，
+/// 所以判定线把按键带走时它就跟不上，而别的按键被带到这根手指底下时也能被它接住。
+struct SimFinger {
+    /// 合成触点的 id（走 `Touch::id` 那条路）。
+    id: u64,
+    /// 钉住的落点，判定空间（`Touch::position` 的约定：y 轴与谱面相反）。
+    pos: Vec2,
+    /// 渲染用的谱面坐标 `(x, y)` 与判定半宽 —— 也就是判定线走多远会断连的那个范围。
+    chart: (f32, f32, f32),
+    /// 它代按的按键，用来判断是否已经判成 Miss（落点转红）。
+    anchor: (u32, u32),
+    /// 什么时候抬手指（谱面时刻）。
+    release: f64,
+    /// 这一帧的触点相位。
+    phase: TouchPhase,
+    /// 已经发过 `Ended`，下一帧摘掉。
+    retired: bool,
 }
 
 static SUBSCRIBER_ID: Lazy<usize> = Lazy::new(register_input_subscriber);
@@ -337,6 +369,10 @@ impl Judge {
 
             key_down_count: 0,
 
+            sim_fingers: Vec::new(),
+            sim_pressed: FxHashSet::default(),
+            sim_finger_seq: 0,
+
             inner: JudgeInner::new(chart.lines.iter().map(|it| it.notes.iter().filter(|it| !it.fake).count() as u32).sum()),
             judgements: RefCell::new(Vec::new()),
         }
@@ -346,6 +382,8 @@ impl Judge {
         self.notes.iter_mut().for_each(|it| it.1 = 0);
         self.trackers.clear();
         self.blocked_finger_ids.clear();
+        self.sim_fingers.clear();
+        self.sim_pressed.clear();
         self.inner.reset();
         self.judgements.borrow_mut().clear();
     }
@@ -383,6 +421,8 @@ impl Judge {
         }
         self.trackers.clear();
         self.blocked_finger_ids.clear();
+        self.sim_fingers.clear();
+        self.sim_pressed.clear();
         self.key_down_count = 0;
         // 触摸事件的时间戳按「上一帧时刻 → 这一帧时刻」插值，回退后不跟上的话会插到未来去。
         self.last_time = time;
@@ -483,10 +523,18 @@ impl Judge {
 
     pub fn update(&mut self, res: &mut Resource, chart: &mut Chart, bad_notes: &mut Vec<BadNote>, angle: f32) {
         res.played_hitsounds_count.clear();
+        // 「落点模拟」：落点每帧重填（`update` 末尾填），别让上一帧的留着。
+        res.sim_touch_points.clear();
         self.update_water_death(res, chart);
         if res.config.autoplay() {
-            self.auto_play_update(res, chart);
-            return;
+            if res.config.touch_sim {
+                // 「落点模拟」不走 AUTOPLAY 那套无条件 Perfect：合成触点下去走真实判定，
+                // 于是落点固定、长条照常被判定线带走、一个落点也可能接住别的按键。
+                self.sim_fingers_update(res, chart);
+            } else {
+                self.auto_play_update(res, chart);
+                return;
+            }
         }
         let x_diff_max: f64 = if res.config.full_scrrn_judge() {
             2. / res.config.chart_ratio as f64
@@ -622,6 +670,18 @@ impl Judge {
             });
             chart.blocked_touches = blocked;
         }
+        // 「落点模拟」：把合成的手指塞进触点列表，后面完全按真实游玩判定。
+        // 放在噪域过滤之后 —— 模拟不跟噪域联动。
+        if res.config.touch_sim {
+            for finger in &self.sim_fingers {
+                touches.push(Touch {
+                    id: finger.id,
+                    phase: finger.phase,
+                    position: finger.pos,
+                    time: f64::NEG_INFINITY,
+                });
+            }
+        }
         // pos[line][touch]
         let mut pos = Vec::<Vec<Option<Point>>>::with_capacity(chart.lines.len());
         for id in 0..chart.lines.len() {
@@ -656,8 +716,11 @@ impl Judge {
         // clicks & flicks
         for (id, touch) in touches.iter().enumerate() {
             let click = touch.phase == TouchPhase::Started;
-            let flick =
-                matches!(touch.phase, TouchPhase::Moved | TouchPhase::Stationary) && self.trackers.get_mut(&touch.id).map_or(false, |it| it.flicked);
+            // 「落点模拟」的合成手指没有真实滑动轨迹（`trackers` 只从系统触摸事件里建），
+            // 所以它按住期间的 Moved 直接当作一次滑动，让它按真实规则接住滑键。
+            let sim_finger = res.config.touch_sim && self.sim_fingers.iter().any(|it| it.id == touch.id);
+            let flick = matches!(touch.phase, TouchPhase::Moved | TouchPhase::Stationary)
+                && (self.trackers.get_mut(&touch.id).map_or(false, |it| it.flicked) || sim_finger);
             if !(click || flick) {
                 continue;
             }
@@ -682,7 +745,9 @@ impl Judge {
                     x.set_time(t);
                     let posx = pos.x;
                     let dist = (x.now() - posx).abs() as f64;
-                    if dist > (x_diff_max - NOTE_WIDTH_RATIO_BASE) + NOTE_WIDTH_RATIO_BASE * note.judge_scale {
+                    // 判定半宽：默认按按键宽度算；「落点宽度」填了就固定用那个值。
+                    let judge_half = res.config.touch_sim_half().unwrap_or((x_diff_max - NOTE_WIDTH_RATIO_BASE) + NOTE_WIDTH_RATIO_BASE * note.judge_scale);
+                    if dist > judge_half {
                         continue;
                     }
                     if dt.abs() >
@@ -749,13 +814,14 @@ impl Judge {
                     // click & hold
                     let note = &mut lines[line_id].notes[id as usize];
                     let dt = dt.abs();
-                    if matches!(note.kind, NoteKind::Flick) {
+                    // 「落点模拟」下把滑键当点击判：固定落点不会滑动，滑动手势永远凑不出来。
+                    if matches!(note.kind, NoteKind::Flick) && !res.config.touch_sim {
                         // debug!("reject by flick");
                         continue; // to next loop
                     }
                     if dt <= LIMIT_GOOD || matches!(note.kind, NoteKind::Hold { .. }) {
                         match note.kind {
-                            NoteKind::Click => {
+                            NoteKind::Click | NoteKind::Flick => {
                                 note.judge = JudgeStatus::Judged;
                                 judgements.push((if dt <= LIMIT_PERFECT { Judgement::Perfect } else { Judgement::Good }, line_id, id, Some(t)));
                                 #[cfg(feature = "play")]
@@ -852,7 +918,7 @@ impl Judge {
             line.object.set_time(t);
             for id in &idx[*st..] {
                 let note = &mut line.notes[*id as usize];
-                let x_diff_max = (x_diff_max - NOTE_WIDTH_RATIO_BASE) + NOTE_WIDTH_RATIO_BASE * note.judge_scale as f64;
+                let x_diff_max = res.config.touch_sim_half().unwrap_or((x_diff_max - NOTE_WIDTH_RATIO_BASE) + NOTE_WIDTH_RATIO_BASE * note.judge_scale as f64);
                 if let NoteKind::Hold { end_time, .. } = &note.kind {
                     if let JudgeStatus::Hold(.., ref mut pre_judge, ref mut up_time) = note.judge {
                         if (*end_time - t) / spd <= LIMIT_BAD {
@@ -885,6 +951,13 @@ impl Judge {
                 // process miss
                 let dt = (t - note.time) / spd;
                 if dt > LIMIT_BAD {
+                    // 「落点模拟」：渲染窗口开始（`play_start_time`）之前的按键真实玩法也按不到，
+                    // 按 AUTOPLAY 的惯例记 Perfect，否则一开录就是整片 Miss。
+                    if res.config.touch_sim && note.time <= res.config.play_start_time {
+                        note.judge = JudgeStatus::Judged;
+                        judgements.push((Judgement::Perfect, line_id, *id, None));
+                        continue;
+                    }
                     note.judge = JudgeStatus::Judged;
                     judgements.push((Judgement::Miss, line_id, *id, None));
                     #[cfg(feature = "play")]
@@ -896,14 +969,17 @@ impl Judge {
                 if -dt > LIMIT_BAD {
                     break;
                 }
-                if !matches!(note.kind, NoteKind::Drag) && (self.key_down_count == 0 || !matches!(note.kind, NoteKind::Flick)) {
+                // 滑键只认“手指按在屏幕上经过它”，真实输入靠 `key_down_count`；「落点模拟」的合成
+                // 手指不进那个计数，所以模拟时一律当作按着。
+                let finger_down = self.key_down_count != 0 || res.config.touch_sim;
+                if !matches!(note.kind, NoteKind::Drag) && (!finger_down || !matches!(note.kind, NoteKind::Flick)) {
                     continue;
                 }
                 let dt = dt.abs();
                 let x = &mut note.object.translation.0;
                 x.set_time(t);
                 let x = x.now();
-                if self.key_down_count != 0
+                if finger_down
                     || pos.iter().any(|it| {
                         it.map_or(false, |it| {
                             let dx = (it.x - x).abs() as f64;
@@ -1048,6 +1124,20 @@ impl Judge {
                 *st += 1;
             }
         }
+        // 「落点模拟」：抬完的手指摘掉，剩下的落点交给渲染（`Chart::render` 画在按键之上）。
+        // 手指锚定的按键被判成 Miss / 已经结束时落点转红。
+        for finger in self.sim_fingers.iter_mut() {
+            if matches!(finger.phase, TouchPhase::Ended) {
+                finger.retired = true;
+            }
+        }
+        if res.config.touch_sim {
+            res.sim_touch_points.extend(self.sim_fingers.iter().filter(|it| !it.retired).map(|it| {
+                let (x, y, half) = it.chart;
+                let anchor = &chart.lines[it.anchor.0 as usize].notes[it.anchor.1 as usize];
+                (x, y, half, matches!(anchor.judge, JudgeStatus::Judged))
+            }));
+        }
         self.last_time = t / spd;
     }
 
@@ -1182,6 +1272,86 @@ impl Judge {
             };
         }
     }
+
+    /// 「落点模拟」：替这一帧到点、还没被按过的按键各合成一根「自动点击的手指」。
+    ///
+    /// 落点在按下那一刻由按键中心算出，之后钉在屏幕上不再移动；手指按住期间由 `update` 塞进
+    /// 真实判定的触点列表，判定完全复用真实游玩那条链路 —— 所以长条被判定线带走会断连，而
+    /// 别的按键被带到这根手指底下时也能被它接住。
+    fn sim_fingers_update(&mut self, res: &mut Resource, chart: &mut Chart) {
+        let t = res.time;
+        let x_diff_max: f64 = if res.config.full_scrrn_judge() {
+            2. / res.config.chart_ratio as f64
+        } else {
+            0.21 / (16. / 9.) * 2.
+        };
+        // 上一帧已经抬完的摘掉。
+        self.sim_fingers.retain(|it| !it.retired);
+        // 手上的手指推进相位：到点就抬，否则第一帧之后一直是 Moved。
+        for finger in self.sim_fingers.iter_mut() {
+            finger.phase = if t >= finger.release {
+                TouchPhase::Ended
+            } else if matches!(finger.phase, TouchPhase::Started) {
+                TouchPhase::Moved
+            } else {
+                finger.phase
+            };
+        }
+        for line in chart.lines.iter_mut() {
+            line.object.set_time(t);
+        }
+        // 这一帧该按下的按键。
+        let mut starts = Vec::new();
+        for (line_id, line) in chart.lines.iter().enumerate() {
+            for (note_id, note) in line.notes.iter().enumerate() {
+                if note.fake || note.time > t {
+                    continue;
+                }
+                if !matches!(note.judge, JudgeStatus::NotJudged | JudgeStatus::PreJudge) {
+                    continue;
+                }
+                let key = (line_id as u32, note_id as u32);
+                if !self.sim_pressed.contains(&key) {
+                    starts.push(key);
+                }
+            }
+        }
+        for (line_id, note_id) in starts {
+            let (rel, scale, note_time, release) = {
+                let note = &mut chart.lines[line_id as usize].notes[note_id as usize];
+                note.object.set_time(t);
+                let release = match note.kind {
+                    // 长条一直按到 HOLDTIME 结束（断连也不提前松手）。
+                    NoteKind::Hold { end_time, .. } => end_time,
+                    _ => note.time + 1e-3,
+                };
+                (note.object.now(res), note.judge_scale as f64, note.time, release)
+            };
+            let chart_pos = {
+                let line_tr = chart.lines[line_id as usize].now_transform(res, &chart.lines);
+                (line_tr * rel).transform_point(&Point::default())
+            };
+            // 判定半宽：默认与真实判定同一套（`(x_diff_max - NOTE_WIDTH) + NOTE_WIDTH * scale`），
+            // 也就是判定线把按键带离多远会断连 —— 画出来的方框就是这个范围；「落点宽度」填了就用它。
+            let half = res
+                .config
+                .touch_sim_half()
+                .map_or(((x_diff_max - NOTE_WIDTH_RATIO_BASE) + NOTE_WIDTH_RATIO_BASE * scale) as f32, |it| it as f32);
+            self.sim_fingers.push(SimFinger {
+                id: SIM_FINGER_ID_BASE | self.sim_finger_seq,
+                // `Touch::position` 的 y 轴与谱面相反。
+                pos: vec2(chart_pos.x, -chart_pos.y),
+                chart: (chart_pos.x, chart_pos.y, half),
+                anchor: (line_id, note_id),
+                release: release.max(note_time),
+                phase: TouchPhase::Started,
+                retired: false,
+            });
+            self.sim_finger_seq += 1;
+            self.sim_pressed.insert((line_id, note_id));
+        }
+    }
+
 
     pub fn commit_all(&mut self, chart: &mut Chart) {
         for _ in chart.lines.iter()

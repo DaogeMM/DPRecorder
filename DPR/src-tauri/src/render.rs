@@ -114,6 +114,11 @@ pub struct RenderConfig {
     pub chart_ratio: f32,
     pub all_good: bool,
     pub all_bad: bool,
+    /// 「落点模拟」（默认关闭）：AUTOPLAY 下长条按下时把落点钉在按键当时的中心，
+    /// 之后判定照着这个固定落点模拟真实手感（落点移出判定范围就会断连），不是无条件 Perfect。
+    pub touch_sim: bool,
+    /// 「落点宽度」：落点的半径（谱面坐标，画成半透明蓝色球，同时是断连判据）。0 = 跟随判定范围；默认 0.12。
+    pub touch_sim_width: f32,
     pub fps: u32,
     pub hardware_accel: bool,
     /// 高性能模式（默认关闭）：让渲染进程尽量把帧数据留在 GPU 侧。
@@ -537,6 +542,8 @@ impl RenderConfig {
             chart_ratio: self.chart_ratio,
             all_good: self.all_good,
             all_bad: self.all_bad,
+            touch_sim: self.touch_sim,
+            touch_sim_width: self.touch_sim_width,
             watermark: self.watermark.clone(),
             notecolor: self.notecolor.clone(),
             rr_hit_fx_color: self.rr_hit_fx_color.clone(),
@@ -780,6 +787,8 @@ impl Default for RenderConfig {
             chart_ratio: 1.0,
             all_good: false,
             all_bad: false,
+            touch_sim: false,
+            touch_sim_width: 0.12,
             watermark: "".to_string(),
             notecolor: "".to_string(),
             rr_hit_fx_color: "#FBA373".to_string(),

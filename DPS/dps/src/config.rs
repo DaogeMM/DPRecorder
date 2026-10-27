@@ -66,6 +66,15 @@ pub struct Config {
     pub chart_ratio: f32,
     pub all_good: bool,
     pub all_bad: bool,
+    /// 「落点模拟」：只在 AUTOPLAY 下生效。
+    ///
+    /// 关掉时 AUTOPLAY 一律给 Perfect；打开时 HOLD 的落点不再跟手 —— 按下那一刻把落点钉在长条
+    /// 中心，之后长条自己移动，移出判定范围就按真实游玩那样在 `UP_TOLERANCE` 之后断连（Miss）。
+    /// 用来检查长条的移动会不会导致断连。
+    pub touch_sim: bool,
+    /// 「落点宽度」：模拟出来的落点（画成一颗半透明的蓝色球）的半径，谱面坐标。它同时是断连判据 ——
+    /// 判定线把按键带离球心超过它就断连。0 表示跟随判定范围（按按键宽度算），默认 0.12。
+    pub touch_sim_width: f32,
     pub double_click_to_pause: bool,
     pub fxaa: bool,
     pub interactive: bool,
@@ -599,6 +608,8 @@ impl Default for Config {
             chart_ratio: 1.0,
             all_good: false,
             all_bad: false,
+            touch_sim: false,
+            touch_sim_width: 0.12,
             double_click_to_pause: true,
             fxaa: false,
             interactive: true,
@@ -857,5 +868,11 @@ impl Config {
     #[inline]
     pub fn full_scrrn_judge(&self) -> bool {
         self.has_mod(Mods::FULL_SCREEN_JUDGE)
+    }
+
+    /// 「落点宽度」覆盖值：`None` = 跟随判定范围（按按键宽度算），`Some` = 用这个固定的半宽。
+    #[inline]
+    pub fn touch_sim_half(&self) -> Option<f64> {
+        (self.touch_sim && self.touch_sim_width > 0.).then(|| self.touch_sim_width as f64)
     }
 }

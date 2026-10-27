@@ -121,6 +121,11 @@ export interface RenderConfig {
   chartRatio: number;
   allGood: boolean;
   allBad: boolean;
+  /** 「落点模拟」：AUTOPLAY 下长条按下时把落点钉在按键当时的中心，之后判定照着这个固定落点
+   *  模拟真实手感（落点移出判定范围并持续一小会儿就会断连），不再是无条件 Perfect。 */
+  touchSim: boolean;
+  /** 「落点宽度」：落点的半径（谱面坐标，画成半透明蓝色球）。0 = 跟随判定范围。 */
+  touchSimWidth: number;
   fps: number;
   hardwareAccel: boolean;
   /** 高性能模式：勾选后渲染时尽量把工作交给 GPU（高能显卡偏好 + 帧读回翻转省掉 ffmpeg 的 CPU vflip）。
@@ -514,6 +519,8 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   chartRatio: 1,
   allGood: false,
   allBad: false,
+  touchSim: false,
+  touchSimWidth: 0.12,
   fps: 60,
   hardwareAccel: true,
   // 高性能模式默认关闭：默认渲染流程保持与从前一致（见 RenderConfig 接口上的注释）

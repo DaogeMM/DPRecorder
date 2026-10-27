@@ -819,6 +819,13 @@ pub struct Resource {
     /// `chart_ratio == 1.` 时它恒为 `[1., 1.]`，即与原行为逐像素一致。
     pub block_area_chart_scale: [f32; 2],
 
+    /// 「落点模拟」（`config.touch_sim`）当前按住中的长条各自的落点：`(谱面坐标 x, y, 半宽, 已断连)`。
+    ///
+    /// 由 `Judge` 每帧重填，`Chart::render` 画完按键之后把它们画出来。用谱面坐标系（不含谱面整体的
+    /// 左右 / 上下翻转），与按键同域：落点跟着谱面缩放，但不跟着长条移动。断连之后手指不松，
+    /// 落点一直画到长条结束，只是换成断连的颜色。
+    pub sim_touch_points: Vec<(f32, f32, f32, bool)>,
+
 
     pub model_stack: Vec<Matrix>,
     #[cfg(feature = "play")]
@@ -985,6 +992,7 @@ impl Resource {
             pending_note_time: std::cell::Cell::new(f64::INFINITY),
             pending_tint: std::cell::Cell::new(false),
             block_area_chart_scale: [1., 1.],
+            sim_touch_points: Vec::new(),
 
             model_stack: vec![Matrix::identity()],
             #[cfg(feature = "play")]

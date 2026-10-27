@@ -366,6 +366,10 @@ const CHART = {
 const JUDGE = {
   renderJudgeRange: { widget: 'checkbox' },
   alphaTint: { widget: 'checkbox' },
+  // 「落点模拟」：AUTOPLAY 下长条按钉住的落点模拟真实手感（界面在谱面组的「更多」）。
+  touchSim: { widget: 'checkbox' },
+  // 「落点宽度」：落点蓝色球的半径，收在「落点模拟」那行的齿轮弹窗里；0 = 跟随判定范围。
+  touchSimWidth: { widget: 'number' },
   allGood: {
     widget: 'derived',
     uiKey: 'judgeMode',
