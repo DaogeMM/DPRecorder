@@ -1,6 +1,6 @@
 use crate::{
     cmd_hidden,
-    common::{get_output_dir, get_tasks_file, read_config, remove_file_retry},
+    common::{get_output_dir, get_tasks_file, read_config, remove_file_retry, strip_default_json},
     ipc::IPCEvent,
     render::{RenderConfig, RenderParams},
     ASSET_PATH,
@@ -113,7 +113,14 @@ fn read_saved_tasks() -> Vec<SavedTask> {
         return Vec::new();
     }
     match serde_json::from_str::<Vec<SavedTask>>(&text) {
-        Ok(saved) => saved,
+        Ok(saved) => {
+            // 顺手把旧版写下的「整份配置」快照改写成裁剪过的：不这么做，老文件要等到下一次
+            // 队列变动才会变小。写失败只记日志，原文件照用。
+            if let Err(err) = write_saved_tasks(&saved) {
+                error!("Failed to trim tasks.json: {err:?}");
+            }
+            saved
+        }
         Err(err) => {
             error!("Failed to parse tasks.json: {err:?}");
             Vec::new()
@@ -123,7 +130,18 @@ fn read_saved_tasks() -> Vec<SavedTask> {
 
 fn write_saved_tasks(saved: &[SavedTask]) -> Result<()> {
     let file = get_tasks_file()?;
-    std::fs::write(file, serde_json::to_string_pretty(saved)?)?;
+    // 与预设、app 配置一样：快照里与默认配置相同的项不落盘，读回来按 `Default` 补齐。
+    // 否则每条任务都拖着几百行没动过的默认值（配置字段有二百多个）。
+    let mut tasks = serde_json::to_value(saved)?;
+    let default_config = serde_json::to_value(RenderConfig::default())?;
+    if let Some(tasks) = tasks.as_array_mut() {
+        for task in tasks {
+            if let Some(config) = task.pointer_mut("/params/config") {
+                strip_default_json(config, &default_config);
+            }
+        }
+    }
+    std::fs::write(file, serde_json::to_string_pretty(&tasks)?)?;
     Ok(())
 }
 
@@ -887,3 +905,4 @@ impl Drop for TaskQueue {
         self.worker.abort();
     }
 }
+

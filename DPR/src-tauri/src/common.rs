@@ -363,9 +363,132 @@ pub fn get_tasks_file() -> Result<PathBuf> {
     Ok(file)
 }
 
+/// 把一份配置序列化成 TOML 表，并去掉与默认值相同的项 —— 配置文件里只留真正改过的字段。
+///
+/// 读回来不用担心缺键：写出的结构体与读它的结构体都带 `#[serde(default)]`，缺的字段按 `Default`
+/// 补上，所以「只写改动」与「写全字段」等价，文件还小得多。比较放在序列化之后做而不是逐字段比
+/// `PartialEq`：`Option` 的 None、以后加的其他 `skip_serializing_if` 都由同一套序列化负责，
+/// 不会出现「两份数据看起来相等、写出来却不一样」。
+fn config_table<T: Serialize>(value: &T, default: &T) -> Result<toml::Value> {
+    let mut table: toml::Value = toml::from_str(&toml::to_string(value)?)?;
+    let reference: toml::Value = toml::from_str(&toml::to_string(default)?)?;
+    strip_default(&mut table, &reference);
+    Ok(table)
+}
+
+/// 递归删掉与默认值相同的项：子表继续往下比，数组和标量整块比。
+fn strip_default(actual: &mut toml::Value, reference: &toml::Value) {
+    let (toml::Value::Table(actual), toml::Value::Table(reference)) = (actual, reference) else {
+        return;
+    };
+    actual.retain(|key, value| {
+        let Some(reference) = reference.get(key) else {
+            return true;
+        };
+        strip_default(value, reference);
+        // 全是默认值的子表会被清空：留着只会写出一行 `键 = {}`，读回来也没有意义
+        let emptied = matches!(value, toml::Value::Table(table) if table.is_empty());
+        !emptied && !same_value(value, reference)
+    });
+}
+
+/// JSON 版的 `strip_default`：任务快照（`tasks.json`）里与默认配置相同的项也删掉。
+pub fn strip_default_json(actual: &mut serde_json::Value, reference: &serde_json::Value) {
+    let (serde_json::Value::Object(actual), serde_json::Value::Object(reference)) = (actual, reference)
+    else {
+        return;
+    };
+    actual.retain(|key, value| {
+        let Some(reference) = reference.get(key) else {
+            return true;
+        };
+        strip_default_json(value, reference);
+        let emptied = matches!(value, serde_json::Value::Object(object) if object.is_empty());
+        !emptied && !same_json(value, reference)
+    });
+}
+
+fn same_value(a: &toml::Value, b: &toml::Value) -> bool {
+    match (a, b) {
+        (toml::Value::Float(a), toml::Value::Float(b)) => floats_close(*a, *b),
+        (toml::Value::Array(a), toml::Value::Array(b)) => {
+            if let Some(same) = same_color(array_floats(a).as_deref(), array_floats(b).as_deref()) {
+                return same;
+            }
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_value(a, b))
+        }
+        (toml::Value::Table(a), toml::Value::Table(b)) => {
+            a.len() == b.len() && a.iter().all(|(key, value)| b.get(key).is_some_and(|it| same_value(value, it)))
+        }
+        _ => a == b,
+    }
+}
+
+fn array_floats(values: &[toml::Value]) -> Option<Vec<f64>> {
+    values.iter().map(|it| it.as_float()).collect()
+}
+
+fn same_json(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a, b) {
+        (serde_json::Value::Number(a), serde_json::Value::Number(b)) => match (a.as_f64(), b.as_f64()) {
+            (Some(a), Some(b)) => floats_close(a, b),
+            _ => a == b,
+        },
+        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => {
+            let floats = |values: &[serde_json::Value]| -> Option<Vec<f64>> {
+                values.iter().map(|it| it.as_f64()).collect()
+            };
+            if let Some(same) = same_color(floats(a).as_deref(), floats(b).as_deref()) {
+                return same;
+            }
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_json(a, b))
+        }
+        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => {
+            a.len() == b.len() && a.iter().all(|(key, value)| b.get(key).is_some_and(|it| same_json(value, it)))
+        }
+        _ => a == b,
+    }
+}
+
+/// 三个 0~1 的浮点数当作颜色来比：颜色在文件里最终是 8 位色，
+/// `0.9` 与 `230/255`、`0.4118` 与 `105/255` 都是同一个颜色。
+/// 返回 `None` 表示这两个数组不是颜色，交给普通比较。
+fn same_color(a: Option<&[f64]>, b: Option<&[f64]>) -> Option<bool> {
+    let (a, b) = (a?, b?);
+    if a.len() != 3 || b.len() != 3 || !a.iter().chain(b).all(|it| (0. ..=1.).contains(it)) {
+        return None;
+    }
+    Some(a.iter().zip(b).all(|(a, b)| color8(*a) == color8(*b)))
+}
+
+fn color8(value: f64) -> i32 {
+    // 加一点地板再取整：默认值是以十进制写出来的（`0.9` 存成 f32 是 0.89999998，
+    // 乘 255 得 229.49999），正好卡在两档中间；不加这点就会和 `230/255` 判成不同的颜色
+    (value * 255. + 1e-3).round() as i32
+}
+
+/// 两个浮点数是否算「同一个值」。
+///
+/// 配置在「内存 → 文件 → 内存」之间往返会过一遍十进制文本，f32 还会被抬成 f64
+/// （`0.3` 读回来是 `0.30000000000000004`），默认值本身也可能是写出来的近似值
+/// （`105/255` 在界面上是 `0.4118`）。逐位比较会把这些噪声当成改动、永远留在文件里，
+/// 所以按 1e-4 的相对误差判定 —— 换算到画面上是看不出来的量级。
+fn floats_close(a: f64, b: f64) -> bool {
+    if a == b {
+        return true;
+    }
+    let scale = a.abs().max(b.abs()).max(1.);
+    (a - b).abs() <= 1e-4 * scale
+}
+
 pub async fn save_presets(presets: &HashMap<String, RenderConfig>) -> Result<()> {
     let file = get_presets_toml_file()?;
-    let toml_string = toml::to_string(presets)?;
+    let default = RenderConfig::default();
+    let mut table = toml::map::Map::new();
+    for (name, config) in presets {
+        table.insert(name.clone(), config_table(config, &default)?);
+    }
+    let toml_string = toml::to_string(&toml::Value::Table(table))?;
     std::fs::write(file, toml_string)?;
     Ok(())
 }
@@ -435,8 +558,8 @@ pub fn read_config() -> Result<AppConfig> {
 
 pub fn save_config(config: AppConfig) -> Result<()> {
     let file = get_config_file()?;
-    let string = toml::to_string(&config)?;
-    std::fs::write(file, string)?;
+    let table = config_table(&config, &AppConfig::default())?;
+    std::fs::write(file, toml::to_string(&table)?)?;
     Ok(())
 }
 
@@ -533,4 +656,113 @@ pub async fn create_zip(output_path: PathBuf, files: HashMap<String, PathBuf>) -
     zip.finish()?;
     info!("Create ZIP: {}", output_path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 与默认值相同的字段不落盘，读回来按 `Default` 补齐 —— 即「写改动」与「写全字段」等价。
+    #[test]
+    fn config_table_drops_defaults() {
+        let changed = AppConfig {
+            high_performance: true,
+            ..AppConfig::default()
+        };
+        let text = toml::to_string(&config_table(&changed, &AppConfig::default()).unwrap()).unwrap();
+        assert!(text.contains("highPerformance = true"), "{text}");
+        assert!(!text.contains("previewFullscreen"), "{text}");
+        let back: AppConfig = toml::from_str(&text).unwrap();
+        assert!(back.high_performance);
+        assert_eq!(back.preview_fullscreen, AppConfig::default().preview_fullscreen);
+    }
+
+    /// 预设里只留改过的渲染项；全默认的一份写成空表，读回来仍是默认值。
+    #[test]
+    fn preset_table_drops_defaults() {
+        let default = RenderConfig::default();
+        let mut changed = default.clone();
+        changed.chart_mod_copy = true;
+        changed.chart_mod_copy_times = 3;
+        let text = toml::to_string(&config_table(&changed, &default).unwrap()).unwrap();
+        assert!(text.contains("chartModCopy = true"), "{text}");
+        assert!(!text.contains("renderNote"), "{text}");
+        let back: RenderConfig = toml::from_str(&text).unwrap();
+        assert!(back.chart_mod_copy);
+        assert_eq!(back.chart_mod_copy_times, 3);
+        assert_eq!(back.render_note, default.render_note);
+
+        let empty = toml::to_string(&config_table(&default, &default).unwrap()).unwrap();
+        assert!(empty.trim().is_empty(), "{empty}");
+        let back: RenderConfig = toml::from_str(&empty).unwrap();
+        assert_eq!(back.chart_mod_copy_times, default.chart_mod_copy_times);
+    }
+
+    /// 任务快照（tasks.json）：默认配置整块删掉，改过的项留下，浮点噪声不算改动。
+    #[test]
+    fn task_config_drops_defaults() {
+        let mut task = serde_json::json!({
+            "params": { "config": {
+                "fps": 60,
+                "hires": true,
+                "judgeRangeFadeTime": 0.30000000000000004,
+                "mopemopeSpColorA": [0.4117647, 0.29803923, 0.14117648],
+                "blockAreaColor": [0.9019608, 0.101960786, 0.101960786],
+                "chartModCopyTimes": 3
+            } },
+            "status": "done"
+        });
+        let default = serde_json::to_value(RenderConfig::default()).unwrap();
+        let config = task.pointer_mut("/params/config").unwrap();
+        strip_default_json(config, &default);
+        let text = config.to_string();
+        assert!(text.contains("\"chartModCopyTimes\":3"), "{text}");
+        assert!(text.contains("\"hires\":true"), "{text}");
+        // 与默认值只差浮点噪声的也删掉（0.3 与 0.30000000000000004、105/255 与 0.4118）；
+        // 颜色按 8 位色深比，`230/255` 与默认的 `0.9` 是同一个颜色
+        assert!(!text.contains("judgeRangeFadeTime"), "{text}");
+        assert!(!text.contains("mopemopeSpColorA"), "{text}");
+        assert!(!text.contains("blockAreaColor"), "{text}");
+        assert!(!text.contains("fps"), "{text}");
+        // 删掉的部分读回来按 `Default` 补齐
+        let back: RenderConfig = serde_json::from_value(config.clone()).unwrap();
+        assert_eq!(back.chart_mod_copy_times, 3);
+        assert_eq!(
+            back.judge_range_fade_time,
+            RenderConfig::default().judge_range_fade_time
+        );
+        assert_eq!(back.mopemope_sp_color_a, RenderConfig::default().mopemope_sp_color_a);
+    }
+
+    /// 真正落盘的 presets.toml：只留改过的项，全默认的那份留一个空表，且都能原样读回来。
+    #[test]
+    fn save_presets_round_trip() {
+        let dir = std::env::temp_dir().join("dpr-config-trim-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // `CONFIG_DIR` 是全局一次性设置的；已被别的测试占住就跳过（这条测的是落盘格式）
+        if CONFIG_DIR.set(dir.clone()).is_err() {
+            return;
+        }
+        let changed = RenderConfig {
+            chart_mod_copy: true,
+            chart_mod_copy_times: 5,
+            ..RenderConfig::default()
+        };
+        let presets = HashMap::from([
+            ("改过的".to_string(), changed),
+            ("全默认".to_string(), RenderConfig::default()),
+        ]);
+        tauri::async_runtime::block_on(save_presets(&presets)).unwrap();
+        let text = std::fs::read_to_string(dir.join("presets.toml")).unwrap();
+        assert!(text.contains("chartModCopyTimes = 5"), "{text}");
+        assert!(!text.contains("renderNote"), "{text}");
+        let back: HashMap<String, RenderConfig> = toml::from_str(&text).unwrap();
+        assert!(back["改过的"].chart_mod_copy);
+        assert_eq!(back["改过的"].chart_mod_copy_times, 5);
+        assert_eq!(
+            back["全默认"].chart_mod_copy_times,
+            RenderConfig::default().chart_mod_copy_times
+        );
+    }
 }

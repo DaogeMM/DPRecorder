@@ -521,40 +521,9 @@ impl GameScene {
             }
         }?;
         chart.load_textures(fs).await?;
-        // 「纯配置谱面」：四种谱面格式都在上面汇成同一个 `Chart`，转换放在这里就与格式无关。
-        // 转换可能追加左右两条竖判定线，所以走 `Chart` 的方法、由它把新判定线补进绘制顺序。
-        if config.pure_config_chart {
-            let side = config.pure_config_chart_side_lines.then(|| crate::core::pure_config::SideLines {
-                angle: config.pure_config_chart_angle,
-                x: config.pure_config_chart_side_x,
-            });
-            // 按键落点的纵向要折纵横比，而这里是关联函数、拿不到 `Resource`，所以按 `Resource` 自己
-            // 那套口径从配置与谱面信息里推：配置里给了就优先用配置的（`force_aspect_ratio` 生效时
-            // 也是这个值）。
-            let aspect = config.aspect_ratio.unwrap_or(info.aspect_ratio);
-            chart.apply_pure_config(
-                config.pure_config_chart_line_y,
-                config.pure_config_chart_speed,
-                side,
-                config.pure_config_chart_noise,
-                aspect,
-            );
-        }
-        // 「定轨谱面」：同样与格式无关，也放在这里。与「纯配置谱面」互不影响；两个都开时定轨在后一层
-        // 接手（先把按键拍平到基准线，再吸附到轨道），所以不会互相打架。
-        if config.fixed_lane_chart {
-            let aspect = config.aspect_ratio.unwrap_or(info.aspect_ratio);
-            chart.apply_fixed_lane(
-                crate::core::fixed_lane::Lanes {
-                    gap: config.fixed_lane_gap,
-                    line_y: config.fixed_lane_line_y,
-                    speed: config.fixed_lane_speed,
-                    interval: config.fixed_lane_interval,
-                    third: config.fixed_lane_third,
-                },
-                aspect,
-            );
-        }
+        // 「谱面修改」（纯配置谱面 / 定轨谱面 / 按键替换…）不在这里做：其中「长条延长」要把长按尾端钉在
+        // 音乐结束前，得先有 `Resource::track_length`，所以统一放到 `GameScene::new` 里、
+        // `Resource` 建好之后调 `Chart::apply_chart_mods`。四种谱面格式在那之前也都汇成同一个 `Chart`。
         Ok((chart, format))
     }
 
@@ -591,8 +560,6 @@ impl GameScene {
                 .push(Effect::new(0.0..f64::INFINITY, include_str!("fxaa.glsl"), Vec::new(), false).unwrap());
         }
 
-        let judge = Judge::new(&chart);
-
         let info_offset = info.offset;
         let mut res = Resource::new(
             config,
@@ -609,6 +576,17 @@ impl GameScene {
         if matches!(format, ChartFormat::Rpe) {
             res.info.line_length *= 4000. / RPE_WIDTH / 6.;
         }
+
+        // 「谱面修改」：纯配置谱面 / 定轨谱面 / 按键替换 / 随机按键与流速 / 长条填充 / 长条延长 /
+        // 复制音符 / 随机位置 / 陈列按键（见 `core::chart_mod`）。放在 `Resource` 之后是因为长条延长
+        // 要知道这局音乐有多长（`res.track_length`），放在判定表之前是因为 `Judge` 在构造时就把谱面
+        // 读进自己的表里。
+        let chart_mods = crate::core::chart_mod::Mods::from_config(&res.config);
+        if !chart_mods.is_empty() {
+            chart.apply_chart_mods(&chart_mods, res.aspect_ratio, res.track_length);
+        }
+
+        let judge = Judge::new(&chart);
 
         let offset = chart.offset + info_offset + res.config.offset;
         let exercise_range = offset + res.config.play_start_time..res.track_length;

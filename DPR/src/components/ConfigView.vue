@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, toRefs, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, toRefs, watch, type Ref } from 'vue';
 import { useStorage } from '@vueuse/core';
 
 import { useI18n } from 'vue-i18n';
@@ -72,7 +72,7 @@ const NOTE_DEBUG_FIELDS = ['line', 'time', 'height', 'base', 'angle', 'speed', '
 
 const form = ref<VForm>();
 /**
- * 「谱面 · 调试」整块显不显示：设置页里那条「显示调试」（`phi.debug.enabled`，纯界面偏好）。
+ * 「谱面 · 调试」整块显不显示：设置页里那条「显示隐藏选项」（`phi.debug.enabled`，纯界面偏好）。
  * 它的入口本身是藏起来的，见 `App.vue` 的 `onSettingsClick`（Ctrl+Shift+点击左栏「设置」）。
  */
 const debugEnabled = useStorage<boolean>('phi.debug.enabled', false);
@@ -87,12 +87,6 @@ const baoyingSpDebug = ref(true);
 const jingluanSpDebug = ref(true);
 /** 「谱面 · 调试」里那一行「もぺもぺSP」三级菜单的开关（同上）。 */
 const mopemopeSpDebug = ref(true);
-/**
- * 「谱面 · 更多」里「落点模拟」那一行的入口开关。
- * 功能本身（配置项 `touchSim` / `touchSimWidth`、引擎侧的合成触点判定与落点绘制）都保留着，
- * 只是界面上暂时不摆出来：把它改回 `true` 就回到「更多」里。
- */
-const SHOW_TOUCH_SIM = false;
 /** 「谱面 · 调试」里那一行「Rr」三级菜单的开关（同上）。 */
 const rrDebug = ref(true);
 /** 「谱面 · 调试」里那一行「QZKAGO」三级菜单的开关（同上）。 */
@@ -203,6 +197,13 @@ const {
   pureConfigChartNoiseHeight, pureConfigChartNoiseWidth, pureConfigChartNoiseTime, pureConfigChartNoiseDelay,
   fixedLaneChart, fixedLaneGap, fixedLaneSpeed, fixedLaneLineY, fixedLaneInterval,
   fixedLaneHoldLength, fixedLaneThird, playSplitView,
+  // 谱面修改（按键替换 / 随机按键与流速 / 长条填充 / 长条延长 / 复制音符 / 随机位置 / 陈列按键 / 隐藏按键）
+  chartModReplace, chartModReplaceTap, chartModReplaceDrag, chartModReplaceHold, chartModReplaceFlick,
+  chartModRandom, chartModRandomType, chartModRandomSpeed,
+  chartModRandomSpeedMin, chartModRandomSpeedMax, chartModSpreadHold, chartModSpreadHoldNoteType,
+  chartModSpreadHoldInterval, chartModExtendHold, chartModExtendHoldBlank, chartModCopy,
+  chartModCopyTimes, chartModCopyOffset, chartModRandomPos, chartModRandomPosRange, chartModArrange, chartModArrangeGap,
+  chartModArrangeLineY, chartModArrangeSpeed, chartModHide,
   aspectRatio, noteUniformScale, holdPartialCover,
   negativeLengthHold, holdParticleIntervalRatio, lineLength, previewStart,
   previewEnd,
@@ -250,7 +251,7 @@ const {
   // 四次出现的亮起与开始淡出时刻（单位秒，谱面时间）
   clockParadoxSpFlash1On, clockParadoxSpFlash1Fade, clockParadoxSpFlash2On, clockParadoxSpFlash2Fade, clockParadoxSpFlash3On, clockParadoxSpFlash3Fade, clockParadoxSpFlash4On, clockParadoxSpFlash4Fade,
   // 界面独占的槽位
-  hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode,
+  hwAccel, maxParticlesText, judgeRangeTransition, respack, encoder, judgeMode, chartModOrder,
 } = toRefs(ui);
 
 /** 选中资源包的缺失说明：包在但缺文件时点名，整个不在时笼统提示。 */
@@ -266,6 +267,84 @@ watch(
   (dim) => { if (renderBgDim) renderBgDim.value = dim > 0; },
   { immediate: true },
 );
+
+/* ---------- 「谱面修改」四类互斥 + 按键那一类按勾选先后落地 ----------
+ * 四类互斥：纯配置谱面 / 定轨谱面 / 隐藏按键 / 按键那一类（陈列按键、按键替换、随机、随机位置、
+ * 长条填充、长条延长、复制音符）—— 同一时刻只有一类生效，勾上哪一类就把另外三类整个关掉
+ * （见下面的 `closeOtherChartMods`）。
+ * 按键那一类内部可以同时开多个：dps 按界面上勾选的先后逐个落地（配置里记在 `chartModOrder`），
+ * 齿轮左边那个序号就是这个次序。所以这里只维护那张顺序表：
+ *   - 勾上 → 追加到末尾；取消 → 从表里删掉（后面的序号自然往前挪）；
+ *   - 载入预设 / 切页回来 / 手改的 config.toml 里可能带着「开着却没记进表」的项，按界面行序补到末尾
+ *     （dps 那边也是同样的兜底规则，两边的次序才对得上）。
+ * 序号 = 表里的下标 + 1；`chartModIndex()` 取不到就不传 badge，界面上没有序号。
+ * 只有按键那一类有序号：另外三类各自都是单独一步。「游玩分屏」不是改谱面的功能，不受影响，
+ * 它的开关在隐藏的「测试」分区里（`sec-chart-test`）。 */
+const chartModGroups: { key: string; flag: Ref<boolean> | undefined }[] = [
+  { key: 'pure', flag: pureConfigChart },
+  { key: 'lane', flag: fixedLaneChart },
+  { key: 'hide', flag: chartModHide },
+];
+const chartMods: { key: string; flag: Ref<boolean> | undefined }[] = [
+  { key: 'arrange', flag: chartModArrange },
+  { key: 'replace', flag: chartModReplace },
+  { key: 'random', flag: chartModRandom },
+  { key: 'random_pos', flag: chartModRandomPos },
+  { key: 'spread', flag: chartModSpreadHold },
+  { key: 'extend', flag: chartModExtendHold },
+  { key: 'copy', flag: chartModCopy },
+];
+/** 勾上某一类时，把另外三类整个关掉（`opened` 是这一次被勾上的那个开关）。 */
+function closeOtherChartMods(opened: Ref<boolean> | undefined) {
+  const inMods = chartMods.some((it) => it.flag === opened);
+  for (const group of chartModGroups) {
+    if (!inMods && group.flag === opened) continue;
+    if (group.flag?.value) group.flag.value = false;
+  }
+  if (inMods) return;
+  for (const mod of chartMods) if (mod.flag?.value) mod.flag.value = false;
+}
+function chartModOrderList(): string[] {
+  // `toRefs(ui)` 的索引签名让这个名字在类型上可能是 undefined；这里只读，
+  // 写回统一走下面的 watch / syncChartModOrder（模板里每帧都会问一遍序号，不能在这里改状态）
+  return chartModOrder?.value ?? [];
+}
+/** 这一项在顺序表里的位置（1 起）；没开 / 不在表里就是 undefined。 */
+function chartModIndex(key: string): number | undefined {
+  const index = chartModOrderList().indexOf(key);
+  return index < 0 ? undefined : index + 1;
+}
+/** 让顺序表只留下「开着的项」、并按界面行序补齐漏记的那些（预设与手改配置里可能没有这张表）。 */
+function syncChartModOrder() {
+  if (!chartModOrder) return;
+  const list = chartModOrderList();
+  const enabled = chartMods.filter((it) => it.flag?.value).map((it) => it.key);
+  const next = list.filter((it) => enabled.includes(it));
+  for (const key of enabled) if (!next.includes(key)) next.push(key);
+  if (next.length !== list.length || next.some((it, i) => it !== list[i])) chartModOrder.value = next;
+}
+for (const group of chartModGroups) {
+  if (!group.flag) continue;
+  watch(group.flag, (value) => {
+    if (value) closeOtherChartMods(group.flag);
+  });
+}
+for (const mod of chartMods) {
+  if (!mod.flag) continue;
+  watch(mod.flag, (value) => {
+    if (value) closeOtherChartMods(mod.flag);
+    if (!chartModOrder) return;
+    if (!chartModOrder.value) chartModOrder.value = [];
+    const list = chartModOrder.value;
+    const index = list.indexOf(mod.key);
+    if (value) {
+      if (index < 0) list.push(mod.key);
+    } else if (index >= 0) {
+      list.splice(index, 1);
+    }
+  });
+}
+syncChartModOrder();
 
 /* ---------- 「宽 : 高」是配置里的一个比值 ----------
  * 配置（`aspectRatio`）里只存一个数，界面上是并排的两个框，所以这里另存两个**本地** ref
@@ -460,6 +539,7 @@ function applyPreset(config: RenderConfig) {
   markProgrammatic();
   keepDirtyOnProgrammatic = false;
   applyConfigToUi(config);
+  syncChartModOrder();
   // 「总分 / 偏移」的控件在谱面信息表单里（自己一份状态），套用预设时也要跟着这份配置走，
   // 否则预设里存的总分 / 偏移读出来只留在配置里、界面上还是旧值。没谱面时由 RenderView 稍后补写。
   setChartInfoSlots({
@@ -547,6 +627,7 @@ let createConfig: RenderConfig | null = null;
 function restoreWorking(state: WorkingState) {
   markProgrammatic();
   applyConfigToUi(state.config);
+  syncChartModOrder();
   setChartInfoSlots({
     scoreTotal: state.config.scoreTotal ?? DEFAULT_RENDER_CONFIG.scoreTotal,
     offset: state.config.offset ?? DEFAULT_RENDER_CONFIG.offset,
@@ -745,8 +826,8 @@ defineExpose({
                进 config.toml，也出现在批量页的预设弹窗里。 -->
           <CfgSwitch :label="t('info.force-aspect-ratio')" v-model="forceAspectRatio" :tip="t('info.force-aspect-ratio-tip')"></CfgSwitch>
           <CfgSwitch :label="t('info.fold-animation')" v-model="foldAnimation" :tip="t('info.fold-animation-tip')"></CfgSwitch>
-          <!-- 「纯配置谱面」的三个控件都在谱面组的「更多」（`sec-more-chart`）：
-               开关是勾选框，跟在那里的一排勾选框后面；两个数字框按本分区惯例排在文本框一片。 -->
+          <!-- 「谱面修改」那九个功能都收在谱面组的「谱面修改」（`sec-chart-mod`）里：每个功能一行，
+               开关就是行首那个 ✅/❌，参数在齿轮弹窗里。 -->
           <!-- ===== 文本框在后 ===== -->
           <!-- 「偏移」与「总分」不在本分区：「渲染参数」的空状态（未导入谱面）里也能改。 -->
           <CfgField :label="t('resolution')" :tip="t('resolution-tip')">
@@ -957,6 +1038,97 @@ defineExpose({
           <CfgField :label="t('block-area-edge-noise')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-edge-noise-tip')" v-model="blockAreaEdgeNoise" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
         </div>
       </PhiSection>
+      <!-- ===== 谱面修改 =====
+           这些功能同属一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏
+           走的是同一份转换，dps 里的入口只有一个（`Chart::apply_chart_mods`）。
+           **四类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 按键那一类，同一时刻只有一类生效 ——
+           勾上哪一类，另外三类整个关掉（见上面 `closeOtherChartMods`）。前三类各自都是把整张谱面
+           重排一遍，叠在一起只会互相覆盖，所以不给选。
+           按键那一类（陈列按键、按键替换、随机、随机位置、长条填充、长条延长、复制音符）内部
+           **可以同时开**，落地顺序就是界面上勾选的先后：勾上的那一项追加到顺序表末尾，齿轮左边那个
+           数字就是它在这一次转换里的次序（见上面 `chartMods` 的 watch 与 `chartModIndex`）。配置里记着
+           这张表（`chartModOrder`），dps 按同一个次序逐个落地 —— 先开哪个，后面的功能就在它改完的
+           谱面上再改一遍。载入预设 / 手改 config.toml 里没这张表时按下面这个行序补齐。
+           陈列按键会重排整张谱面，所以它落在哪一步就决定后面几项看到的是不是已经摊平过的谱面：
+           排第一时后面几项都在基准线上改，排最后时它把前面几项的结果一起收进基准线。
+           只有按键那一类有齿轮序号；纯配置谱面、隐藏按键与（隐藏的「测试」分区里的）定轨谱面都是
+           单独一步。每一行左边 ✅/❌ 是这一项的开关、齿轮里是它的参数。 -->
+      <PhiSection id="sec-chart-mod" :title="t('title.chart-mod')">
+        <div class="cfg-grid">
+          <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
+               横向位置；判定时刻接近竖直的按键另分到左右两条竖判定线上；判定时刻落在噪域里的按键
+               在它周围长出一块噪域矩形。开关与它的参数（判定线高度 / 按键流速 / 竖判定线的两个参数 /
+               按键噪域与它的四个参数：矩形高度 / 矩形宽度 / 时间窗 / 延后视窗）同处这一个齿轮弹窗里。 -->
+          <PhiSubMenu id="sec3-pure-config" :label="t('pure-config-chart')" :tip="t('pure-config-chart-tip')" v-model="pureConfigChart">
+            <div class="cfg-grid">
+              <CfgSwitch :label="t('pure-config-chart-side-lines')" v-model="pureConfigChartSideLines" :tip="t('pure-config-chart-side-lines-tip')" />
+              <CfgSwitch :label="t('pure-config-chart-noise')" v-model="pureConfigChartNoise" :tip="t('pure-config-chart-noise-tip')" />
+              <CfgField :label="t('pure-config-chart-line-y')" :tip="t('pure-config-chart-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-speed')" :tip="t('pure-config-chart-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-side-x')" :tip="t('pure-config-chart-side-x-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartSideX" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-angle')" :tip="t('pure-config-chart-angle-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartAngle" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero, RULES.less100]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-height')" :tip="t('pure-config-chart-noise-height-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseHeight" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-width')" :tip="t('pure-config-chart-noise-width-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseWidth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-time')" :tip="t('pure-config-chart-noise-time-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseTime" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('pure-config-chart-noise-delay')" :tip="t('pure-config-chart-noise-delay-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseDelay" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <!-- 「隐藏按键」：按键整颗不画出来，判定照常按时间那条链路走（不搬 modify 的隐藏机制，
+               而是在渲染前给按键打一个「不画」的标记）。没有齿轮、也没有序号 —— 它是单独一类，
+               与纯配置谱面 / 定轨谱面 / 按键那一类互斥。 -->
+          <CfgSwitch :label="t('chart-mod-hide')" v-model="chartModHide" :tip="t('chart-mod-hide-tip')" />
+          <!-- 往后是按键那几个功能（见 dps 的 `core::chart_mod`），各占一个齿轮弹窗、开关就是齿轮
+               左边那个 ✅/❌。它们可以同时开，齿轮左边那个数字是这一次转换里的落地次序（1 = 最先落地），
+               顺序就是勾选的先后，见本分区开头的注释。 -->
+          <PhiSubMenu id="sec3-chart-mod-arrange" :label="t('chart-mod-arrange')" :tip="t('chart-mod-arrange-tip')" :badge="chartModIndex('arrange')" v-model="chartModArrange">
+            <div class="cfg-grid">
+              <CfgField :label="t('chart-mod-arrange-gap')" :tip="t('chart-mod-arrange-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-mod-arrange-line-y')" :tip="t('chart-mod-arrange-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-mod-arrange-speed')" :tip="t('chart-mod-arrange-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <!-- 「按键替换」是四组映射：每种源键型各一个下拉框，选成它自己就等于不动。 -->
+          <PhiSubMenu id="sec3-chart-mod-replace" :label="t('chart-mod-replace')" :tip="t('chart-mod-replace-tip')" :badge="chartModIndex('replace')" v-model="chartModReplace">
+            <div class="cfg-grid">
+              <CfgField :label="t('note-types').split(',')[0]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceTap"></v-autocomplete></CfgField>
+              <CfgField :label="t('note-types').split(',')[1]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceDrag"></v-autocomplete></CfgField>
+              <CfgField :label="t('note-types').split(',')[2]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceHold"></v-autocomplete></CfgField>
+              <CfgField :label="t('note-types').split(',')[3]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceFlick"></v-autocomplete></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-chart-mod-random" :label="t('chart-mod-random')" :tip="t('chart-mod-random-tip')" :badge="chartModIndex('random')" v-model="chartModRandom">
+            <div class="cfg-grid">
+              <CfgSwitch :label="t('chart-mod-random-type')" :tip="t('chart-mod-random-type-tip')" v-model="chartModRandomType" />
+              <CfgSwitch :label="t('chart-mod-random-speed')" :tip="t('chart-mod-random-speed-tip')" v-model="chartModRandomSpeed" />
+              <CfgField :label="t('chart-mod-random-speed-min')" :tip="t('chart-mod-random-speed-min-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!chartModRandomSpeed" v-model="chartModRandomSpeedMin" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-mod-random-speed-max')" :tip="t('chart-mod-random-speed-max-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!chartModRandomSpeed" v-model="chartModRandomSpeedMax" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-chart-mod-random-pos" :label="t('chart-mod-random-pos')" :tip="t('chart-mod-random-pos-tip')" :badge="chartModIndex('random_pos')" v-model="chartModRandomPos">
+            <div class="cfg-grid">
+              <CfgField :label="t('chart-mod-random-pos-range')" :tip="t('chart-mod-random-pos-range-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomPosRange" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-chart-mod-spread-hold" :label="t('chart-mod-spread-hold')" :tip="t('chart-mod-spread-hold-tip')" :badge="chartModIndex('spread')" v-model="chartModSpreadHold">
+            <div class="cfg-grid">
+              <CfgField :label="t('chart-mod-spread-hold-note-type')" :tip="t('chart-mod-spread-hold-note-type-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModSpreadHoldNoteType"></v-autocomplete></CfgField>
+              <CfgField :label="t('chart-mod-spread-hold-interval')" :tip="t('chart-mod-spread-hold-interval-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModSpreadHoldInterval" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-chart-mod-extend-hold" :label="t('chart-mod-extend-hold')" :tip="t('chart-mod-extend-hold-tip')" :badge="chartModIndex('extend')" v-model="chartModExtendHold">
+            <div class="cfg-grid">
+              <CfgField :label="t('chart-mod-extend-hold-blank')" :tip="t('chart-mod-extend-hold-blank-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModExtendHoldBlank" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+          <PhiSubMenu id="sec3-chart-mod-copy" :label="t('chart-mod-copy')" :tip="t('chart-mod-copy-tip')" :badge="chartModIndex('copy')" v-model="chartModCopy">
+            <div class="cfg-grid">
+              <CfgField :label="t('chart-mod-copy-times')" :tip="t('chart-mod-copy-times-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModCopyTimes" type="number" :rules="[RULES.notEmpty, RULES.int, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-mod-copy-offset')" :tip="t('chart-mod-copy-offset-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!chartModCopy" v-model="chartModCopyOffset" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+        </div>
+      </PhiSection>
+
       <!-- ===== 更多（谱面组的尾巴）=====
            本二级分区收着：
            - 「谱面进水」三级菜单行：✅/❌ 就是 `waterScreen`（配置值，与预设一起存），
@@ -973,14 +1145,6 @@ defineExpose({
           <!-- 拖影效果 = 「保留帧缓冲」：每帧先把上一帧整屏铺回来再叠本帧，残影一直留着。
                画在单采样的累积缓冲上，所以开着时抗锯齿会被强制关掉，见 `config/useRenderConfig.ts`。 -->
           <CfgSwitch :label="t('preserve-framebuffer')" v-model="preserveFramebuffer" :tip="t('preserve-framebuffer-tips')" />
-          <!-- 落点模拟：AUTOPLAY 下不再无条件 Perfect —— 每颗按键由一根合成的手指自动点击，
-               判定走真实游玩那条链路，判定线把按键带离固定落点太远就断连。
-               「落点宽度」（方框半宽，0 = 跟随判定范围）收在这一行的齿轮弹窗里。 -->
-          <PhiSubMenu v-if="SHOW_TOUCH_SIM" id="sec3-touch-sim" :label="t('touch-sim')" :tip="t('touch-sim-tip')" v-model="touchSim">
-            <div class="cfg-grid">
-              <CfgField :label="t('touch-sim-width')" :tip="t('touch-sim-width-tip')"><v-text-field density="compact" hide-details="auto" v-model="touchSimWidth" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
           <!-- 打击特效随机反转：按概率把打击特效贴图做中心对称翻转（同时左右 + 上下 = 转 180°），
                概率收在这一行的齿轮弹窗里；「打击特效」关掉时没有东西可翻，整行跟着禁用。 -->
           <PhiSubMenu id="sec3-hit-fx-flip" :label="t('hit-fx-random-flip')" :tip="t('hit-fx-random-flip-tip')" :disabled="!particle" v-model="hitFxRandomFlip">
@@ -991,39 +1155,6 @@ defineExpose({
           <!-- 打击特效跟随按键旋转：总开关，开着时贴图跟着按键的判定线旋转角一起转；
                关掉时仍沿用资源包 `info.yml` 里的 `hitFxRotate`。 -->
           <CfgSwitch :label="t('hit-fx-follow-rotation')" v-model="hitFxFollowRotation" :disabled="!particle" :tip="t('hit-fx-follow-rotation-tip')" />
-          <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
-               横向位置；判定时刻接近竖直的按键另分到左右两条竖判定线上；判定时刻落在噪域里的按键
-               在它周围长出一块噪域矩形。开关与它的参数（判定线高度 / 按键流速 / 竖判定线的两个参数 /
-               按键噪域与它的四个参数：矩形高度 / 矩形宽度 / 时间窗 / 延后视窗）同处这一个齿轮弹窗里。 -->
-          <PhiSubMenu id="sec3-pure-config" :label="t('pure-config-chart')" :tip="t('pure-config-chart-tip')" v-model="pureConfigChart">
-            <div class="cfg-grid">
-              <CfgSwitch :label="t('pure-config-chart-side-lines')" v-model="pureConfigChartSideLines" :tip="t('pure-config-chart-side-lines-tip')" />
-              <CfgSwitch :label="t('pure-config-chart-noise')" v-model="pureConfigChartNoise" :tip="t('pure-config-chart-noise-tip')" />
-              <CfgSwitch :label="t('play-split-view')" v-model="playSplitView" :tip="t('play-split-view-tip')" />
-              <CfgField :label="t('pure-config-chart-line-y')" :tip="t('pure-config-chart-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-speed')" :tip="t('pure-config-chart-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-side-x')" :tip="t('pure-config-chart-side-x-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartSideX" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-angle')" :tip="t('pure-config-chart-angle-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartAngle" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero, RULES.less100]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-height')" :tip="t('pure-config-chart-noise-height-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseHeight" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-width')" :tip="t('pure-config-chart-noise-width-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseWidth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-time')" :tip="t('pure-config-chart-noise-time-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseTime" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-delay')" :tip="t('pure-config-chart-noise-delay-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseDelay" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
-          <!-- 「定轨谱面」：把整张谱面拍平成一条横向基准线 + 若干条固定轨道，按键按判定时刻吸附到
-               轨道上（正中那条固定给 Flick / Drag，常规单侧两条、拥挤时才启用第三条）。
-               开关与四个参数同处这一个齿轮弹窗里。 -->
-          <PhiSubMenu id="sec3-fixed-lane" :label="t('fixed-lane-chart')" :tip="t('fixed-lane-chart-tip')" v-model="fixedLaneChart">
-            <div class="cfg-grid">
-              <CfgField :label="t('fixed-lane-gap')" :tip="t('fixed-lane-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('fixed-lane-speed')" :tip="t('fixed-lane-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('fixed-lane-line-y')" :tip="t('fixed-lane-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-              <CfgField :label="t('fixed-lane-interval')" :tip="t('fixed-lane-interval-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneInterval" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgSwitch :label="t('fixed-lane-hold-length')" :tip="t('fixed-lane-hold-length-tip')" v-model="fixedLaneHoldLength" />
-              <CfgSwitch :label="t('fixed-lane-third')" :tip="t('fixed-lane-third-tip')" v-model="fixedLaneThird" />
-              <CfgSwitch :label="t('play-split-view')" v-model="playSplitView" :tip="t('play-split-view-tip')" />
-            </div>
-          </PhiSubMenu>
           <PhiSubMenu id="sec3-chart-water" :label="t('title.chart-water')" :tip="t('water-screen-tip')" v-model="waterScreen">
             <WaterScreenSettings
                     v-model:water-screen="waterScreen"
@@ -1090,7 +1221,40 @@ defineExpose({
         </div>
       </PhiSection>
 
-      <!-- 「谱面 · 调试」：整块只在设置页勾了「显示调试」时出现（`phi.debug.enabled`，
+      <!-- 「谱面 · 测试」：与「调试」一样是隐藏分区，只在设置页勾了「显示隐藏选项」时出现
+            （`phi.debug.enabled`，入口由 Ctrl+Shift+点击左栏「设置」露出）。
+            里面是还没定型的选项（游玩分屏、定轨谱面、落点模拟），排布与别处一致：
+            每个功能占一行三级菜单（开关 + 齿轮里的参数）。 -->
+      <PhiSection v-if="debugEnabled" id="sec-chart-test" :title="t('title.chart-test')">
+        <div class="cfg-grid">
+          <!-- 游玩分屏：只管游玩时怎么摆两个画面（左原谱面、右改过的谱面），不改谱面、也不参与
+               落地顺序，所以和还在打磨的功能一起放在这里。 -->
+          <CfgSwitch :label="t('play-split-view')" v-model="playSplitView" :tip="t('play-split-view-tip')" />
+          <!-- 定轨谱面：把整张谱面拍平成一条横向基准线 + 若干条固定轨道，按键按判定时刻吸附到
+               轨道上（正中那条固定给 Flick / Drag，常规单侧两条、拥挤时才启用第三条）。
+               它是「谱面修改」四类里的一类：与纯配置谱面 / 隐藏按键 / 按键那一类互斥，所以不用序号。 -->
+          <PhiSubMenu id="sec3-fixed-lane" :label="t('fixed-lane-chart')" :tip="t('fixed-lane-chart-tip')" v-model="fixedLaneChart">
+            <div class="cfg-grid">
+              <CfgField :label="t('fixed-lane-gap')" :tip="t('fixed-lane-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgField :label="t('fixed-lane-speed')" :tip="t('fixed-lane-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('fixed-lane-line-y')" :tip="t('fixed-lane-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <CfgField :label="t('fixed-lane-interval')" :tip="t('fixed-lane-interval-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneInterval" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+              <CfgSwitch :label="t('fixed-lane-hold-length')" :tip="t('fixed-lane-hold-length-tip')" v-model="fixedLaneHoldLength" />
+              <CfgSwitch :label="t('fixed-lane-third')" :tip="t('fixed-lane-third-tip')" v-model="fixedLaneThird" />
+            </div>
+          </PhiSubMenu>
+          <!-- 落点模拟：AUTOPLAY 下不再无条件 Perfect —— 每颗按键由一根合成的手指自动点击，
+               判定走真实游玩那条链路，判定线把按键带离固定落点太远就断连。
+               「落点宽度」（方框半宽，0 = 跟随判定范围）收在这一行的齿轮弹窗里。 -->
+          <PhiSubMenu id="sec3-touch-sim" :label="t('touch-sim')" :tip="t('touch-sim-tip')" v-model="touchSim">
+            <div class="cfg-grid">
+              <CfgField :label="t('touch-sim-width')" :tip="t('touch-sim-width-tip')"><v-text-field density="compact" hide-details="auto" v-model="touchSimWidth" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
+        </div>
+      </PhiSection>
+
+      <!-- 「谱面 · 调试」：整块只在设置页勾了「显示隐藏选项」时出现（`phi.debug.enabled`，
            入口由 Ctrl+Shift+点击左栏「设置」露出）。里面每个调试项各占一行三级菜单
            （参数收进齿轮弹窗），以后再加别的调试就再摆一行。 -->
       <PhiSection v-if="debugEnabled" id="sec-chart-debug" :title="t('title.xuejiang-sp-debug')">

@@ -495,7 +495,64 @@ export interface RenderConfig {
   fixedLaneHoldLength: boolean;
   /** 「定轨谱面」是否启用单侧第 3 条轨道：关掉时排不下的按键会叠在最近的轨道上 */
   fixedLaneThird: boolean;
-  /** 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对纯配置 / 定轨谱面生效） */
+  /** 「谱面修改 · 按键替换」：按下面四组映射把按键换成另一种键型，四种源键型各自独立（谱面文件不受影响） */
+  chartModReplace: boolean;
+  /** 按键替换：`TAP` 换成哪种键型（tap / drag / hold / flick，换成它自己等于不动） */
+  chartModReplaceTap: string;
+  /** 按键替换：`DRAG` 换成哪种键型 */
+  chartModReplaceDrag: string;
+  /** 按键替换：`HOLD` 换成哪种键型 */
+  chartModReplaceHold: string;
+  /** 按键替换：`FLICK` 换成哪种键型 */
+  chartModReplaceFlick: string;
+  /** 「谱面修改 · 随机按键与流速」：随机换键型、随机乘流速，两样可以只开一样 */
+  chartModRandom: boolean;
+  /** 随机键型：每个按键在四种键型里随机挑一个 */
+  chartModRandomType: boolean;
+  /** 随机流速：每个按键随机乘一个倍率（长按连尾端一起乘，判定时刻不变） */
+  chartModRandomSpeed: boolean;
+  /** 随机流速的倍率下限（1 是不变） */
+  chartModRandomSpeedMin: number;
+  /** 随机流速的倍率上限 */
+  chartModRandomSpeedMax: number;
+  /** 「谱面修改 · 长条填充」：每个长按拆成一串按键，其余按键换成指定键型 */
+  chartModSpreadHold: boolean;
+  /** 长条填充：拆出来的按键换成哪种键型（tap / drag / hold / flick） */
+  chartModSpreadHoldNoteType: string;
+  /** 长条填充的间隔，单位是 1/32 拍 */
+  chartModSpreadHoldInterval: number;
+  /** 「谱面修改 · 长条延长」：每个长按的尾端拖到音乐结束前留白这么久 */
+  chartModExtendHold: boolean;
+  /** 长条延长在音乐结尾留的空白（秒） */
+  chartModExtendHoldBlank: number;
+  /** 「谱面修改 · 复制音符」：每个按键在同一时刻复制成多份叠在一起 */
+  chartModCopy: boolean;
+  /** 复制音符：复制后一共几份（1 等于原样） */
+  chartModCopyTimes: number;
+  /** 复制音符：这几份以原按键的中轴左右对称散开的总跨度（半个屏幕宽是 1，0 = 全部叠在原位） */
+  chartModCopyOffset: number;
+  /** 「谱面修改 · 随机位置」：每个按键的横向位置随机落在 ±chartModRandomPosRange */
+  chartModRandomPos: boolean;
+  /** 随机位置的横向幅度（半个屏幕宽是 1） */
+  chartModRandomPosRange: number;
+  /** 「谱面修改 · 陈列按键」：整张谱面的按键按时间收到一条基准线的四条站位上 */
+  chartModArrange: boolean;
+  /** 陈列按键：四条站位的横向间隔（半个屏幕宽是 1，站位移在 ±gap 与 ±3gap） */
+  chartModArrangeGap: number;
+  /** 陈列按键：基准线钉在屏幕纵向的哪个高度（0 屏幕底边、1 屏幕顶边） */
+  chartModArrangeLineY: number;
+  /** 陈列按键：基准线的按键流速 */
+  chartModArrangeSpeed: number;
+  /**
+   * 「谱面修改」的落地顺序：界面按勾选的先后把功能名写进来
+   * （`pure` / `arrange` / `replace` / `random` / `random_pos` / `spread` / `extend` / `copy`），
+   * 齿轮左边那个序号就是下标 + 1。空表、或表里没提到的功能按界面行序排在后面。
+   * 定轨谱面不在这个表里：它固定跟在纯配置谱面后面落地。
+   */
+  chartModOrder: string[];
+  /** 「谱面修改 · 隐藏按键」：按键整颗不画出来，判定照常；不参与落地顺序（永远最后一步） */
+  chartModHide: boolean;
+  /** 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对改谱面的功能生效） */
   playSplitView: boolean;
   bgBlurriness: number;
 
@@ -754,6 +811,32 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   fixedLaneInterval: 0.2,
   fixedLaneHoldLength: true,
   fixedLaneThird: false,
+  chartModReplace: false,
+  chartModReplaceTap: 'tap',
+  chartModReplaceDrag: 'drag',
+  chartModReplaceHold: 'hold',
+  chartModReplaceFlick: 'flick',
+  chartModRandom: false,
+  chartModRandomType: true,
+  chartModRandomSpeed: true,
+  chartModRandomSpeedMin: 0.2,
+  chartModRandomSpeedMax: 2.0,
+  chartModSpreadHold: false,
+  chartModSpreadHoldNoteType: 'hold',
+  chartModSpreadHoldInterval: 4.0,
+  chartModExtendHold: false,
+  chartModExtendHoldBlank: 1.0,
+  chartModCopy: false,
+  chartModCopyTimes: 2,
+  chartModCopyOffset: 0,
+  chartModRandomPos: false,
+  chartModRandomPosRange: 0.84,
+  chartModArrange: false,
+  chartModArrangeGap: 0.169,
+  chartModArrangeLineY: 0.1,
+  chartModArrangeSpeed: 2.8,
+  chartModOrder: [],
+  chartModHide: false,
   playSplitView: false,
   bgBlurriness: 80,
 

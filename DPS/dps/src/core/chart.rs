@@ -104,30 +104,90 @@ impl Chart {
         }
     }
 
-    /// 「纯配置谱面」转换（见 `core::pure_config`）。
+    /// 「谱面修改」的统一入口（见 `core::chart_mod`）：纯配置谱面、定轨谱面、隐藏按键与按键那一层都在
+    /// 这里落到谱面上。**四类互斥**，同一时刻只有一类生效（见 `chart_mod::Mods::from_config`）；
+    /// 按键那一层的落地顺序就是用户勾选的先后（`mods.steps`）。
     ///
-    /// 转换可能**新增**判定线（左右两条竖判定线），而 `render` / `render_pending_tint` 只遍历
-    /// `order`，所以新判定线要按 `new` 里同一套规则补进去（先按 `z_index`、同值再按下标）。
+    /// 其中三步要改判定线布局，得在这里落地：「纯配置谱面」还会**新增**左右两条竖判定线，而
+    /// `render` / `render_pending_tint` 只遍历 `order`，所以新判定线要按 `new` 里同一套规则补进去；
+    /// 「陈列按键」会把整张谱面收到一条基准线上、其余判定线删掉，所以落地之后要按同一条规则重建
+    /// 绘制顺序与 `attach_ui` 索引表 —— 界面判定线与贴图 / 文字 / 画笔判定线一并保留。其余各项只动
+    /// 按键自己，交给 `chart_mod::apply_step`。
     ///
-    /// `noise` 打开时，判定时刻落在噪域里的按键会被标上 `Note::pure_config_noise`；`aspect` 是屏幕
-    /// 纵横比 —— 转换发生在 `GameScene::load_chart` 里，那里还没有 `Resource`，所以要调用方给。
-    pub fn apply_pure_config(&mut self, line_y: f32, speed: f64, side: Option<super::pure_config::SideLines>, noise: bool, aspect: f32) {
-        let before = self.lines.len();
-        // 方块列表要借给转换（判按键在不在噪域里），转换又要可变借用 `lines`，所以先搬出来再放回。
-        let areas = std::mem::take(&mut self.block_areas);
-        let noise = noise.then(|| super::pure_config::Noise { areas: &areas });
-        super::pure_config::apply(&mut self.lines, line_y, speed, side, noise, aspect);
-        self.block_areas = areas;
-        if self.lines.len() > before {
-            self.order.extend(before..self.lines.len());
-            self.order.sort_unstable_by_key(|it| (self.lines[*it].z_index, *it));
+    /// 结尾统一收尾一次（重算双押提示、重建判定线缓存，见 `chart_mod::finish`）：缓存按 `above` /
+    /// `speed` / 长按尾端分桶，这几样都可能被前面的功能改过。
+    ///
+    /// `aspect` 是屏幕纵横比（转换发生在 `GameScene` 里，`Resource` 已经建好，由调用方给）；
+    /// `track_end` 是音乐结束的时刻（秒），长条延长把它前面的留白处当长按尾端。
+    pub fn apply_chart_mods(&mut self, mods: &super::chart_mod::Mods, aspect: f32, track_end: f64) {
+        if mods.is_empty() {
+            return;
         }
+        let mut rng = super::chart_mod::rng();
+        // 定轨谱面与纯配置谱面互斥，所以它出现时一定是单独一类，直接当第一步。
+        if let Some(lanes) = &mods.lane {
+            super::fixed_lane::apply(&mut self.lines, lanes, aspect);
+        }
+        for step in &mods.steps {
+            match step {
+                super::chart_mod::Step::Pure(pure) => {
+                    let before = self.lines.len();
+                    // 方块列表要借给转换（判按键在不在噪域里），转换又要可变借用 `lines`，所以先搬出来再放回。
+                    let areas = std::mem::take(&mut self.block_areas);
+                    let noise = pure.noise.then(|| super::pure_config::Noise { areas: &areas });
+                    super::pure_config::apply(&mut self.lines, pure.line_y, pure.speed, pure.side, noise, aspect);
+                    self.block_areas = areas;
+                    if self.lines.len() > before {
+                        self.order.extend(before..self.lines.len());
+                        self.order.sort_unstable_by_key(|it| (self.lines[*it].z_index, *it));
+                    }
+                }
+                super::chart_mod::Step::Arrange(arrange) => {
+                    if let Some(base) = super::chart_mod::arrange_notes(&mut self.lines, arrange) {
+                        self.keep_line(base);
+                    }
+                }
+                step => {
+                    let mut bpm_list = self.bpm_list.borrow_mut();
+                    super::chart_mod::apply_step(&mut self.lines, &mut bpm_list, step, track_end, &mut rng);
+                }
+            }
+        }
+        if mods.hide {
+            super::chart_mod::hide_notes(&mut self.lines);
+        }
+        super::chart_mod::finish(&mut self.lines);
     }
 
-    /// 「定轨谱面」转换（见 `core::fixed_lane`）：把所有判定线拍平成一条横向基准线，按键按判定时刻
-    /// 吸附到固定的轨道上。这个转换**不新增**判定线，所以不用动 `order`。
-    pub fn apply_fixed_lane(&mut self, lanes: super::fixed_lane::Lanes, aspect: f32) {
-        super::fixed_lane::apply(&mut self.lines, &lanes, aspect);
+    /// 只留 `base` 这一条判定线（「陈列按键」之后）：其余可改判定线连同按键一起丢掉，界面判定线与
+    /// 贴图 / 文字 / 画笔判定线保留，再按 `new` 里那套规则重建 `order` 与 `attach_ui`。
+    fn keep_line(&mut self, base: usize) {
+        let mut index = 0;
+        self.lines.retain(|line| {
+            let keep = index == base || line.attach_ui.is_some() || !matches!(line.kind, JudgeLineKind::Normal);
+            index += 1;
+            keep
+        });
+
+        let mut attach_ui = [None; 7];
+        let mut order = Vec::with_capacity(self.lines.len());
+        for (index, line) in self.lines.iter().enumerate() {
+            match line.attach_ui {
+                Some(element) => attach_ui[element as usize - 1] = Some(index),
+                None => order.push(index),
+            }
+        }
+        order.sort_unstable_by_key(|it| (self.lines[*it].z_index, *it));
+        self.attach_ui = attach_ui;
+        self.order = order;
+
+        // 视频挂载记的是判定线下标（`VideoAttach::line`），删过判定线之后要收回到范围内
+        #[cfg(feature = "video")]
+        for (_, attach) in self.extra.videos.iter_mut() {
+            if let Some(attach) = attach {
+                attach.line = attach.line.min(self.lines.len().saturating_sub(1));
+            }
+        }
     }
 
     /// 设置剧情遮挡区域的外观参数。

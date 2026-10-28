@@ -76,6 +76,7 @@ fn fit_on_side(
 }
 
 /// 轨道参数（齿轮配置里那几项）。
+#[derive(Clone, Copy)]
 pub struct Lanes {
     /// 相邻轨道的间隔，屏宽的几成：`0.1` 就是相邻两条相距屏幕宽度的十分之一。
     pub gap: f32,

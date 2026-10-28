@@ -101,6 +101,7 @@ export function useRenderConfig() {
   const maxParticlesList = [5000, 25000, 200000];
   const challengeColors = t('challenge-colors').split(',');
   const judgeModes = t('judge-modes').split(',');
+  const noteTypes = t('note-types').split(',');
 
   function parseResolution(resolution: string): [number, number] | null {
     const parts = String(resolution).split(/[xX]/g);
@@ -165,6 +166,7 @@ export function useRenderConfig() {
       maxParticlesList,
       challengeColors,
       judgeModes,
+      noteTypes,
       respacks: respacks.value,
       rules: localRules,
     };
@@ -422,6 +424,7 @@ export function useRenderConfig() {
     maxParticlesList,
     challengeColors,
     judgeModes,
+    noteTypes,
     resolutionRule: localRules.resolution!,
     sampleCountRule: localRules.sampleCount!,
     isCrf: localRules.crf!,

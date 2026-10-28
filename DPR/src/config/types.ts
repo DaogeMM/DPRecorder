@@ -93,6 +93,8 @@ export interface FieldContext {
   maxParticlesList: number[];
   challengeColors: string[];
   judgeModes: string[];
+  /** 谱面修改的键型名（点按 / 拖动 / 长按 / 滑动），与 STD_NOTE_TYPES 下标一一对应 */
+  noteTypes: string[];
   respacks: RespackItem[];
   /** 依赖 i18n 的本地校验器：resolution / sampleCount / crf / bitrate */
   rules: Record<string, (value: any) => true | string>;

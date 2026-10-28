@@ -1054,7 +1054,7 @@ async fn preview_play(mut params: RenderParams) -> Result<(), InvokeError> {
         }
         // 「游玩分屏」：主窗口放原谱面，副窗口放改过的谱面。
         // 两个窗口必须是两个进程（macroquad 一个进程只能开一个窗口）。
-        // 不看纯配置 / 定轨有没有开：开关打开就分屏，两个窗口显示不同内容由配置决定。
+        // 不看「谱面修改」里有没有功能打开：开关打开就分屏，两个窗口显示不同内容由配置决定。
         if !params.config.play_split_view {
             spawn_play_child(&params, None).await?;
             return Ok(());
@@ -1066,8 +1066,7 @@ async fn preview_play(mut params: RenderParams) -> Result<(), InvokeError> {
             listener.local_addr()?.port()
         };
         let mut plain = params.clone();
-        plain.config.pure_config_chart = false;
-        plain.config.fixed_lane_chart = false;
+        plain.config.clear_chart_mods();
         plain.config.play_split_view = false;
         let mut changed = params;
         changed.config.play_split_view = false;

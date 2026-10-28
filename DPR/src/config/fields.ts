@@ -18,6 +18,9 @@ import type { FieldSpec, FieldTable, SectionId } from './types';
 /** 挑战模式颜色：界面上是本地化名字，落盘成这几个英文词（下标一一对应） */
 export const STD_CHALLENGE_COLORS = ['white', 'green', 'blue', 'red', 'golden', 'rainbow'] as const;
 
+/** 谱面修改的键型：界面上是本地化名字，落盘成这几个英文词（下标一一对应，引擎侧按词取键型） */
+export const STD_NOTE_TYPES = ['tap', 'drag', 'hold', 'flick'] as const;
+
 /**
  * 「Rr」谱面演出的打击特效默认色。
  *
@@ -219,8 +222,8 @@ const CHART = {
   combo: { widget: 'textarea' },
   difficulty: { widget: 'textarea' },
   // ------------------------- 谱面侧渲染参数 -------------------------
-  // 「纯配置谱面」三项归属「谱面」这一族，但控件按「谱面 → 更多」摆放（见 ConfigView.vue 的
-  // `sec-more-chart`）：`section` 只决定配置族，不决定界面位置。
+  // 「谱面修改」这一族（纯配置谱面 / 七个按键功能 / 隐藏按键）在界面上各占一行、同处一个分区
+  // （见 ConfigView.vue 的 `sec-chart-mod`）：`section` 只决定配置族，不决定界面位置。
   pureConfigChart: { widget: 'checkbox' },
   // 这两个**不能**写 `uiValue: 'number'`：那样界面槽位里存的是数字，而文本框的校验规则
   // （`RULES.*`）第一句就是 `value.trim()`，会当场抛 `value.trim is not a function`。
@@ -239,6 +242,7 @@ const CHART = {
   pureConfigChartNoiseTime: { widget: 'number' },
   pureConfigChartNoiseDelay: { widget: 'number' },
   // 「定轨谱面」：一个开关 + 四个参数，与纯配置谱面同族（同样不能写 `uiValue: 'number'`）。
+  // 界面在隐藏的「测试」分区里（`sec-chart-test`），且不参与「谱面修改」的落地顺序。
   fixedLaneChart: { widget: 'checkbox' },
   fixedLaneGap: { widget: 'number' },
   fixedLaneSpeed: { widget: 'number' },
@@ -246,7 +250,74 @@ const CHART = {
   fixedLaneInterval: { widget: 'number' },
   fixedLaneHoldLength: { widget: 'checkbox' },
   fixedLaneThird: { widget: 'checkbox' },
-  // 「游玩分屏」：只影响试玩入口（开两个窗口），面板开关放在纯配置 / 定轨谱面那一栏里。
+  // 「谱面修改」七项（按键替换 / 随机按键与流速 / 长条填充 / 长条延长 / 复制音符 / 随机位置 /
+  // 陈列按键）：与纯配置谱面、定轨谱面同族，参数同样**不能**写 `uiValue: 'number'`。
+  chartModReplace: { widget: 'checkbox' },
+  // 按键替换是四组映射（TAP→? / DRAG→? / HOLD→? / FLICK→?），每组一个下拉框
+  chartModReplaceTap: {
+    widget: 'autocomplete',
+    note: '界面是本地化键名，配置是 STD_NOTE_TYPES 里的英文词',
+    toConfig: (ui, ctx) => STD_NOTE_TYPES[ctx.noteTypes.indexOf(ui.chartModReplaceTap)] ?? STD_NOTE_TYPES[0],
+    toUi: (value, _config, ctx) =>
+      ctx.noteTypes[STD_NOTE_TYPES.indexOf(value as (typeof STD_NOTE_TYPES)[number])] ?? ctx.noteTypes[0] ?? value,
+  },
+  chartModReplaceDrag: {
+    widget: 'autocomplete',
+    note: '界面是本地化键名，配置是 STD_NOTE_TYPES 里的英文词',
+    toConfig: (ui, ctx) => STD_NOTE_TYPES[ctx.noteTypes.indexOf(ui.chartModReplaceDrag)] ?? STD_NOTE_TYPES[1],
+    toUi: (value, _config, ctx) =>
+      ctx.noteTypes[STD_NOTE_TYPES.indexOf(value as (typeof STD_NOTE_TYPES)[number])] ?? ctx.noteTypes[1] ?? value,
+  },
+  chartModReplaceHold: {
+    widget: 'autocomplete',
+    note: '界面是本地化键名，配置是 STD_NOTE_TYPES 里的英文词',
+    toConfig: (ui, ctx) => STD_NOTE_TYPES[ctx.noteTypes.indexOf(ui.chartModReplaceHold)] ?? STD_NOTE_TYPES[2],
+    toUi: (value, _config, ctx) =>
+      ctx.noteTypes[STD_NOTE_TYPES.indexOf(value as (typeof STD_NOTE_TYPES)[number])] ?? ctx.noteTypes[2] ?? value,
+  },
+  chartModReplaceFlick: {
+    widget: 'autocomplete',
+    note: '界面是本地化键名，配置是 STD_NOTE_TYPES 里的英文词',
+    toConfig: (ui, ctx) => STD_NOTE_TYPES[ctx.noteTypes.indexOf(ui.chartModReplaceFlick)] ?? STD_NOTE_TYPES[3],
+    toUi: (value, _config, ctx) =>
+      ctx.noteTypes[STD_NOTE_TYPES.indexOf(value as (typeof STD_NOTE_TYPES)[number])] ?? ctx.noteTypes[3] ?? value,
+  },
+  chartModRandom: { widget: 'checkbox' },
+  chartModRandomType: { widget: 'checkbox' },
+  chartModRandomSpeed: { widget: 'checkbox' },
+  chartModRandomSpeedMin: { widget: 'number' },
+  chartModRandomSpeedMax: { widget: 'number' },
+  chartModSpreadHold: { widget: 'checkbox' },
+  chartModSpreadHoldNoteType: {
+    widget: 'autocomplete',
+    note: '界面是本地化键名，配置是 STD_NOTE_TYPES 里的英文词；对不上时回落到长按',
+    toConfig: (ui, ctx) => STD_NOTE_TYPES[ctx.noteTypes.indexOf(ui.chartModSpreadHoldNoteType)] ?? STD_NOTE_TYPES[2],
+    toUi: (value, _config, ctx) =>
+      ctx.noteTypes[STD_NOTE_TYPES.indexOf(value as (typeof STD_NOTE_TYPES)[number])] ?? ctx.noteTypes[2] ?? value,
+  },
+  chartModSpreadHoldInterval: { widget: 'number' },
+  chartModExtendHold: { widget: 'checkbox' },
+  chartModExtendHoldBlank: { widget: 'number' },
+  chartModCopy: { widget: 'checkbox' },
+  chartModCopyTimes: { widget: 'number', integer: true },
+  chartModCopyOffset: { widget: 'number' },
+  chartModRandomPos: { widget: 'checkbox' },
+  chartModRandomPosRange: { widget: 'number' },
+  chartModArrange: { widget: 'checkbox' },
+  chartModArrangeGap: { widget: 'number' },
+  chartModArrangeLineY: { widget: 'number' },
+  chartModArrangeSpeed: { widget: 'number' },
+  // 「谱面修改」的落地顺序：界面上没有控件（就是各个 ✅/❌ 被勾选的先后），
+  // 齿轮左边那个序号也从这里来。界面槽位与配置都是字符串数组，两边都给一份**拷贝**，
+  // 免得 `ui` 里那张表与配置对象共用同一个数组。
+  chartModOrder: {
+    widget: 'derived',
+    toConfig: (ui) => [...((ui.chartModOrder as string[] | undefined) ?? [])],
+    toUi: (value) => [...((value as string[] | undefined) ?? [])],
+  },
+  // 「隐藏按键」：没有齿轮、也不参与落地顺序（dps 里永远最后一步）。
+  chartModHide: { widget: 'checkbox' },
+  // 「游玩分屏」：只影响试玩入口（开两个窗口），面板开关放在「谱面修改」分区开头。
   playSplitView: { widget: 'checkbox' },
   forceAspectRatio: { widget: 'checkbox' },
   foldAnimation: { widget: 'checkbox' },

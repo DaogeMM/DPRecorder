@@ -498,8 +498,63 @@ pub struct RenderConfig {
     pub fixed_lane_hold_length: bool,
     /// 「定轨谱面」是否启用单侧第 3 条轨道：关掉时排不下的按键会叠在最近的轨道上
     pub fixed_lane_third: bool,
-    /// 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对
-    /// 「纯配置谱面」「定轨谱面」生效）。只影响试玩入口，不影响渲染成片。
+    /// 「谱面修改 · 按键替换」：按下面四组映射把按键换成另一种键型，四种源键型各自独立，默认关闭
+    pub chart_mod_replace: bool,
+    /// 按键替换：`TAP` 换成哪种键型（`tap` / `drag` / `hold` / `flick`，换成它自己等于不动）
+    pub chart_mod_replace_tap: String,
+    /// 按键替换：`DRAG` 换成哪种键型
+    pub chart_mod_replace_drag: String,
+    /// 按键替换：`HOLD` 换成哪种键型
+    pub chart_mod_replace_hold: String,
+    /// 按键替换：`FLICK` 换成哪种键型
+    pub chart_mod_replace_flick: String,
+    /// 「谱面修改 · 随机按键与流速」：随机换键型、随机乘流速，两样可以只开一样，默认关闭
+    pub chart_mod_random: bool,
+    /// 随机键型：每个按键在四种键型里随机挑一个
+    pub chart_mod_random_type: bool,
+    /// 随机流速：每个按键随机乘一个倍率（长按连尾端一起乘，判定时刻不变）
+    pub chart_mod_random_speed: bool,
+    /// 随机流速的倍率下限（`1` 是不变）
+    pub chart_mod_random_speed_min: f64,
+    /// 随机流速的倍率上限
+    pub chart_mod_random_speed_max: f64,
+    /// 「谱面修改 · 长条填充」：每个长按拆成一串按键，其余按键换成指定键型，默认关闭
+    pub chart_mod_spread_hold: bool,
+    /// 长条填充：拆出来的按键换成哪种键型（`tap` / `drag` / `hold` / `flick`）
+    pub chart_mod_spread_hold_note_type: String,
+    /// 长条填充的间隔，单位是 1/32 拍（谱面修改工具里的一「tick」）
+    pub chart_mod_spread_hold_interval: f64,
+    /// 「谱面修改 · 长条延长」：每个长按的尾端拖到音乐结束前留白这么久（判定线高度跟着接长），默认关闭
+    pub chart_mod_extend_hold: bool,
+    /// 长条延长在音乐结尾留的空白（秒）
+    pub chart_mod_extend_hold_blank: f64,
+    /// 「谱面修改 · 复制音符」：每个按键在同一时刻复制成多份叠在一起，默认关闭
+    pub chart_mod_copy: bool,
+    /// 复制音符：复制后一共几份（`1` 等于原样）
+    pub chart_mod_copy_times: usize,
+    /// 复制音符：这几份以原按键的中轴左右对称散开的总跨度（半个屏幕宽是 1；`0` = 全部叠在原位）
+    pub chart_mod_copy_offset: f32,
+    /// 「谱面修改 · 随机位置」：每个按键的横向位置随机落在 `±chart_mod_random_pos_range`，默认关闭
+    pub chart_mod_random_pos: bool,
+    /// 随机位置的横向幅度（半个屏幕宽是 1）
+    pub chart_mod_random_pos_range: f32,
+    /// 「谱面修改 · 陈列按键」：整张谱面的按键按时间收到一条基准线的四条站位上，默认关闭
+    pub chart_mod_arrange: bool,
+    /// 陈列按键：四条站位的横向间隔（半个屏幕宽是 1，站位移在 `±gap` 与 `±3 * gap`）
+    pub chart_mod_arrange_gap: f32,
+    /// 陈列按键：基准线钉在屏幕纵向的哪个高度（`0` 屏幕底边、`1` 屏幕顶边）
+    pub chart_mod_arrange_line_y: f32,
+    /// 陈列按键：基准线的按键流速
+    pub chart_mod_arrange_speed: f64,
+    /// 「谱面修改」的落地顺序：界面按用户勾选的先后写进来
+    /// （`arrange` / `replace` / `random` / `random_pos` / `spread` / `extend` / `copy`），
+    /// dps 按这个顺序逐个落地。空表、或表里没提到的功能按界面行序排在后面。
+    /// 纯配置谱面 / 定轨谱面 / 隐藏按键各自与这一类互斥，不在这张表里。
+    pub chart_mod_order: Vec<String>,
+    /// 「谱面修改 · 隐藏按键」：按键整颗不画出来，判定照常。与纯配置谱面 / 定轨谱面 / 其它谱面修改互斥
+    pub chart_mod_hide: bool,
+    /// 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对改谱面的功能生效，
+    /// 见 [`RenderConfig::clear_chart_mods`]）。只影响试玩入口，不影响渲染成片。
     pub play_split_view: bool,
     pub bg_blurriness: f32,
 
@@ -512,6 +567,25 @@ pub struct RenderConfig {
 }
 
 impl RenderConfig {
+    /// 关掉「谱面修改」这一类里的全部功能：纯配置谱面、定轨谱面与七个按键功能（它们走 dps 里同一个
+    /// 入口，见 `Chart::apply_chart_mods`）。
+    ///
+    /// 游玩分屏的副窗口要原样留着，主窗口则要还原成原谱面 —— 判断「哪些配置算改谱面」只在这里
+    /// 写一遍，以后再加同类功能就只要往这里补一行。
+    pub fn clear_chart_mods(&mut self) {
+        self.pure_config_chart = false;
+        self.fixed_lane_chart = false;
+        self.chart_mod_replace = false;
+        self.chart_mod_random = false;
+        self.chart_mod_spread_hold = false;
+        self.chart_mod_extend_hold = false;
+        self.chart_mod_copy = false;
+        self.chart_mod_random_pos = false;
+        self.chart_mod_arrange = false;
+        self.chart_mod_hide = false;
+        self.chart_mod_order.clear();
+    }
+
     pub fn to_config(&self) -> Config {
         Config {
             aggressive_chart: self.aggressive_chart,
@@ -727,6 +801,32 @@ impl RenderConfig {
             fixed_lane_interval: self.fixed_lane_interval,
             fixed_lane_hold_length: self.fixed_lane_hold_length,
             fixed_lane_third: self.fixed_lane_third,
+            chart_mod_replace: self.chart_mod_replace,
+            chart_mod_replace_tap: self.chart_mod_replace_tap.clone(),
+            chart_mod_replace_drag: self.chart_mod_replace_drag.clone(),
+            chart_mod_replace_hold: self.chart_mod_replace_hold.clone(),
+            chart_mod_replace_flick: self.chart_mod_replace_flick.clone(),
+            chart_mod_random: self.chart_mod_random,
+            chart_mod_random_type: self.chart_mod_random_type,
+            chart_mod_random_speed: self.chart_mod_random_speed,
+            chart_mod_random_speed_min: self.chart_mod_random_speed_min,
+            chart_mod_random_speed_max: self.chart_mod_random_speed_max,
+            chart_mod_spread_hold: self.chart_mod_spread_hold,
+            chart_mod_spread_hold_note_type: self.chart_mod_spread_hold_note_type.clone(),
+            chart_mod_spread_hold_interval: self.chart_mod_spread_hold_interval,
+            chart_mod_extend_hold: self.chart_mod_extend_hold,
+            chart_mod_extend_hold_blank: self.chart_mod_extend_hold_blank,
+            chart_mod_copy: self.chart_mod_copy,
+            chart_mod_copy_times: self.chart_mod_copy_times,
+            chart_mod_copy_offset: self.chart_mod_copy_offset,
+            chart_mod_random_pos: self.chart_mod_random_pos,
+            chart_mod_random_pos_range: self.chart_mod_random_pos_range,
+            chart_mod_arrange: self.chart_mod_arrange,
+            chart_mod_arrange_gap: self.chart_mod_arrange_gap,
+            chart_mod_arrange_line_y: self.chart_mod_arrange_line_y,
+            chart_mod_arrange_speed: self.chart_mod_arrange_speed,
+            chart_mod_order: self.chart_mod_order.clone(),
+            chart_mod_hide: self.chart_mod_hide,
             bg_blurriness: self.bg_blurriness,
 
             max_particles: self.max_particles,
@@ -996,6 +1096,33 @@ impl Default for RenderConfig {
             fixed_lane_interval: 0.2,
             fixed_lane_hold_length: true,
             fixed_lane_third: false,
+            // 谱面修改：七个功能默认全关（与前端 DEFAULT_RENDER_CONFIG、config.toml 一致）
+            chart_mod_replace: false,
+            chart_mod_replace_tap: "tap".to_owned(),
+            chart_mod_replace_drag: "drag".to_owned(),
+            chart_mod_replace_hold: "hold".to_owned(),
+            chart_mod_replace_flick: "flick".to_owned(),
+            chart_mod_random: false,
+            chart_mod_random_type: true,
+            chart_mod_random_speed: true,
+            chart_mod_random_speed_min: 0.2,
+            chart_mod_random_speed_max: 2.,
+            chart_mod_spread_hold: false,
+            chart_mod_spread_hold_note_type: "hold".to_owned(),
+            chart_mod_spread_hold_interval: 4.,
+            chart_mod_extend_hold: false,
+            chart_mod_extend_hold_blank: 1.,
+            chart_mod_copy: false,
+            chart_mod_copy_times: 2,
+            chart_mod_copy_offset: 0.,
+            chart_mod_random_pos: false,
+            chart_mod_random_pos_range: 0.84,
+            chart_mod_arrange: false,
+            chart_mod_arrange_gap: 0.169,
+            chart_mod_arrange_line_y: 0.1,
+            chart_mod_arrange_speed: 2.8,
+            chart_mod_order: Vec::new(),
+            chart_mod_hide: false,
             play_split_view: false,
             bg_blurriness: 80.,
 

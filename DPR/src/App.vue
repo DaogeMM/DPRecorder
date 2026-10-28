@@ -115,7 +115,7 @@ const primaryNav = [
 const settingsNav = [{ name: 'settings', icon: 'mdi-cog' }];
 
 /**
- * 设置页里「显示调试」那一条的入口开关：默认藏着，只有 **Ctrl+Shift+点击左栏的「设置」** 才切换。
+ * 设置页里「显示隐藏选项」那一条的入口开关：默认藏着，只有 **Ctrl+Shift+点击左栏的「设置」** 才切换。
  * 键与 `SettingsView.vue` 共用。两处各自持有一份 `useStorage` 引用、互相不同步，
  * 所以这里以 localStorage 里的值为准来取反（设置页是导航后才挂载的，挂载时读到的就是新值）。
  */
@@ -179,6 +179,8 @@ const renderGroups: RenderGroup[] = [
       { id: 'sec-chart-line', label: 'title.judge-line', icon: 'mdi-minus' },
       // 噪域排在按键下面：顺序 = 页面顺序，必须与 ConfigView 模板一致
       { id: 'sec-block-area', label: 'title.block-area', icon: 'mdi-blur' },
+      // 谱面修改（纯配置谱面 / 定轨谱面 / 七个按键功能）紧跟在噪域之后，顺序 = 页面顺序
+      { id: 'sec-chart-mod', label: 'title.chart-mod', icon: 'mdi-wrench-outline' },
       // 「判定」与「谱面进水」都在本组末尾的「更多」分区里，不单列
       { id: 'sec-more-chart', label: 'more', icon: 'mdi-dots-horizontal' },
       // 本组最后的「谱面·调试」不列进左栏：它默认整块关着（纯界面总开关），只在页面上留一行标题。

@@ -39,6 +39,11 @@ const props = defineProps<{
    * 调试用的那几个三级菜单没有「关掉这一组」的语义，挂个开关反而像配置项，所以只给齿轮。
    */
   noToggle?: boolean;
+  /**
+   * 齿轮左边的序号（不传就没有）。
+   * 「谱面修改」按勾选的先后落地，这个数字就是这一项的落地次序：1 = 最先落地。
+   */
+  badge?: number;
 }>();
 
 const emit = defineEmits<{
@@ -81,6 +86,9 @@ onUnmounted(() => {
     <div class="phi-submenu__head" :title="tip || undefined">
       <span class="phi-submenu__title">{{ label }}</span>
       <v-spacer></v-spacer>
+      <!-- 序号：谱面修改那九项按勾选的先后落地，齿轮左边这个数字就是落地次序（1 = 最先落地）。
+           只有开着的时候才有序号，所以跟齿轮一样在关着 / 分区关着时不渲染。 -->
+      <span v-if="badge && (modelValue || noToggle) && !disabled" class="phi-submenu__badge">{{ badge }}</span>
       <!-- 齿轮：打开这个三级菜单的配置弹窗。放在 ✅/❌ 开关**左边**（`noToggle` 时开关不渲染）。
            图标 22px、按钮不带 `density`；到开关的间距靠 `.phi-submenu__gear`
            的 `margin-right` 给正边距（不能用负边距去抵消 v-btn 内边距贴紧开关）。
@@ -165,6 +173,24 @@ onUnmounted(() => {
 /* 整块被禁用（如所在分区关着）时标题降为淡色，和 `config.css:135` 对条目名的处理一致 */
 .phi-submenu--disabled .phi-submenu__title {
   color: var(--phi-label-tertiary);
+}
+
+/* 序号：贴在齿轮左边。18px 的小圆角块，与齿轮同一条基线；底色用一层很淡的白，
+   免得跟开关和齿轮抢注意力，同时保证深色底上读得出来。 */
+.phi-submenu__badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 14%);
+  color: var(--phi-static-bluish-00);
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
 }
 
 /* 齿轮按钮：贴在开关左边，中间留出间距（见下面的 `margin-right`）。 */

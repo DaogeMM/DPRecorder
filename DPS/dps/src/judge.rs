@@ -164,7 +164,7 @@ impl FlickTracker {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum JudgeStatus {
     NotJudged,
     PreJudge,

@@ -25,7 +25,7 @@
 //!
 //! 谱面文件不动，只改内存里刚解析出来的 [`JudgeLine`]（可能**新增**两条竖判定线），所以同一个开关
 //! 随时可以关掉、照原样再渲染。拍平只看 `z_index` 与 `attach_ui` 之外的字段，这两样都不变，但新增
-//! 判定线要进 `Chart` 的绘制顺序 —— 这一步由 `Chart::apply_pure_config` 负责。
+//! 判定线要进 `Chart` 的绘制顺序 —— 这一步由 `Chart::apply_chart_mods` 负责。
 
 use crate::core::{
     Anim, AnimFloat, AnimFloatF64, AnimVector, BlockArea, JudgeLine, JudgeLineCache, JudgeLineKind, Keyframe, Note, NoteKind, Object, Vector,
@@ -34,6 +34,7 @@ use crate::core::{
 use std::cell::RefCell;
 
 /// 左右两条竖判定线的参数：给 `None` 就是关掉这个功能（竖着的按键照旧留在横判定线上）。
+#[derive(Clone, Copy)]
 pub struct SideLines {
     /// 判定时刻的角度与水平方向相差多少度以内仍算「横向按键」（`0`~`90`，默认 45）。落在
     /// `[-angle, angle]` 或 `[180 - angle, 180]` 里的按键留在横判定线上，其余分到两条竖判定线

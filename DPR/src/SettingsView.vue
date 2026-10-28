@@ -482,7 +482,7 @@ watch(locale, (val) => {
 
 /**
  * 调试项的入口与开关（都是纯界面偏好，存 localStorage）：
- * - `debugRevealed`：设置页里「显示调试」这一条本身露不露面，由 **Ctrl+Shift+点击左栏的「设置」** 切换
+ * - `debugRevealed`：设置页里「显示隐藏选项」这一条本身露不露面，由 **Ctrl+Shift+点击左栏的「设置」** 切换
  *   （`App.vue` 的 `onSettingsClick`，共用这个键）。
  * - `debugEnabled`：勾上后「渲染」页才显示「谱面·调试」分区（`ConfigView.vue` 读同一个键）。
  */
@@ -645,7 +645,7 @@ const forkedDeps = [
               <CfgSwitch :label="t('enable-play-button')" :tip="t('enable-play-button-tip')" v-model="config.enablePlayButton"></CfgSwitch>
               <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
               <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
-              <!-- 「显示调试」：这一条本身也要先被露出来 —— Ctrl+Shift+点击左栏的「设置」才出现，
+              <!-- 「显示隐藏选项」：这一条本身也要先被露出来 —— Ctrl+Shift+点击左栏的「设置」才出现，
                    之后按 localStorage 记着。勾上后「渲染」页末尾才会多出「谱面·调试」分区。 -->
               <CfgSwitch v-if="debugRevealed" :label="t('show-debug')" :tip="t('show-debug-tip')" v-model="debugEnabled"></CfgSwitch>
               <!-- 「高性能模式」：它跟上面那个「默认展开侧边栏」是两回事：那一个是纯界面偏好（存

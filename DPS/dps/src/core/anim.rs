@@ -141,7 +141,7 @@ impl<T: Tweenable + Default> Anim<T> {
 
 pub type AnimFloat = Anim<f32>;
 pub type AnimFloatF64 = Anim<f64>;
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct AnimVector(pub AnimFloat, pub AnimFloat);
 
 impl AnimVector {

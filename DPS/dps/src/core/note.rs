@@ -36,6 +36,7 @@ impl NoteKind {
     }
 }
 
+#[derive(Clone)]
 pub struct Note {
     pub object: Object,
     pub kind: NoteKind,
@@ -56,6 +57,9 @@ pub struct Note {
     /// （「反向强制定位」那个观感）。标记在转换时算好（`core::pure_config`），之后不再变；只用于渲染，
     /// 不进二进制谱面。
     pub pure_config_noise: bool,
+    /// 「隐藏按键」：这颗按键整颗不画出来（判定照常按判定时刻走，长条照旧按住到头）。
+    /// 只影响渲染，标记由 `core::chart_mod` 在转换最后一步打上，不进二进制谱面。
+    pub hidden: bool,
     /// 「屏幕进水」：这个按键的水下状态（血量 / 泡水时长 / 受伤闪红 / 死亡动画 …）。
     /// 状态定义与更新逻辑都在 `core::water`（`WaterState` / `water::update`）。
     pub water: crate::core::water::WaterState,
@@ -526,8 +530,8 @@ impl Note {
 
     pub fn render_force_linger(&self, res: &mut Resource, config: &mut RenderConfig) {
         // 「纯配置谱面」里被标了噪域的按键也走这条通路 —— 那些按键周围要单独长出噪域矩形，而全屏噪域
-        // 那一层是关着的（见 `Chart::render_block_area`）。
-        if !self.force_position_drawn(res) || self.fake {
+        // 那一层是关着的（见 `Chart::render_block_area`）。隐藏按键不画任何东西，连这个洞也不挖。
+        if !self.force_position_drawn(res) || self.fake || self.hidden {
             return;
         }
         let delay = if self.pure_config_noise {
@@ -581,6 +585,13 @@ impl Note {
         height_below: f64,
     ) {
         let ctrl_obj = &mut config.ctrl_obj;
+
+        // 「隐藏按键」：整颗按键不画 —— 连判定范围、待判染色、强制定位挖洞一起跳过，判定照常
+        // （判定只看判定时刻与判定线，不看这颗按键画没画）。
+        if self.hidden {
+            return;
+        }
+
         self.init_ctrl_obj(ctrl_obj, config.line_height);
 
         // 「待判按键」染色那一趟（`Chart::render_pending_tint`）：整趟只画判定时刻最靠前的

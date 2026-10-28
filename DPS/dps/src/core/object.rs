@@ -2,7 +2,7 @@ use super::{AnimFloat, AnimVector, Matrix, Resource, Vector};
 use macroquad::prelude::*;
 use nalgebra::Rotation2;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Object {
     pub alpha: AnimFloat,
     pub scale: AnimVector,
