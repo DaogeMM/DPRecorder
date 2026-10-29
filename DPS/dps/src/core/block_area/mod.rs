@@ -31,7 +31,7 @@ pub use next::{is_native_block_area, is_next_block_area, parse_next, NextArea, T
 
 use super::Resource;
 use macroquad::prelude::*;
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
 
 // ---------------------------------------------------------------------------
 // 缓动
@@ -181,6 +181,61 @@ struct RawScaleEvent {
     scale: Percentage,
 }
 
+// ---------------------------------------------------------------------------
+// 谱面文件里的噪域颜色
+// ---------------------------------------------------------------------------
+
+/// `[r, g, b]` → 0~1 的 RGB。两种值域都收：任何分量大于 1 就按 0~255 解释（两种写法不重叠）。
+fn zone_color_from_rgb([r, g, b]: [f32; 3]) -> [f32; 3] {
+    let scale = if r > 1. || g > 1. || b > 1. { 255. } else { 1. };
+    [(r / scale).clamp(0., 1.), (g / scale).clamp(0., 1.), (b / scale).clamp(0., 1.)]
+}
+
+/// `"#RRGGBB"` / `"RRGGBB"`（大小写不限）→ 0~1 的 RGB（÷255，与界面那套十六进制写法一致）。
+/// 空串返回 `None`，等于没写。
+fn zone_color_from_hex(hex: &str) -> Result<Option<[f32; 3]>, String> {
+    let digits = hex.trim().trim_start_matches('#');
+    if digits.is_empty() {
+        return Ok(None);
+    }
+    if digits.len() != 6 || !digits.is_ascii() {
+        return Err(format!("zone color must be #RRGGBB, got {hex:?}"));
+    }
+    let mut rgb = [0f32; 3];
+    for (i, slot) in rgb.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&digits[i * 2..i * 2 + 2], 16).map_err(|_| format!("zone color is not hex: {hex:?}"))? as f32 / 255.;
+    }
+    Ok(Some(rgb))
+}
+
+/// 谱面里噪域颜色的反序列化：三种写法都认，内部一律换成 0~1 的 RGB。
+///
+/// * `[r, g, b]` 0~255 整数 —— 与谱面里按键的 `color` 同一种写法（见 `parse::pgr::RGBColor`）；
+/// * `[r, g, b]` 0~1 浮点；
+/// * `"#RRGGBB"` / `"RRGGBB"`。
+///
+/// `null` 与缺省同义（等于没写）。按键的 `color` 是 0~255，噪域按那个写法收，一份谱面里不必
+/// 记两套颜色写法。
+fn deserialize_zone_color<'de, D>(deserializer: D) -> Result<Option<[f32; 3]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        Null(()),
+        Rgb([f32; 3]),
+        Rgba([f32; 4]),
+        Hex(String),
+    }
+    Ok(match Repr::deserialize(deserializer)? {
+        Repr::Null(()) => None,
+        Repr::Rgb(rgb) => Some(zone_color_from_rgb(rgb)),
+        Repr::Rgba([r, g, b, _]) => Some(zone_color_from_rgb([r, g, b])),
+        Repr::Hex(hex) => zone_color_from_hex(&hex).map_err(de::Error::custom)?,
+    })
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawBlockArea {
@@ -193,11 +248,14 @@ pub struct RawBlockArea {
     /// `false` = Normal，`true` = Subtract（挖洞）
     #[serde(default)]
     pub is_subtract: bool,
-    /// 这块噪域的调色板颜色，`[r, g, b]`（0~1）。缺省 = 原生红。
+    /// 这块噪域的调色板颜色（0~1 的 RGB）。缺省 = 原生红。
     ///
     /// 官方谱面的 `blockAreaList` 没有颜色字段（参考实现里官方噪域也永远是原生红），
     /// 所以这是 DPS 自己的可选扩展：写了就按这个色相画，没写就逐字节走原路径。
-    #[serde(default)]
+    /// 配色规则是「官方材质的饱和度 / 明度照搬，色相换成这个颜色」（片元的 `blockPalette()`）。
+    /// 写法与按键的 `color` 一致（`[r, g, b]` 0~255），也认 0~1 浮点与 `"#RRGGBB"`，
+    /// 见 [`deserialize_zone_color`]。
+    #[serde(default, deserialize_with = "deserialize_zone_color")]
     pub color: Option<[f32; 3]>,
     #[serde(default)]
     rotate_events: Vec<RawRotateEvent>,
@@ -911,6 +969,32 @@ mod tests {
         assert_eq!(area.color, None);
         let zone = crate::core::block_area::native::Zone::from_area(&area, 2.5, 16. / 9.).unwrap();
         assert!(!zone.is_colored());
+    }
+
+    /// 噪域颜色与按键的 `color` 用同一套写法：`[r, g, b]` 0~255 整数、0~1 浮点、`"#RRGGBB"`，
+    /// 外加 `[r, g, b, a]`（第四位忽略）。不写 / `null` / 空串都等于不上色；
+    /// 写坏了只丢这一条噪域，不会连累同一份谱面里的其它条目。
+    #[test]
+    fn block_area_color_accepts_the_same_forms_as_notes() {
+        let raw_color = |color: serde_json::Value| -> Option<Option<[f32; 3]>> {
+            let mut json = serde_json::json!({
+                "topRightPercentage": {"x": 0.6, "y": 0.6},
+                "bottomLeftPercentage": {"x": 0.4, "y": 0.4},
+                "appearTime": 1., "enableTime": 2., "disableTime": 3., "disappearTime": 4.,
+            });
+            json["color"] = color;
+            serde_json::from_value::<RawBlockArea>(json).ok().map(|raw| raw.color)
+        };
+        let close = |color: Option<[f32; 3]>, want: [f32; 3]| color.is_some_and(|c| c.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-6));
+        assert!(close(raw_color(serde_json::json!([51, 102, 204])).flatten(), [0.2, 0.4, 0.8]));
+        assert!(close(raw_color(serde_json::json!([0.2, 0.4, 0.8])).flatten(), [0.2, 0.4, 0.8]));
+        assert!(close(raw_color(serde_json::json!("#3366CC")).flatten(), [0.2, 0.4, 0.8]));
+        assert!(close(raw_color(serde_json::json!("3366cc")).flatten(), [0.2, 0.4, 0.8]));
+        assert!(close(raw_color(serde_json::json!([51, 102, 204, 200])).flatten(), [0.2, 0.4, 0.8]));
+        assert_eq!(raw_color(serde_json::Value::Null), Some(None));
+        assert_eq!(raw_color(serde_json::json!("")), Some(None));
+        assert_eq!(raw_color(serde_json::json!("#GGGGGG")), None);
+        assert_eq!(raw_color(serde_json::json!([51, 102])), None);
     }
 
     /// 「噪域优化」：几何与相对动画相同的条目并成一个噪域（共享编号、各有自己的窗口），

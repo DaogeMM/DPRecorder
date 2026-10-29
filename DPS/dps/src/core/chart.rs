@@ -59,6 +59,15 @@ pub struct Chart {
     order: Vec<usize>,
     attach_ui: [Option<usize>; 7],
     trs: Vec<Matrix>,
+    /// 「谱面修改」是否已经落到这份谱面上。
+    ///
+    /// 渲染器为了先拿到改过的按键（离线打击音轨按它铺），会在交给 `GameScene` 之前先改一遍；
+    /// 之后 `GameScene` 按同一份配置再改一遍就成了改两次（复制音符会变成平方）。
+    /// 所以改过一次就在这里记下，`apply_chart_mods` 自己挡掉第二次。
+    ///
+    /// 配置里的改谱开关在这一趟之后**仍然保持打开**：纯配置谱面 / 定轨谱面的画面（拍平、噪域、
+    /// 判定范围）渲染时还要读它们，清掉就没画面了。
+    chart_mods_applied: bool,
 }
 
 impl Chart {
@@ -101,6 +110,7 @@ impl Chart {
             block_groups: Vec::new(),
             block_area_renderer: RefCell::new(BlockAreaRenderer::default()),
             trs,
+            chart_mods_applied: false,
         }
     }
 
@@ -119,10 +129,18 @@ impl Chart {
     ///
     /// `aspect` 是屏幕纵横比（转换发生在 `GameScene` 里，`Resource` 已经建好，由调用方给）；
     /// `track_end` 是音乐结束的时刻（秒），长条延长把它前面的留白处当长按尾端。
+    ///
+    /// 同一份谱面只改一次：渲染器为了先拿到改过的按键（离线打击音轨按它铺）会提前改一遍，
+    /// 之后 `GameScene` 再按同一份配置调一次就直接返回，不会改两遍。
     pub fn apply_chart_mods(&mut self, mods: &super::chart_mod::Mods, aspect: f32, track_end: f64) {
         if mods.is_empty() {
             return;
         }
+        // 渲染器会先改一遍再交给 `GameScene`（见 `chart_mods_applied` 的说明），第二次直接跳过。
+        if self.chart_mods_applied {
+            return;
+        }
+        self.chart_mods_applied = true;
         let mut rng = super::chart_mod::rng();
         // 定轨谱面与纯配置谱面互斥，所以它出现时一定是单独一类，直接当第一步。
         if let Some(lanes) = &mods.lane {
@@ -431,11 +449,12 @@ impl Chart {
         // 噪域整个关掉时它就一直保持 None，判定范围恢复原样。
         res.block_area_paint = None;
         res.judge_range_mat = None;
-        // 「定轨谱面」不画噪域：谱面拍平到轨道之后，方块与「强制定位」的挖洞都失去几何意义，判定范围
-        // 也一并让开（它要 `block_area_paint` / `judge_range_mat` 两个都非空才画）。开关只看配置，所以
-        // 与是否真的转换过无关 —— 两者同时打开时同样不画。按键那边照样会往
+        // 「定轨谱面」与「陈列按键」都不画噪域：谱面被拍平到轨道、或整张收成一条基准线之后，
+        // 方块与「强制定位」的挖洞都失去几何意义，判定范围也一并让开（它要
+        // `block_area_paint` / `judge_range_mat` 两个都非空才画）。开关只看配置，所以
+        // 与是否真的转换过无关 —— 同时打开时同样不画。按键那边照样会往
         // `force_position_quads` 里推矩形，这里顺手清掉，免得越攒越多。
-        if res.config.fixed_lane_chart {
+        if res.config.fixed_lane_chart || res.config.chart_mod_arrange {
             res.force_position_quads.borrow_mut().clear();
             return;
         }

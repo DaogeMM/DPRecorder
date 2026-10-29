@@ -1,80 +1,80 @@
 <script setup lang="ts">
-import { ref, nextTick, onUnmounted, computed, type Ref } from 'vue';
+/**
+ * 批量页：一次丢进一批谱面，按同一份预设配置批量渲染。
+ *
+ * 版式 = 「任务页的卡片」+「渲染页的谱面信息」的融合：
+ *   折叠行  曲绘 / 曲名 / 难度徽章 / 展开箭头（与任务页 `.task-row` 同一套尺寸与配色）
+ *   展开后  上半是谱面横幅（`ChartHero`，与渲染页顶部同一份），下半是谱面信息表单
+ *           （`ChartInfoForm`，字段与渲染页 `#chart-info` 逐条对齐）
+ *   底排    筛选 · 排序 · 移除全部任务 · 三个开关；预设配置 …… 全选/反选/移除/取消/渲染
+ *
+ * 三条刻意为之：
+ *   - **不显示渲染进度**：进度、状态、输出日志都在任务页看，这里只负责「选谱面 + 发任务」。
+ *   - **曲绘管预览、曲名管进渲染页**：和任务页「点行=展开」分工不同，所以两个都是
+ *     `@click.stop`，不再跟着整行切换展开。
+ *   - **排序只按曲名 / 定数**，且放在底排：谱面列表的顺序是用户自己看着顺眼，
+ *     不像任务页那样按队列顺序有意义。定数取 `ChartInfo.lvl`（解析不出来时从难度
+ *     文本里抠数字），同一档里再按难度文本、曲名兜底。
+ *
+ * 两个坑：`ChartInfoForm` 自己持有 `v-form` 的 ref，渲染前必须逐张调 `validate()`
+ * （卡片收起来时组件根本没挂载，也就没有要校验的东西）；谱面 id 用「当前最大值 + 1」，
+ * 它是列表的 key，重复会让 Vue 复用错行。
+ */
+import { ref, nextTick, onUnmounted, computed, watch } from 'vue';
 import { useStorage } from '@vueuse/core';
 
 import { useI18n } from 'vue-i18n';
-const { t } = useI18n();
 
 import { invoke } from '@tauri-apps/api/core';
-import { openPath } from '@tauri-apps/plugin-opener';
 
-import { toastError, RULES, toast } from './common';
-import { formatLvl, formatLvlInText, useLvlField } from './lvl';
+import { toastError, toast } from './common';
+import { formatLvlInText } from './lvl';
+import { diffTier, diffLvl } from './tasks';
 import { DEFAULT_RENDER_CONFIG, type ChartInfo, type RenderConfig, type RenderChart, type Preset, type FileDropEvent, type Task } from './model';
 import { sameRenderConfig } from './config/useRenderConfig';
-import { chartSideOf } from './config/chartSide';
-import { jumpToFirstError } from './formError';
+import { chartModMarker, chartSideOf } from './config/chartSide';
+import { jumpToFirstError, type FormError } from './formError';
 import { finishPageLoad } from './pageLoad';
 import router from './router';
-import { AnsiUp } from 'ansi_up';
-const ansi = new AnsiUp();
-
-import { VForm } from 'vuetify/components';
 
 import ConfigView from './components/ConfigView.vue';
-import CfgField from './components/CfgField.vue';
 import CfgSwitch from './components/CfgSwitch.vue';
+import ChartHero from './components/ChartHero.vue';
+import ChartInfoForm from './components/ChartInfoForm.vue';
+import ChartThumb from './components/ChartThumb.vue';
 
 import { listen } from "@tauri-apps/api/event";
 
-/**
- * 批量渲染页。外壳按渲染页的格式重写过：
- *
- *   .batch-view              整页铺满内容区（不再套 v-card + sticky v-toolbar）
- *     .batch-view__list      谱面列表：表头 + v-virtual-scroll，表头与每行都是 .batch-grid 栅格
- *     .batch-view__actions   底部固定操作条，两排（上：筛选 / 输出文件夹 / 三个开关；下：预设配置 + 全选…渲染）
- *
- * 和渲染页对齐的几点：
- *   - 页面自己不再有卡片、内边距与工具栏，滚动交给列表内层；
- *   - 表单条目走 cfg-grid + CfgField / CfgSwitch，外层套 `.config-root`，
- *     输入框的方框、文字颜色、条目名字号才和配置页/渲染页一致；
- *   - 主操作按钮用 `.gradient-primary`（同渲染页的「渲染」按钮），次要操作 text / tonal；
- *   - 谱面信息、预设配置两个弹窗**模仿齿轮配置（三级菜单）弹窗的格式**：
- *     共用 `design/config.css` 的 `.phi-config-dialog*` 皮肤（内容区底色 + 88% 不透明、直角、
- *     标题居中 1.5rem、`__body` 无额外内边距），条目一行两个（`cfg-grid--two`），
- *     并且不再有底部按钮（点空白处 / Esc 关闭）。宽度：谱面信息是「内容区的 60%」
- *     （`measureConfigDialogWidth`），预设配置**吃满内容区**（`measurePresetDialogWidth`）——
- *     配置条目多，60% 太挤。
- *
- * 谱面**只能拖动导入**（和渲染页一样）：没有选择文件 / 文件夹的入口，也没有
- * `@tauri-apps/plugin-dialog` 的导入对话框；空列表中间只留一行文字，用的是
- * `render.json` 里现成的 `choose.can-also-drop` =「（可拖放谱面至此处）」。
- * 注意这个键是**嵌在 `choose` 里**的，漏掉前缀就会在界面上原样显示 `can-also-drop`。
- *
- * 操作条（`.batch-view__actions`）分**两排**（每排一个 `.batch-view__bar`）：
- *   上排 = 筛选 / 打开输出文件夹 · 移除全部任务 / 三个开关；
- *   下排 = 预设配置（最左）………… 全选 反选 移除 取消 渲染（右下角）。
- * 上排 `flex-wrap: nowrap` 不换行，筛选那组固定 1/5、后面五项（两个按钮 + 三个开关）
- * 均分剩下的 4/5；下排「预设配置」那一组占整排 60%，里面下拉框自己撑满。
- * 预设配置与筛选都不占页面顶部，改成操作条里的行内小控件
- * （`.batch-view__pickers`），高度按 Vuetify 的 `--v-input-control-height` 压到 28px。
- *
- * 没有「自动调整宽高比」开关：`postRender()` 直接把 `preset.value.config` 交给后端。
- * ⚠️ 注意 Vue 响应式代理塞进 `structuredClone` 会抛 DataCloneError。
- *
- * 两处必须留意的校验 / 编号问题（详见下面各处注释）：
- *   1. 谱面信息弹窗的 `<v-form>` 必须有 `ref="form"`，否则 `checkInfo()` 里
- *      `form.value!.validate()` 取到 undefined 会抛错 —— 批量「渲染」发不出去；
- *   2. 谱面 `id` 取当前最大值 +1，不能用 `charts.value.length`
- *      （删掉几条再导入会撞号，虚拟滚动的 item-key 和「正在编辑哪一条」都靠它）。
- */
+const { t } = useI18n();
 
-const form = ref<VForm>();
 const charts = useStorage<RenderChart[]>('BatchView.ChartList', []);
 
-/** 新的谱面 id：虚拟滚动的 item-key 与「正在编辑哪一条」都靠它，必须唯一。 */
+/** 新的谱面 id：列表 key 与「这一张的谱面信息表单」都靠它，必须唯一。 */
 function nextChartId(): number {
   return charts.value.reduce((max, chart) => Math.max(max, chart.id), -1) + 1;
+}
+
+/** 展开了哪些卡片（只记 id，重新排序不影响谁开着） */
+const expandedIds = ref<number[]>([]);
+
+function toggleExpanded(id: number) {
+  const index = expandedIds.value.indexOf(id);
+  if (index >= 0) expandedIds.value.splice(index, 1);
+  else expandedIds.value.push(id);
+}
+
+/**
+ * 展开的卡片各有一份谱面信息表单 —— 渲染前要校验**这一张**的表单，
+ * 所以按 id 记住组件实例（收起时 Vue 会以 null 回调，正好把记录删掉）。
+ */
+interface InfoFormApi {
+  validate(): Promise<{ valid: boolean; errors: FormError[] } | undefined>;
+}
+const infoForms = new Map<number, InfoFormApi>();
+
+function setInfoForm(id: number, instance: unknown) {
+  if (instance) infoForms.set(id, instance as InfoFormApi);
+  else infoForms.delete(id);
 }
 
 const DEFAULT_PRESET: Preset = {
@@ -110,25 +110,10 @@ const loadingParsingChart = ref(false);
 const loadingPreview = ref(false);
 const loadingPostRender = ref(false);
 
-const chartInfoDialog = ref(false);
-const chartInfoSelect = ref(0);
 /**
- * 两个配置类弹窗（谱面信息 / 预设配置）的宽度 —— 与齿轮弹窗（`PhiSubMenu.vue` 的
- * `dialogWidth`）、「文件名格式」弹窗（`components/ConfigView.vue` 的
- * `fileNameFormatDialogWidth`）同一个算法：**内容区 `<main class="phi-center">` 的 60%**，
- * 下限 480px。弹窗被 teleport 到 body，写百分比会按视口算（把左侧导航也算进去），
- * 所以每次打开时量一次。
- * 预设配置、谱面信息两个编辑弹窗都模仿齿轮配置的格式。
- */
-const configDialogWidth = ref(880);
-function measureConfigDialogWidth() {
-  const content = document.querySelector<HTMLElement>('.phi-center');
-  const base = content?.clientWidth || window.innerWidth;
-  configDialogWidth.value = Math.max(480, Math.round(base * 0.6));
-}
-/**
- * 「预设配置」编辑弹窗的宽度 = **内容区宽度的 100%**（它自己一条，不再和谱面信息共用）：
- * 配置条目比谱面信息多得多，60% 下两栏挤得看不清。
+ * 「预设配置」编辑弹窗的宽度 = **内容区宽度的 100%**：配置条目比谱面信息多得多，
+ * 按内容区 60% 算（齿轮弹窗那个算法）两栏挤得看不清。弹窗被 teleport 到 body，
+ * 写百分比会按视口算（把左侧导航也算进去），所以每次打开时量一次。
  */
 const presetDialogWidth = ref(880);
 function measurePresetDialogWidth() {
@@ -139,22 +124,6 @@ function measurePresetDialogWidth() {
 const disSelectStartRender = useStorage<boolean>('BatchView.disSelectStartRender', true);
 const removeStartRender = useStorage<boolean>('BatchView.removeStartRender', false);
 const removeAfterRender = useStorage<boolean>('BatchView.removeAfterRender', false);
-
-/**
- * 正在编辑的谱面。以前弹窗里到处写 `charts[chartInfoSelect]` —— 那是**数组下标**，
- * 而 `chartInfoSelect` 存的是 `id`；列表一排序两边就对不上了。现在统一按 id 找。
- */
-const editingChart = computed(() => charts.value.find((chart) => chart.id === chartInfoSelect.value));
-
-// 谱面信息弹窗里的「定数」输入框：显示一律补成一位小数（见 `./lvl.ts`），
-// 输入过程仍然随手打，数值照旧写回选中的那条谱面。
-const { text: lvlText, normalize: normalizeLvl } = useLvlField(
-  () => editingChart.value?.chartInfo.lvl,
-  (value) => {
-    const chart = editingChart.value;
-    if (chart) chart.chartInfo.lvl = value;
-  },
-);
 
 async function loadCharts(files: string[]) {
   loadingParsingChart.value = true;
@@ -210,6 +179,9 @@ const filteredCharts = computed(() => {
 
 const hasSelection = computed(() => charts.value.some((chart) => chart.isSelect));
 
+/** 选中的张数：谱面融合至少要两张 */
+const selectedCount = computed(() => charts.value.filter((chart) => chart.isSelect).length);
+
 const fileHovering = ref(false);
 let files: string[] = [];
 listen('tauri://drag-over', () => {
@@ -228,10 +200,10 @@ listen('tauri://drag-drop', async (event) => {
   files = [];
 });
 
-async function buildParams(chartPath: string, chartInfo: ChartInfo, config: RenderConfig) {
-  // 以前这里既没 await 也没看返回值，校验不过也照样提交；
-  // 现在校验不过就返回 null，调用方（postRender / previewChart）会直接放弃。
-  if (!(await checkInfo(chartInfo))) return null;
+async function buildParams(chart: RenderChart) {
+  // 校验不过就返回 null，调用方（postRender / previewChart）会直接放弃。
+  if (!(await checkInfo(chart))) return null;
+  const config = preset.value.config;
   // 预览片段窗口不超过 15 秒：预览开始 / 结束时间现在是**配置项**，所以这条校验跟着配置走
   // （渲染页那边由 ConfigView.buildConfig() 保证；批量页直接读预设里那份 config）。
   if (config.previewEnd && config.previewEnd - config.previewStart > 15) {
@@ -241,9 +213,11 @@ async function buildParams(chartPath: string, chartInfo: ChartInfo, config: Rend
   // 谱面侧的渲染参数（宽高比 / 强制宽高比 / 折叠式入场 / 判定线长度 / 总分 / 预览起止 / 偏移 /
   // 背景压暗 …）现在是 `RenderConfig` 的字段：**以配置为准**，所以展开在谱面信息**之后**
   // 覆盖同名键（与 RenderView.buildParams 同一套做法，见 ./config/chartSide.ts）。
+  // 难度文本同样以配置为准：开着「谱面修改」时换成 `（功能名 → 功能名）` 的标记，
+  // 融合过的谱面把「谱面融合」摆在最前面。
   return {
-    path: chartPath,
-    info: { ...chartInfo, ...chartSideOf(config) },
+    path: chart.path,
+    info: { ...chart.chartInfo, ...chartSideOf(config, chartModMarker(config, t, chart.chartInfo.difficulty)) },
     config,
   };
 }
@@ -255,7 +229,7 @@ async function postRender(chart: RenderChart) {
     // 顺带说明：早先这里曾用 `structuredClone(preset.value.config)`，而 `preset.value.config`
     // 是 Vue 的响应式代理，代理塞进 structuredClone 会抛 DataCloneError —— 要复制就用
     // `{ ...toRaw(...) }`（现在这段已经不需要了，留个记号免得以后再踩）。
-    let params = await buildParams(chart.path, chart.chartInfo, preset.value.config);
+    let params = await buildParams(chart);
     if (!params) return false;
     await invoke('post_render', { params });
     let tasks = await invoke<Task[]>('get_tasks');
@@ -301,7 +275,7 @@ function removeSelectChart() {
 async function previewChart(chart: RenderChart) {
   loadingPreview.value = true;
   try {
-    let params = await buildParams(chart.path, chart.chartInfo, preset.value.config);
+    let params = await buildParams(chart);
     if (!params) return false;
     await invoke('preview_chart', { params });
     return true;
@@ -313,13 +287,13 @@ async function previewChart(chart: RenderChart) {
   }
 }
 
-async function checkInfo(chartInfo: ChartInfo) {
-  // 表单只在谱面信息弹窗里（弹窗没打开过时 form.value 是 undefined）——
-  // 以前这里是 `form.value!.validate()`，弹窗没打开就直接抛错。
-  if (form.value) {
-    const { valid, errors } = await form.value.validate();
+async function checkInfo(chart: RenderChart) {
+  // 卡片收起来时表单根本没挂载（`infoForms` 里没有这一条）——那就只做收尾，不校验。
+  const form = infoForms.get(chart.id);
+  if (form) {
+    const { valid, errors } = (await form.validate()) ?? { valid: true, errors: [] };
     if (!valid) {
-      // 标红的小字在弹窗底部，用户看不到：把弹窗里的控件滚进视野再提示
+      // 标红的小字在表单里，用户看不到：把出错的控件滚进视野再提示
       toast(jumpToFirstError(errors) ?? t('has-error'), 'error');
       return false;
     }
@@ -327,7 +301,7 @@ async function checkInfo(chartInfo: ChartInfo) {
   // 「预览开始 / 结束时间」与「偏移」现在是配置项（`RenderConfig`），
   // 15 秒窗口那条校验搬到了 `buildParams()`（跟着配置走，见那边的注释），
   // 这里只剩谱面信息自己的收尾：Tip 是空串就写 null。
-  if (!chartInfo.tip?.trim().length) chartInfo.tip = null;
+  if (!chart.chartInfo.tip?.trim().length) chart.chartInfo.tip = null;
 
   return true;
 }
@@ -370,10 +344,19 @@ async function editPreset() {
   await configView.value?.applyConfig(preset.value.config);
 }
 
-type SortKey = 'id' | 'name' | 'difficulty' | 'level' | 'charter' | 'path';
+/** 列表只按这两种排：曲名、定数（`ChartInfo.lvl`，解析不出来时从难度文本里抠数字） */
+type SortKey = 'name' | 'level';
 
-const sortKey = useStorage<SortKey>('BatchView.SortKey', 'id');
+const sortKey = useStorage<SortKey>('BatchView.Sort', 'name');
 const sortAsc = useStorage<boolean>('BatchView.SortAsc', true);
+
+// 旧版本存的是「按难度文本」那个值：认不出来就退回曲名，免得下拉框里一片空白
+if (sortKey.value !== 'name' && sortKey.value !== 'level') sortKey.value = 'name';
+
+const sortItems = computed(() => [
+  { value: 'name' as SortKey, title: t('info.name') },
+  { value: 'level' as SortKey, title: t('info.lvl') },
+]);
 
 /**
  * 难度定数。`ChartInfo.lvl` 是解析 `"IN Lv.15.3"` 得到的数字；
@@ -391,120 +374,84 @@ function textCompare(a: string | null | undefined, b: string | null | undefined)
   return (a ?? '').localeCompare(b ?? '', undefined, { numeric: true, sensitivity: 'case', caseFirst: 'upper' });
 }
 
-/** 难度列显示文本：谱面没写 `difficulty` 时用解析出来的 `diff` + 定数拼一个。 */
-function difficultyLabel(chart: RenderChart): string {
-  // 不管走哪条分支，定数都补成一位小数
-  if (chart.chartInfo.difficulty) return formatLvlInText(chart.chartInfo.difficulty);
-  const lvl = formatLvl(chartLevel(chart));
-  const diff = chart.chartInfo.diff;
-  if (diff && lvl) return `${diff} Lv.${lvl}`;
-  return diff || (lvl ? `Lv.${lvl}` : '');
+/** 同一档定数里再分级的次级键：谱面写了 `difficulty` 就用它（定数补成一位小数），否则拿渲染出的档位凑 */
+function difficultyText(chart: RenderChart): string {
+  const text = (chart.chartInfo.difficulty ?? '').trim();
+  if (text) return formatLvlInText(text);
+  const lvl = chartLevel(chart);
+  const diff = (chart.chartInfo.diff ?? '').trim();
+  if (diff && lvl > 0) return `${diff} Lv.${lvl.toFixed(1)}`;
+  return diff || (lvl > 0 ? `Lv.${lvl.toFixed(1)}` : '');
 }
 
-/** 「难度」列按定数排（并列时再按难度名），其余列按各自字段排。 */
-const COMPARATORS: Record<SortKey, (a: RenderChart, b: RenderChart) => number> = {
-  id: (a, b) => a.id - b.id,
-  name: (a, b) => textCompare(a.chartInfo.name, b.chartInfo.name),
-  path: (a, b) => textCompare(a.path, b.path),
-  difficulty: (a, b) => textCompare(a.chartInfo.diff, b.chartInfo.diff) || chartLevel(a) - chartLevel(b),
-  level: (a, b) => chartLevel(a) - chartLevel(b) || textCompare(a.chartInfo.diff, b.chartInfo.diff),
-  charter: (a, b) => textCompare(a.chartInfo.charter, b.chartInfo.charter),
-};
+/** 定数相同再按难度文本、曲名，免得同一档的谱面在两种方向下顺序看起来随机 */
+function compareCharts(a: RenderChart, b: RenderChart): number {
+  if (sortKey.value === 'level') {
+    return (
+      chartLevel(a) - chartLevel(b) ||
+      textCompare(difficultyText(a), difficultyText(b)) ||
+      textCompare(a.chartInfo.name, b.chartInfo.name)
+    );
+  }
+  return textCompare(a.chartInfo.name, b.chartInfo.name);
+}
 
 function applySort() {
-  const compare = COMPARATORS[sortKey.value] ?? COMPARATORS.id;
   const direction = sortAsc.value ? 1 : -1;
-  charts.value.sort((a, b) => direction * compare(a, b));
+  charts.value.sort((a, b) => direction * compareCharts(a, b));
 }
 
-
-function sortChartsByKey(key: SortKey) {
-  // 点同一个表头换方向，换一个表头则重置为升序
-  if (sortKey.value === key) {
-    sortAsc.value = !sortAsc.value;
-  } else {
-    sortKey.value = key;
-    sortAsc.value = true;
-  }
-  applySort();
-}
-
-function sortChartsReverse() {
+function sortReverse() {
   sortAsc.value = !sortAsc.value;
   applySort();
 }
 
-/** 当前列是否在排序中，返回要显示的箭头图标。 */
-function sortIcon(key: SortKey): string | null {
-  if (sortKey.value !== key) return null;
-  return sortAsc.value ? 'mdi-arrow-up' : 'mdi-arrow-down';
+watch([sortKey, sortAsc], applySort);
+
+function openInRender(chart: RenderChart) {
+  router.push({
+    name: 'render',
+    query: {
+      chart: chart.path,
+      info: JSON.stringify(chart.chartInfo),
+      config: JSON.stringify(preset.value.config),
+    },
+  });
 }
 
-/* ---------- 每一行的三列「状态位」 ----------
-   `status.type === 'null'` 表示这条谱面还没进过任务队列：这三列显示 难度 / 谱师 / 路径；
-   一旦发起渲染，三列改显示 状态 / 进度 / 输出（和重做前的显示逻辑一致，只是从
-   一长串 v-if 收进了函数里，模板不用再为每种状态抄四遍同样的 v-col）。 */
+const merging = ref(false);
 
-/** 第三列（难度那一列）：没进队列时显示难度，进队列后显示状态。 */
-function cellLevel(chart: RenderChart): string {
-  switch (chart.status.type) {
-    case 'null': return difficultyLabel(chart);
-    case 'pending': return t('task.pending');
-    case 'loading': return t('task.loading');
-    case 'mixing': return t('task.mixing');
-    case 'mixing_sfx': return t('task.mixing');
-    case 'rendering': return `${(chart.status.progress * 100).toFixed(2)}%`;
-    case 'paused': return t('task.paused');
-    case 'done': return t('task.done');
-    case 'canceled': return t('task.canceled');
-    case 'failed': return t('task.failed');
+/**
+ * 「谱面融合」：把选中的同一首歌的几个难度拼成一张谱面，拼完直接进渲染页。
+ *
+ * 同一首歌的判据是「曲名 + 音乐文件」——两样都对得上才算，混进别的歌就别拼
+ * （后端也会再判一次，这里的判断只为能说清是哪两张对不上）。
+ */
+async function mergeSelected() {
+  const picked = charts.value.filter((chart) => chart.isSelect);
+  if (picked.length < 2) {
+    toastError(t('merge-need-two'));
+    return;
   }
-}
-
-/** 第四列（谱师那一列）：没进队列时显示谱师，进队列后显示进度细节。 */
-function cellDetail(chart: RenderChart): string {
-  switch (chart.status.type) {
-    case 'null': return chart.chartInfo.charter ?? '';
-    case 'rendering': return `${chart.status.fps} FPS`;
-    case 'done': return t('task.open-file');
-    default: return '-';
+  const base = picked[0]!;
+  const sameSong = (chart: RenderChart) =>
+    (chart.chartInfo.name ?? '').trim() === (base.chartInfo.name ?? '').trim() &&
+    (chart.chartInfo.music ?? '').trim() === (base.chartInfo.music ?? '').trim();
+  if (!picked.every(sameSong)) {
+    toastError(t('merge-not-same-song'));
+    return;
   }
-}
 
-/** 第五列（路径那一列）：没进队列时显示路径，进队列后显示预计剩余 / 输出入口。 */
-function cellExtra(chart: RenderChart): string {
-  switch (chart.status.type) {
-    case 'null': return chart.path;
-    case 'rendering': return `${chart.status.estimate.toFixed(0)} s`;
-    case 'done':
-    case 'canceled':
-    case 'failed': return t('task.show-output');
-    default: return '-';
+  merging.value = true;
+  try {
+    const path = await invoke<string>('merge_charts', { paths: picked.map((chart) => chart.path) });
+    // 融合包是临时文件，渲染页自己 `parse_chart` 读它；预设配置照旧带过去。
+    router.push({ name: 'render', query: { chart: path, config: JSON.stringify(preset.value.config) } });
+  } catch (e) {
+    toastError(e);
+  } finally {
+    merging.value = false;
   }
-}
-
-function canOpenOutputFile(chart: RenderChart): boolean {
-  return chart.status.type === 'done';
-}
-
-/** 「打开文件」：只有渲染完成那一行可以点。 */
-function openChartFile(chart: RenderChart) {
-  if (chart.status.type === 'done') openFile(chart.output);
-}
-
-/** 第五列的点击：没进队列时打开文件所在位置，跑完的行打开输出日志。 */
-function activateExtraCell(chart: RenderChart) {
-  if (chart.status.type === 'null') {
-    showInFolder(chart.path);
-  } else if (chart.status.type === 'done' || chart.status.type === 'canceled' || chart.status.type === 'failed') {
-    openOutputDialog(chart.status.output);
-  }
-}
-
-function openChartInfo(chart: RenderChart) {
-  chartInfoSelect.value = chart.id;
-  measureConfigDialogWidth();
-  chartInfoDialog.value = true;
 }
 
 const tasks = ref<Task[]>();
@@ -512,13 +459,13 @@ const tasks = ref<Task[]>();
 async function updateList() {
   if (!charts.value) return;
   tasks.value = await invoke<Task[]>('get_tasks');
-  // console.log(tasks.value);
+  // 只按 `taskId` 回填状态：卡片本身不显示进度（进度在任务页看），
+  // 但「渲染完成后移除」这条要认「跑完了没有」。
   for (let i = charts.value.length - 1; i >= 0; i--) {
     let chart = charts.value[i]!;
     let task = tasks.value.find((x) => x.id === chart.taskId);
     if (task) {
       chart.status = task.status;
-      // console.log(chart.status);
     }
     if (removeAfterRender.value && chart.status.type === 'done') {
       charts.value.splice(i, 1);
@@ -538,22 +485,6 @@ async function cancelSelectTask() {
   }
 }
 
-async function showOutputFolder() {
-  try {
-    await invoke('open_output_folder');
-  } catch (e) {
-    toastError(e);
-  }
-}
-
-async function openFile(path: string) {
-  try {
-    await openPath(path);
-  } catch (e) {
-    toastError(e);
-  }
-}
-
 async function showInFolder(path: string) {
   try {
     // 走后端：`explorer.exe /select,...` 由 shell 起进程。插件那版 `revealItemInDir`
@@ -569,6 +500,7 @@ async function clearTasks() {
   // 现在移除任务列表 + 批量列表就够了，不用把整个 webview 刷一遍。
   loadingPostRender.value = false;
   charts.value = [];
+  expandedIds.value = [];
   try {
     await invoke('clear_tasks');
   } catch (e) {
@@ -582,171 +514,76 @@ await updateList();
 
 const updateTask = setInterval(updateList, 700);
 onUnmounted(() => clearInterval(updateTask));
-
-const outputDialog = ref(false);
-const outputDialogMessage = ref('');
-
-function openOutputDialog(output: string) {
-  outputDialogMessage.value = ansi.ansi_to_html(output);
-  filteredOutputDialogMessage.value = outputDialogMessage.value;
-  filter.value = [];
-  outputDialog.value = true;
-}
-
-const filteredOutputDialogMessage = ref('');
-
-const filterItems: string[] = ["INFO", "DEBUG", "WARN", "ERROR", "! INFO", "! DEBUG", "! WARN", "! ERROR"];
-const filter: Ref<string[]> = ref([]);
-
-function filterText(
-  rawText: string,
-  filters: string[]
-): string {
-  const include: string[] = [];
-  const exclude: string[] = [];
-
-  for (let f of filters) {
-    f = f.trim();
-    if (!f) continue;
-    if (f.startsWith('!')) {
-      const kw = f.slice(1).trim();
-      if (kw) exclude.push(kw);
-    } else {
-      include.push(f);
-    }
-  }
-
-  if (include.length === 0 && exclude.length === 0) {
-    return rawText;
-  }
-
-  const resultLines = rawText
-    .split(/\r?\n/)
-    .filter(line => {
-      if (include.length > 0) {
-        const hitInclude = include.some(kw => line.includes(kw));
-        if (!hitInclude) return false;
-      }
-      const hitExclude = exclude.some(kw => line.includes(kw));
-      if (hitExclude) return false;
-
-      return true;
-    });
-
-  return resultLines.join('\n');
-}
-
 </script>
 
 <template>
   <div class="batch-view">
-    <!-- 谱面列表：表头固定，行交给 v-virtual-scroll 自己滚 -->
+    <!-- 谱面列表：卡片高度随展开变化，所以不用 v-virtual-scroll，整列自己滚 -->
     <div class="batch-view__list">
-      <div class="batch-grid batch-grid--head">
-        <div class="batch-grid__cell batch-grid__cell--center" @click="sortChartsByKey('id')" @contextmenu="sortChartsReverse" :title="t('sort-tip')">
-          ({{ filteredCharts.length }}<template v-if="filterTerms.length">/{{ charts.length }}</template>)
-          <v-icon v-if="sortIcon('id')" size="x-small" class="ml-1">{{ sortIcon('id') }}</v-icon>
-        </div>
-        <div class="batch-grid__cell" @click="sortChartsByKey('name')" @contextmenu="sortChartsReverse" :title="t('sort-tip')">
-          {{ t('info.name') }}
-          <v-icon v-if="sortIcon('name')" size="x-small" class="ml-1">{{ sortIcon('name') }}</v-icon>
-        </div>
-        <div class="batch-grid__cell" @click="sortChartsByKey('level')" @contextmenu="sortChartsReverse" :title="t('sort-by-level-tip')">
-          {{ t('info.difficulty') }}
-          <v-icon v-if="sortIcon('level')" size="x-small" class="ml-1">{{ sortIcon('level') }}</v-icon>
-        </div>
-        <div class="batch-grid__cell" @click="sortChartsByKey('charter')" @contextmenu="sortChartsReverse" :title="t('sort-tip')">
-          {{ t('info.charter') }}
-          <v-icon v-if="sortIcon('charter')" size="x-small" class="ml-1">{{ sortIcon('charter') }}</v-icon>
-        </div>
-        <div class="batch-grid__cell" @click="sortChartsByKey('path')" @contextmenu="sortChartsReverse" :title="t('sort-tip')">
-          {{ t('info.chart') }}
-          <v-icon v-if="sortIcon('path')" size="x-small" class="ml-1">{{ sortIcon('path') }}</v-icon>
-        </div>
-        <div class="batch-grid__cell batch-grid__cell--center">{{ t('chart-info') }}</div>
-        <div class="batch-grid__cell batch-grid__cell--center">{{ t('preview') }}</div>
+      <div v-if="charts.length === 0" class="batch-view__empty">
+        <p class="batch-view__empty-title">{{ t('choose.can-also-drop') }}</p>
       </div>
-      <VDivider></VDivider>
+      <div v-else-if="filteredCharts.length === 0" class="batch-view__empty">
+        <p class="batch-view__empty-title">{{ t('no-match') }}</p>
+      </div>
 
-      <div class="batch-view__list-body">
-        <!-- 只能拖进来，所以空列表给的是拖放提示（没有选择按钮）：
-             中间只留一行文字，不画图标。 -->
-        <div v-if="charts.length === 0" class="batch-view__empty">
-          <p class="batch-view__empty-title">{{ t('choose.can-also-drop') }}</p>
-        </div>
-        <div v-else-if="filteredCharts.length === 0" class="batch-view__empty">
-          <p class="batch-view__empty-title">{{ t('no-match') }}</p>
-        </div>
+      <template v-else>
+        <div v-for="item in filteredCharts" :key="item.id" class="batch-item">
+          <!-- 勾选框在卡片左边框外面（同任务页）：放在整行里会把行高撑开 -->
+          <span
+            class="batch-item__check"
+            :class="{ 'batch-item__check--on': item.isSelect }"
+            @mousedown.prevent
+            @click.stop="item.isSelect = !item.isSelect"
+          >
+            <v-checkbox-btn :model-value="item.isSelect" density="compact" :ripple="false"></v-checkbox-btn>
+          </span>
 
-        <v-virtual-scroll
-          v-else
-          :items="filteredCharts"
-          :item-height="64"
-          item-key="id"
-          height="100%"
-          style="overflow-y: scroll;"
-        >
-          <template v-slot:default="{ item }">
-            <div class="batch-grid batch-grid--row">
-              <div class="batch-grid__cell batch-grid__cell--center">
-                <v-checkbox v-model="item.isSelect" density="compact" hide-details class="batch-grid__check"></v-checkbox>
+          <v-card class="batch-card" :class="{ 'batch-card--open': expandedIds.includes(item.id) }">
+            <!-- 整行点击 = 展开 / 收起；曲绘与曲名各自 stop 掉，它们另有去处 -->
+            <div class="batch-row" @click="toggleExpanded(item.id)">
+              <div class="batch-row__cover" :title="t('preview-cover-tip')" @click.stop="previewChart(item)">
+                <ChartThumb :path="item.path" :illustration="item.chartInfo.illustration"></ChartThumb>
               </div>
-
-              <div class="batch-grid__cell">
+              <div class="batch-row__text">
                 <span
-                  class="batch-grid__ellipsis batch-grid__clickable"
+                  class="batch-row__name"
                   :title="`${item.chartInfo.name}\n${t('chart-open-tip')}`"
-                  @click="router.push({ name: 'render', query: { chart: item.path, info: JSON.stringify(item.chartInfo), config: JSON.stringify(preset.config) } })"
+                  @click.stop="openInRender(item)"
                   @contextmenu="showInFolder(item.path)"
                 >{{ item.chartInfo.name }}</span>
+                <span v-if="diffTier(item.chartInfo)" class="batch-row__diff">
+                  <span class="batch-row__diff-tier">{{ diffTier(item.chartInfo) }}</span>
+                  <span v-if="diffLvl(item.chartInfo)" class="batch-row__diff-lvl">Lv.{{ diffLvl(item.chartInfo) }}</span>
+                </span>
               </div>
-
-              <div class="batch-grid__cell">
-                <span class="batch-grid__ellipsis" :title="cellLevel(item)">{{ cellLevel(item) }}</span>
-              </div>
-
-              <div class="batch-grid__cell">
-                <span
-                  class="batch-grid__ellipsis"
-                  :class="{ 'batch-grid__clickable': canOpenOutputFile(item) }"
-                  :title="cellDetail(item)"
-                  @click="openChartFile(item)"
-                >{{ cellDetail(item) }}</span>
-              </div>
-
-              <div class="batch-grid__cell">
-                <span
-                  class="batch-grid__ellipsis"
-                  :class="{ 'batch-grid__clickable': item.status.type !== 'null' }"
-                  :title="`${cellExtra(item)}\n${item.status.type === 'null' ? t('file-open-tip') : ''}`"
-                  @click="activateExtraCell(item)"
-                  @contextmenu="showInFolder(item.path)"
-                >{{ cellExtra(item) }}</span>
-              </div>
-
-              <div class="batch-grid__cell batch-grid__cell--center">
-                <v-btn size="small" variant="tonal" @click="openChartInfo(item)">{{ t('edit') }}</v-btn>
-              </div>
-              <div class="batch-grid__cell batch-grid__cell--center">
-                <v-btn size="small" variant="tonal" :loading="loadingPreview" @click="previewChart(item)">{{ t('preview') }}</v-btn>
-              </div>
+              <v-icon class="batch-row__chevron" icon="mdi-chevron-down" size="20"></v-icon>
             </div>
-          </template>
-        </v-virtual-scroll>
 
-        <v-overlay v-model="loadingParsingChart" class="align-center justify-center" persistent noClickAnimation :close-on-content-click="false">
-          <v-progress-circular indeterminate style="filter: none;"> </v-progress-circular>
-        </v-overlay>
-      </div>
+            <v-expand-transition>
+              <div v-if="expandedIds.includes(item.id)" class="batch-detail">
+                <!-- 上半：渲染页顶部那份谱面横幅（点一下同样进预览） -->
+                <div class="batch-hero" :title="t('preview-cover-tip')" @click="previewChart(item)">
+                  <ChartHero :info="item.chartInfo" :path="item.path"></ChartHero>
+                </div>
+                <!-- 下半：渲染页那张谱面信息表单，可编辑；每张卡片各有一份 -->
+                <div class="config-root batch-detail__form">
+                  <ChartInfoForm :ref="(el) => setInfoForm(item.id, el)" :info="item.chartInfo"></ChartInfoForm>
+                </div>
+              </div>
+            </v-expand-transition>
+          </v-card>
+        </div>
+      </template>
     </div>
 
     <!-- 底部固定操作条：和渲染页同一条（`border-top` + 左右内边距），分两排：
-           上排 = 筛选 / 打开输出文件夹 · 移除全部任务 / 三个开关
+           上排 = 筛选 · 排序 · 移除全部任务 ……… 三个开关
            下排 = 预设配置（最左）………… 全选 反选 移除 取消 渲染（右下角）
          高度：`--v-input-control-height` 从 Vuetify compact 的 40px 压到 28px（见样式）。 -->
     <div class="batch-view__actions">
       <div class="batch-view__bar batch-view__bar--head">
-        <div class="batch-view__pickers config-root">
+        <div class="batch-view__pickers batch-view__pickers--filter config-root">
           <span class="batch-view__picker-label">{{ t('filter') }}</span>
           <v-text-field
             class="batch-view__picker batch-view__picker--filter"
@@ -760,12 +597,43 @@ function filterText(
           ></v-text-field>
         </div>
 
+        <div class="batch-view__pickers batch-view__pickers--sort config-root">
+          <span class="batch-view__picker-label">{{ t('sort') }}</span>
+          <v-select
+            class="batch-view__picker batch-view__picker--sort"
+            density="compact"
+            hide-details
+            :items="sortItems"
+            item-title="title"
+            item-value="value"
+            :menu-props="{ contentClass: 'v-select__content batch-preset-menu' }"
+            v-model="sortKey"
+          ></v-select>
+          <v-btn
+            variant="text"
+            size="x-small"
+            :icon="sortAsc ? 'mdi-arrow-up' : 'mdi-arrow-down'"
+            :title="t('sort-reverse-tip')"
+            @click="sortReverse"
+          ></v-btn>
+        </div>
+
         <v-divider vertical class="mx-1" style="height: 24px;"></v-divider>
 
-        <v-btn variant="text" size="small" prepend-icon="mdi-folder-open" @click="showOutputFolder">{{ t('task.show-folder') }}</v-btn>
         <v-btn variant="text" size="small" prepend-icon="mdi-delete-sweep-outline" @click="clearTasks">{{ t('clear-tasks') }}</v-btn>
 
-        <v-divider vertical class="mx-1" style="height: 24px;"></v-divider>
+        <!-- 谱面融合与「移除全部任务」相邻：两者都作用在整份列表上，而右边那三个开关是「发起后的动作」 -->
+        <v-btn
+          variant="text"
+          size="small"
+          prepend-icon="mdi-merge"
+          :loading="merging"
+          :disabled="selectedCount < 2"
+          :title="t('merge-tip')"
+          @click="mergeSelected"
+        >{{ t('merge-charts') }}</v-btn>
+
+        <v-spacer />
 
         <CfgSwitch small :label="t('dis-select-start-render')" v-model="disSelectStartRender" />
         <CfgSwitch small :label="t('remove-start-render')" v-model="removeStartRender" />
@@ -773,7 +641,7 @@ function filterText(
       </div>
 
       <div class="batch-view__bar batch-view__bar--foot">
-        <div class="batch-view__pickers config-root">
+        <div class="batch-view__pickers batch-view__pickers--preset config-root">
           <span class="batch-view__picker-label">{{ t('presets') }}</span>
           <v-combobox
             class="batch-view__picker batch-view__picker--preset"
@@ -801,72 +669,6 @@ function filterText(
       </div>
     </div>
 
-    <!-- 谱面信息弹窗：按齿轮配置的格式（谱面信息的编辑也是同一套）⇒
-         和齿轮弹窗（`components/PhiSubMenu.vue`）、「文件名格式」弹窗（`components/ConfigView.vue`）
-         同一套皮肤：`.log-card-only-window.phi-config-dialog`（内容区底色 + 88% 不透明、直角、
-         标题居中 1.5rem、`__body` 无额外内边距）、宽度用「内容区的 60%」（见 `measureConfigDialogWidth`）。
-         齿轮弹窗底下没有按钮（点空白处 / Esc 关闭），这里同样不再放「关闭」按钮。 -->
-    <v-dialog v-model="chartInfoDialog" :width="configDialogWidth" class="log-card-bg">
-      <v-card class="log-card-only-window phi-config-dialog">
-        <div class="phi-config-dialog__head">
-          <span class="phi-config-dialog__title" v-t="'chart-info'"></span>
-        </div>
-        <v-card-text class="config-root phi-config-dialog__body batch-info__body">
-          <!-- 补上 `ref="form"` —— 以前这个表单没有 ref，checkInfo() 里的
-               `form.value!.validate()` 取到 undefined 会抛错，批量渲染发不出去 -->
-          <v-form ref="form" v-if="editingChart" validateOn="eager">
-            <!-- 谱面信息的编辑应该和渲染谱面信息一样只有那些元素，再多加个 Tip。
-                 另外预览的Tip也放到谱面信息里，在简介后面」⇒ 字段与渲染页（RenderView.vue 的
-                 `#chart-info`）逐条对齐：曲名 / 曲师 / 谱师 / 画师 / 谱面文件 / 音乐文件 / 曲绘文件
-                 / 难度 / 定数 一行两个，然后 简介 与 Tip 各占一整行、Tip 紧跟在简介后面。
-                 原来这里的 宽高比 / 偏移 / 判定线长度 / 总分 / Hold 打击特效间隔倍率 以及五个勾选框
-                 （强制宽高比 / Note 等比缩放 / 折叠式入场 / 允许负长度 Hold / Hold 尾部遮罩）全部删掉：
-                 它们属于渲染参数与谱面附加格，批量渲染统一用预设里的那份配置。 -->
-            <div class="cfg-grid cfg-grid--two">
-              <CfgField :label="t('info.name')">
-                <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="editingChart.chartInfo.name"></v-textarea>
-              </CfgField>
-              <CfgField :label="t('info.composer')">
-                <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="editingChart.chartInfo.composer"></v-textarea>
-              </CfgField>
-              <CfgField :label="t('info.charter')">
-                <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="editingChart.chartInfo.charter"></v-textarea>
-              </CfgField>
-              <CfgField :label="t('info.illustrator')">
-                <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="editingChart.chartInfo.illustrator"></v-textarea>
-              </CfgField>
-              <!-- 谱面文件 / 音乐文件 / 曲绘文件：与渲染页一样就是可编辑的文本框（渲染页也没做选择器） -->
-              <CfgField :label="t('info.chart')">
-                <v-text-field type="text" density="compact" hide-details="auto" v-model="editingChart.chartInfo.chart"></v-text-field>
-              </CfgField>
-              <CfgField :label="t('info.music')">
-                <v-text-field type="text" density="compact" hide-details="auto" v-model="editingChart.chartInfo.music"></v-text-field>
-              </CfgField>
-              <CfgField :label="t('info.illustration')">
-                <v-text-field type="text" density="compact" hide-details="auto" v-model="editingChart.chartInfo.illustration"></v-text-field>
-              </CfgField>
-              <CfgField :label="t('info.difficulty')">
-                <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="editingChart.chartInfo.difficulty"></v-textarea>
-              </CfgField>
-              <CfgField :label="t('info.lvl')">
-                <!-- 定数可以是 0 / 空（官谱里常见 `Lv.0.0`、也可能没写）：只拦负数和乱写，不拦空 -->
-                <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrNull]" v-model="lvlText" @blur="normalizeLvl"></v-text-field>
-              </CfgField>
-            </div>
-            <!-- 简介 与 Tip：都是 `full` 条目 ⇒ 单开一个网格，`:has()` 规则会去掉栏间竖线 -->
-            <div class="cfg-grid">
-              <CfgField :label="t('info.intro')" full>
-                <v-text-field type="text" density="compact" hide-details="auto" v-model="editingChart.chartInfo.intro"></v-text-field>
-              </CfgField>
-              <CfgField :label="t('info.tip')" full>
-                <v-textarea rows="1" auto-grow density="compact" hide-details="auto" :placeholder="t('info.tip-placeholder')" v-model="editingChart.chartInfo.tip"></v-textarea>
-              </CfgField>
-            </div>
-          </v-form>
-        </v-card-text>
-      </v-card>
-    </v-dialog>
-
     <!-- 预设配置弹窗：同样按齿轮配置的格式（预设配置的编辑弹窗模仿齿轮配置），
          宽度是**内容区的 100%**（`measurePresetDialogWidth`，配置条目多，60% 太挤）。
          改动是随改随存的（`ConfigView` 发 `change` → `setWorkingPreset`），所以和齿轮弹窗一样
@@ -882,33 +684,9 @@ function filterText(
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="outputDialog" class="log-card-bg">
-      <v-card class="log-card-window">
-        <v-card-title style="margin-bottom: -16px;" v-t="'output'"></v-card-title>
-        <v-card-text style="padding-bottom: 0px;">
-          <div
-            class="block whitespace-pre overflow-auto log-card-msg user-select"
-            style="height: calc(100vh - 240px);"
-            v-html="filteredOutputDialogMessage"
-          ></div>
-          <v-combobox
-            class="mt-4"
-            variant="outlined"
-            v-model="filter"
-            :items="filterItems"
-            clearable
-            multiple
-            placeholder="Filter (comma separated)"
-            @update:model-value="(val: string[]) => {
-              filteredOutputDialogMessage = filterText(outputDialogMessage, val);
-            }"
-          ></v-combobox>
-        </v-card-text>
-        <v-card-actions class="justify-end">
-          <v-btn class="hover-scale" variant="text" @click="outputDialog = false" v-t="'close'"></v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <v-overlay v-model="loadingParsingChart" class="align-center justify-center" persistent noClickAnimation :close-on-content-click="false">
+      <v-progress-circular indeterminate style="filter: none;"> </v-progress-circular>
+    </v-overlay>
 
     <v-overlay v-model="fileHovering" contained class="align-center justify-center drop-zone-overlay" persistent :close-on-content-click="false">
       <div class="drop-pulse">
@@ -920,11 +698,6 @@ function filterText(
 
 <style scoped>
 
-.v-progress-linear,
-.v-progress-linear__determinate {
-  transition: none;
-}
-
 /* 整页铺满内容区（和渲染页 `.render-view` 同一套外壳） */
 .batch-view {
   position: relative;
@@ -935,104 +708,199 @@ function filterText(
   overflow: hidden;
 }
 
-/* 谱面列表：表头在上，行自己滚 */
+/* 谱面列表：卡片自己滚。左内边距多留 42px，给卡片外面那个勾选框 */
 .batch-view__list {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding: var(--phi-space-3) var(--phi-space-6) 0;
+  overflow-y: auto;
+  padding: var(--phi-space-3) var(--phi-space-6) 0 calc(var(--phi-space-6) + 42px);
+  scrollbar-width: none;
 }
 
-.batch-view__list-body {
+/* 一张谱面 = 一张卡片（版式照任务页 `.task-item` + `.task-card`） */
+.batch-item {
   position: relative;
-  flex: 1;
-  min-height: 0;
+  --batch-row-h: 58px;
 }
 
-/* 列表栅格：选择框 / 名称 / 难度·状态 / 谱师·详情 / 路径·输出 / 编辑 / 预览。
-   表头（--head）与每一行（--row）共用这套列宽，所以永远对齐；
-   改列宽只改这里一处。 */
-.batch-grid {
-  display: grid;
+.batch-item + .batch-item {
+  margin-top: 6px;
+}
+
+/* 勾选框在卡片左边框外面，平时透明，hover / 选中 / 聚焦时才露出来 */
+.batch-item__check {
+  position: absolute;
+  left: -38.4px;
+  top: calc(5px + var(--batch-row-h) / 2);
+  display: flex;
   align-items: center;
-  grid-template-columns:
-    48px
-    minmax(0, 2.4fr)
-    minmax(0, 1.1fr)
-    minmax(0, 1.1fr)
-    minmax(0, 2.2fr)
-    84px
-    84px;
-  column-gap: var(--phi-space-3);
-  padding: 0 var(--phi-space-4);
-}
-
-.batch-grid--head {
-  flex: none;
-  height: 40px;
-  background: var(--phi-bg-layer-1);
-  font-size: 0.85rem;
-  color: var(--phi-label-secondary);
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.12s;
   user-select: none;
 }
 
-.batch-grid--head .batch-grid__cell {
-  cursor: pointer;
+.batch-item:hover .batch-item__check,
+.batch-item__check--on,
+.batch-item__check:focus-within {
+  opacity: 1;
 }
 
-.batch-grid--head .batch-grid__cell:hover {
-  color: var(--phi-static-bluish-00);
+.batch-item__check :deep(.v-selection-control) {
+  min-height: 24px;
 }
 
-.batch-grid--row {
-  height: 64px;
-  border-bottom: 0.5px solid var(--phi-border-l3);
+.batch-item__check :deep(.v-icon) {
+  font-size: 22px;
 }
 
-.batch-grid--row:hover {
-  background: var(--phi-interactive-hover);
+.batch-card {
+  margin: 5px 0;
+  border: 0.5px solid var(--phi-border-l3);
+  border-radius: var(--phi-radius-lg) var(--phi-radius-lg) 0 0 !important;
+  background: var(--phi-bg-layer-1);
+  box-shadow: var(--phi-elevation-soft);
 }
 
-.batch-grid__cell {
+.batch-card:hover {
+  background: var(--phi-bg-layer-2);
+}
+
+/* 折叠行：曲绘 / 曲名 + 难度徽章 / 展开箭头 */
+.batch-row {
   display: flex;
   align-items: center;
-  min-width: 0;
-}
-
-.batch-grid__cell--center {
-  justify-content: center;
-}
-
-/* 长文本一律单行省略号，完整内容在 title 里 */
-.batch-grid__ellipsis {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.batch-grid__clickable {
+  gap: var(--phi-space-3);
+  padding: var(--phi-space-3) var(--phi-space-4);
+  box-sizing: border-box;
+  min-height: var(--batch-row-h);
   cursor: pointer;
 }
 
-.batch-grid__clickable:hover {
+.batch-row__cover {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  aspect-ratio: 2048 / 1080;
+  overflow: hidden;
+  border: 0.5px solid var(--phi-border-l3);
+  border-radius: var(--phi-radius-sm);
+  background: var(--phi-bg-layer-3);
+  color: var(--phi-label-caption);
+  cursor: pointer;
+}
+
+.batch-row__cover:hover {
+  border-color: var(--phi-accent);
+}
+
+.batch-row__cover :deep(img) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.batch-row__text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--phi-space-3);
+  min-width: 0;
+}
+
+.batch-row__name {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--phi-label-primary);
+  cursor: pointer;
+}
+
+.batch-row__name:hover {
   color: var(--phi-accent);
   text-decoration: underline;
 }
 
-/* 勾选框在 64px 的行里本来会撑出一堆内边距 */
-.batch-grid__check {
+/* 难度徽章：灰底白字，档位大写 + 定数（同任务页 `.task-row__diff`） */
+.batch-row__diff {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 0;
+  background: var(--phi-static-neutral-600);
+  color: var(--phi-static-bluish-00);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.batch-row__diff-tier {
+  text-transform: uppercase;
+}
+
+.batch-row__diff-lvl {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.batch-row__chevron {
+  flex: none;
+  color: var(--phi-label-caption);
+  transition: transform 0.15s ease;
+}
+
+.batch-card--open .batch-row__chevron {
+  transform: rotate(180deg);
+}
+
+/* 展开区：上半是谱面横幅，下半是谱面信息表单 */
+.batch-detail {
+  border-top: 0.5px solid var(--phi-border-l3);
+  background: var(--phi-bg-layer-1);
+}
+
+.batch-hero {
+  position: relative;
+  cursor: pointer;
+}
+
+/* 横幅高度对齐任务页展开的那一屏（`ChartHero` 的 `.chart-hero__inner` 自带 z-index 与
+   右侧 36px 的箭头留白，这里都要按卡片的情况改：箭头在折叠行里，横幅不需要留白） */
+.batch-hero :deep(.chart-hero),
+.batch-hero :deep(.chart-hero__inner) {
+  height: 200px;
+  min-height: 0;
+}
+
+.batch-hero :deep(.chart-hero__inner) {
+  padding-right: var(--phi-space-5);
+}
+
+.batch-detail__form {
+  padding-bottom: var(--phi-space-2);
 }
 
 /* 空列表：中间只有一行文字，不画图标 */
 .batch-view__empty {
   display: flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
-  height: 100%;
 }
 
 .batch-view__empty-title {
@@ -1041,7 +909,7 @@ function filterText(
   color: var(--phi-label-secondary);
 }
 
-/* 底部固定操作条（同渲染页 `.render-view__actions`）；内容多的时候允许换行 */
+/* 底部固定操作条（同渲染页 `.render-view__actions`） */
 .batch-view__actions {
   display: flex;
   flex: none;
@@ -1051,9 +919,8 @@ function filterText(
   border-top: 0.5px solid var(--phi-border-l3);
 }
 
-/* 操作条里的一排（现在一共两排，见模板注释）。
-   这里强制只显示一行 ⇒ 不再换行（原来 `flex-wrap: wrap`，
-   窗口窄一点后面的开关就掉到第二行去）。 */
+/* 操作条里的一排（一共两排，见模板注释）。强制只显示一行：窄窗口下
+   开关的标签用省略号，不要让后面的东西掉到第二排去。 */
 .batch-view__bar {
   display: flex;
   flex-wrap: nowrap;
@@ -1062,22 +929,32 @@ function filterText(
   min-width: 0;
 }
 
-/* 上排：筛选那组固定 1/5，后面五项（打开输出文件夹 · 移除全部任务 · 三个开关）
-   均分剩下的 4/5（`flex: 1 1 0` + `min-width: 0`，`justify-content: center` 让内容居中）。
-   两个 `v-divider` 是分隔线，不参与均分（下面的规则在它之后，同特异性后者生效）。 */
-.batch-view__bar--head > .batch-view__pickers {
-  flex: 0 0 20%;
+/* 上排：筛选 / 排序两组按内容伸缩，中间的分隔线与按钮不参与伸缩，
+   右边三个开关让出空间给标签省略号。 */
+.batch-view__bar--head > .batch-view__pickers--filter {
+  flex: 0 1 26%;
   min-width: 0;
 }
 
-.batch-view__bar--head > :not(.batch-view__pickers) {
-  flex: 1 1 0;
+.batch-view__bar--head > .batch-view__pickers--sort {
+  flex: 0 1 20%;
   min-width: 0;
-  justify-content: center;
 }
 
+.batch-view__bar--head > .v-btn,
 .batch-view__bar--head > .v-divider {
-  flex: 0 0 auto;
+  flex: none;
+}
+
+.batch-view__bar--head :deep(.cfg-item) {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.batch-view__bar--head :deep(.cfg-item__label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 下排：「预设配置」那一组（标签 + 下拉框 + 铅笔按钮）占整排的 60% */
@@ -1086,8 +963,7 @@ function filterText(
   min-width: 0;
 }
 
-/* 操作条最左边的「预设配置 + 筛选」（「预设配置和筛选都放到下面，高度缩小30%」）。
-   不再是 cfg-grid 的条目，改成条内的行内小控件：
+/* 操作条里的「标签 + 控件」组：不再是 cfg-grid 的条目，改成条内的行内小控件；
    外壳仍套 `.config-root`，输入框才和配置页一样是直角方框 + 白字。 */
 .batch-view__pickers {
   display: flex;
@@ -1101,10 +977,8 @@ function filterText(
   white-space: nowrap;
 }
 
-/* 两个下拉框都不再写死像素宽度，改成撑满各自那一组
-   （预设配置那组 = 整排 60%，筛选那组 = 整排 1/5） */
-.batch-view__picker--preset,
-.batch-view__picker--filter {
+/* 下拉框 / 输入框撑满自己那一组（组宽由上面的 flex 定） */
+.batch-view__picker {
   flex: 1 1 auto;
   width: auto;
   min-width: 0;
@@ -1161,25 +1035,8 @@ function filterText(
   color: var(--phi-label-inverted) !important;
 }
 
-/* 谱面信息弹窗内容高的时候自己滚（皮肤来自 config.css 的 `.phi-config-dialog__body`） */
-.batch-info__body {
-  max-height: calc(100vh - 220px);
-  overflow-y: auto;
-}
-
-/* 预设弹窗标题行不再放「保存」按钮了（改动随改随存，见 `setWorkingPreset`），
-   原来的 `.batch-config-dialog__save` 那条绝对定位样式一并删掉。 */
-
 .v-text-field :deep(.v-field--focused) {
   border-color: var(--phi-accent) !important;
-}
-
-h2 {
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  background: linear-gradient(45deg, var(--phi-accent), var(--phi-static-brand-500));
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
 }
 
 :deep(span) {
@@ -1196,19 +1053,10 @@ h2 {
   100% { transform: scale(1); }
 }
 
-:deep(.v-slider__thumb) {
-  background: var(--phi-accent) !important;
-
-}
-
-:deep(.v-slider__track-fill) {
-  background: var(--phi-accent) !important;
-}
-
 </style>
 
 <!-- 下拉栏（Vuetify 的菜单）是 teleport 到 `.v-overlay-container` 下的，scoped 样式够不着 ⇒
-     这里单独一段**非 scoped** 样式；用 combobox 上的 `menu-props.contentClass` 限定作用范围，
+     这里单独一段**非 scoped** 样式；用控件上的 `menu-props.contentClass` 限定作用范围，
      免得顺手改到设置页那个语言下拉。字号与字段里的输入框保持一致。 -->
 <style>
 .batch-preset-menu .v-list-item-title {

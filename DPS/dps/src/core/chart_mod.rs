@@ -1,5 +1,5 @@
-//! 「谱面修改」：纯配置谱面、定轨谱面，把谱面本身改出花样的按键替换、随机按键与流速、长条填充、
-//! 长条延长、复制音符、随机位置、陈列按键（后七个与谱面修改工具 modify 里的同名功能一一对应），
+//! 「谱面修改」：纯配置谱面、定轨谱面，把谱面本身改出花样的按键替换、随机按键、随机流速、固定流速、
+//! 长条填充、长条延长、复制音符、随机位置、陈列按键（后九个与谱面修改工具 modify 里的同名功能一一对应），
 //! 以及「隐藏按键」这一项自己的东西（modify 里没有对应功能）。
 //!
 //! 这些都同一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏走的
@@ -8,14 +8,17 @@
 //! 按键那一层还可以同时开多个，**落地顺序就是界面上勾选的先后**（配置里记在 `chart_mod_order`）：
 //! 顺序会改结果，例如先「复制音符」再「长条填充」是拆出来的按键各复制一份，反过来则是复制出来的
 //! 长按各自被拆。没在 `chart_mod_order` 里提到的功能排在后面，按界面行序 —— 老的 config.toml
-//! 没有这一项，照样能跑。
+//! 没有这一项，照样能跑。固定流速不在这一串里：它把整张谱面的下落节奏换掉，和别的功能叠在一起没有
+//! 意义，界面上它也放在「测试」那一栏。
 //!
-//! 四类**互斥**（[`Mods::from_config`] 里兜底）：纯配置谱面 / 定轨谱面 / 隐藏按键 / 按键那一层，
-//! 同一时刻只让一类生效。前三类各自把整张谱面重排一遍，和别的类叠在一起只会互相覆盖；界面按同一
-//! 规则联动开关，手改 config.toml 同时开了几类时按界面行序取最靠前的那一类。
+//! 六类**互斥**（[`Mods::from_config`] 里兜底）：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 /
+//! 按键那一层，同一时刻只让一类生效。前五类各自把整张谱面（或全部按键的下落节奏、可见性）改一遍，和
+//! 别的类叠在一起只会互相覆盖；界面按同一规则联动开关，手改 config.toml 同时开了几类时按界面行序取
+//! 最靠前的那一类。
 //!
 //! 其中「纯配置谱面」「定轨谱面」改判定线布局、「陈列按键」会把整张谱面收到一条基准线上，这三项由
-//! [`crate::core::Chart::apply_chart_mods`] 自己落地；其余各项只动按键自己，走 [`apply_step`]。
+//! [`crate::core::Chart::apply_chart_mods`] 自己落地；「固定流速」和其余各项走 [`apply_step`] —— 它虽然
+//! 也改判定线，但改的是每条线各自的高度曲线，不需要重排绘制顺序。
 //!
 //! 与 modify 的差别有三处：
 //!
@@ -135,7 +138,8 @@ pub struct Pure {
 /// 「长条填充」是拆出来的按键各复制一份，反过来则是复制出来的长按各自被拆。
 ///
 /// 定轨谱面不在这一串里（[`Mods::lane`]）：它得紧跟在纯配置谱面后面落地，见 `Chart::apply_chart_mods`；
-/// 隐藏按键也不在（[`Mods::hide`]）：它只改可见性，永远最后一步。
+/// 隐藏按键也不在（[`Mods::hide`]）：它只改可见性，永远最后一步；固定流速也不在：它单独一类，界面上
+/// 归在「测试」那一栏（见 [`Mods::from_config`]）。
 pub enum Step {
     /// 纯配置谱面：判定线拍平，只留按键的横向位置。
     Pure(Pure),
@@ -143,13 +147,12 @@ pub enum Step {
     Arrange(Arrange),
     /// 按键替换：四种源键型各自的映射。
     Replace(Replace),
-    /// 随机按键与流速。
-    Random {
-        /// 每个按键随机换一种键型。
-        note_type: bool,
-        /// 每个按键随机乘一个流速倍率，范围是这两个数（小的在前）。
-        speed: Option<(f64, f64)>,
-    },
+    /// 随机按键：每个按键随机换一种键型。
+    RandomType,
+    /// 随机流速：每个按键随机乘一个流速倍率，范围是这两个数（小的在前）。
+    RandomSpeed(f64, f64),
+    /// 固定流速：整张谱面的流速钉成这一个值。
+    FixedSpeed(f64),
     /// 随机位置：横向随机的幅度（世界单位，半个屏幕宽是 1）。
     RandomPos(f32),
     /// 长条填充。
@@ -172,7 +175,9 @@ impl Step {
             Self::Pure(_) => "pure",
             Self::Arrange(_) => "arrange",
             Self::Replace(_) => "replace",
-            Self::Random { .. } => "random",
+            Self::RandomType => "random",
+            Self::RandomSpeed(..) => "random_speed",
+            Self::FixedSpeed(_) => "fixed_speed",
             Self::RandomPos(_) => "random_pos",
             Self::Spread(_) => "spread",
             Self::Extend(_) => "extend",
@@ -181,27 +186,28 @@ impl Step {
     }
 }
 
-/// 「谱面修改」这一类的全部功能。四类互斥（纯配置谱面 / 定轨谱面 / 隐藏按键 / 按键级的那几个），
-/// 同一时刻只有一类会落在里面；按键那几个按用户勾选的先后排好。
+/// 「谱面修改」这一类的全部功能。六类互斥（纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 /
+/// 按键级的那几个），同一时刻只有一类会落在里面；按键那几个按用户勾选的先后排好。
 pub struct Mods {
     /// 依次要落地的功能；空表就是一个功能都没开（或走的是下面两类之一）。
     pub steps: Vec<Step>,
-    /// 定轨谱面：单独一类，与纯配置谱面互斥，所以它要么一步落地、要么不在。
+    /// 定轨谱面：单独一类，所以它要么一步落地、要么不在。
     pub lane: Option<Lanes>,
-    /// 隐藏按键：单独一类，与上面两类和其它功能都互斥，落地时只改可见性。
+    /// 隐藏按键：单独一类，落地时只改可见性。
     pub hide: bool,
 }
 
 impl Mods {
     /// 从 dps 配置里收出这一趟要落地的功能。
     ///
-    /// 四类**互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 按键级的那些功能（陈列按键、按键替换、随机、
-    /// 随机位置、长条填充、长条延长、复制音符）—— 同一时刻只让一类生效。界面按同一规则联动开关，
+    /// 六类**互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 按键级的那些功能（按键替换、
+    /// 随机、随机位置、长条填充、长条延长、复制音符）—— 同一时刻只让一类生效。界面按同一规则联动开关，
     /// 这里兜底手改的 config.toml：同时开了几类时，按界面行序取最靠前的那一类
-    /// （纯配置谱面 → 定轨谱面 → 隐藏按键 → 按键那一类）。
+    /// （纯配置谱面 → 定轨谱面 → 隐藏按键 → 陈列按键 → 固定流速 → 按键那一类）。
     ///
     /// 按键那一类的顺序照 `chart_mod_order` 走 —— 那是界面按勾选先后写进来的；表里没提到的功能
     /// 按界面行序续在后面，所以老的 config.toml（没有这一项）照样能跑，只是顺序退回界面行序。
+    /// 固定流速不在这串里：它不参与排序，开了就单独一步落地。
     pub fn from_config(config: &Config) -> Self {
         if config.pure_config_chart {
             return Self {
@@ -238,16 +244,27 @@ impl Mods {
                 hide: true,
             };
         }
+        if config.chart_mod_arrange {
+            return Self {
+                steps: vec![Step::Arrange(Arrange {
+                    gap: config.chart_mod_arrange_gap,
+                    line_y: config.chart_mod_arrange_line_y,
+                    speed: config.chart_mod_arrange_speed,
+                })],
+                lane: None,
+                hide: false,
+            };
+        }
+        if config.chart_mod_fixed_speed {
+            return Self {
+                steps: vec![Step::FixedSpeed(config.chart_mod_fixed_speed_value)],
+                lane: None,
+                hide: false,
+            };
+        }
 
         // 先按界面行序把它们收全，再按配置里记的顺序挑出来
         let mut all = Vec::new();
-        if config.chart_mod_arrange {
-            all.push(Step::Arrange(Arrange {
-                gap: config.chart_mod_arrange_gap,
-                line_y: config.chart_mod_arrange_line_y,
-                speed: config.chart_mod_arrange_speed,
-            }));
-        }
         if config.chart_mod_replace {
             all.push(Step::Replace(Replace {
                 tap: NoteType::from_name(&config.chart_mod_replace_tap),
@@ -256,13 +273,11 @@ impl Mods {
                 flick: NoteType::from_name(&config.chart_mod_replace_flick),
             }));
         }
-        let random_speed = (config.chart_mod_random && config.chart_mod_random_speed)
-            .then_some((config.chart_mod_random_speed_min, config.chart_mod_random_speed_max));
-        if config.chart_mod_random && (config.chart_mod_random_type || random_speed.is_some()) {
-            all.push(Step::Random {
-                note_type: config.chart_mod_random_type,
-                speed: random_speed,
-            });
+        if config.chart_mod_random {
+            all.push(Step::RandomType);
+        }
+        if config.chart_mod_random_speed {
+            all.push(Step::RandomSpeed(config.chart_mod_random_speed_min, config.chart_mod_random_speed_max));
         }
         if config.chart_mod_random_pos {
             all.push(Step::RandomPos(config.chart_mod_random_pos_range));
@@ -323,9 +338,14 @@ pub(crate) fn apply_step(lines: &mut [JudgeLine], bpm_list: &mut BpmList, step: 
                 replace_types(line, replace, bpm_list);
             }
         }
-        Step::Random { note_type, speed } => {
+        Step::RandomType => {
             for line in editable_lines {
-                randomize(line, *note_type, *speed, bpm_list, rng);
+                randomize_types(line, bpm_list, rng);
+            }
+        }
+        Step::RandomSpeed(min, max) => {
+            for line in editable_lines {
+                randomize_speeds(line, (*min, *max), rng);
             }
         }
         Step::Spread(spread) => {
@@ -342,6 +362,11 @@ pub(crate) fn apply_step(lines: &mut [JudgeLine], bpm_list: &mut BpmList, step: 
         Step::Copy { times, offset } => {
             for line in editable_lines {
                 copy_notes(line, *times, *offset);
+            }
+        }
+        Step::FixedSpeed(speed) => {
+            for line in editable_lines {
+                fix_speed(line, *speed, track_end);
             }
         }
         Step::RandomPos(range) => {
@@ -398,37 +423,126 @@ fn replace_types(line: &mut JudgeLine, replace: &Replace, bpm_list: &mut BpmList
     }
 }
 
-/// 随机按键 / 随机按键与流速：每个按键随机键型，再随机乘一个流速倍率。
+/// 随机按键：每个按键随机换一种键型（长按换成别的键型时流速回到 1，同「按键替换」）。
+fn randomize_types(line: &mut JudgeLine, bpm_list: &mut BpmList, rng: &mut Pcg32) {
+    let mut curve = line.height.clone();
+    for note in line.notes.iter_mut() {
+        let note_type = match rng.random_range(0..4) {
+            0 => NoteType::Tap,
+            1 => NoteType::Drag,
+            2 => NoteType::Hold,
+            _ => NoteType::Flick,
+        };
+        if !note_type.matches_kind(&note.kind) {
+            // 长按换成别的键型时流速回到 1（同「按键替换」）
+            if matches!(note.kind, NoteKind::Hold { .. }) {
+                note.speed = 1.;
+            }
+            let hold_len = CONVERT_HOLD_TICKS / ticks_per_sec(bpm_list, note.time);
+            set_note_type(note, note_type, hold_len, &mut curve);
+        }
+    }
+}
+
+/// 随机流速：每个按键随机乘一个流速倍率。
 ///
 /// 流速倍率按谱面修改工具的写法乘在按键自己身上（长按连尾端一起乘），于是它在屏幕上的移动快慢
 /// 变了，判定时刻不变 —— 按键高度与判定线高度是同一个倍率，两者相交的时刻只由时间决定。
-fn randomize(line: &mut JudgeLine, note_type: bool, speed: Option<(f64, f64)>, bpm_list: &mut BpmList, rng: &mut Pcg32) {
-    let mut curve = line.height.clone();
+fn randomize_speeds(line: &mut JudgeLine, (min, max): (f64, f64), rng: &mut Pcg32) {
+    let (lo, hi) = if min <= max { (min, max) } else { (max, min) };
     for note in line.notes.iter_mut() {
-        if note_type {
-            let note_type = match rng.random_range(0..4) {
-                0 => NoteType::Tap,
-                1 => NoteType::Drag,
-                2 => NoteType::Hold,
-                _ => NoteType::Flick,
-            };
-            if !note_type.matches_kind(&note.kind) {
-                // 长按换成别的键型时流速回到 1（同「按键替换」）
-                if matches!(note.kind, NoteKind::Hold { .. }) {
-                    note.speed = 1.;
-                }
-                let hold_len = CONVERT_HOLD_TICKS / ticks_per_sec(bpm_list, note.time);
-                set_note_type(note, note_type, hold_len, &mut curve);
-            }
+        let factor = lo + (hi - lo) * rng.random::<f64>();
+        note.speed *= factor;
+        if let NoteKind::Hold { end_speed: Some(end_speed), .. } = &mut note.kind {
+            *end_speed *= factor;
         }
-        if let Some((min, max)) = speed {
-            let (lo, hi) = if min <= max { (min, max) } else { (max, min) };
-            let factor = lo + (hi - lo) * rng.random::<f64>();
-            note.speed *= factor;
-            if let NoteKind::Hold { end_speed: Some(end_speed), .. } = &mut note.kind {
-                *end_speed *= factor;
-            }
-        }
+    }
+}
+
+/// 固定流速：判定线高度换成一条常量速度的积分，按键与长按尾端按同一条积分重算高度。
+///
+/// 判定线的高度是速度事件积分出来的，按键的 `height` 又是**同一个积分**在它自己时刻的值 —— 两者
+/// 必须同源，否则按键到判定时刻不在判定线上（线走到哪、键走到哪对不上）。所以这里不能只把判定线
+/// 拍平：按键的高度、长按尾端的高度与尾端流速都要一起换到新积分上。
+///
+/// 长按尾端的 `end_speed` 取同一个流速（尾端相对判定线的下降速度），`note.speed` 归 1：长按的可见
+/// 长度于是只由时间差与流速决定，谱面原来的变速事件不再把长按拉长或压扁。
+///
+/// 例外是「原地判定」的按键，见 [`frozen_on_line`]：它们本来就靠判定线带着走，改了流速也不能让它们
+/// 从远处落下来。长条不在此列（身体长度靠流速撑着），见 [`fix_speed_note`]。
+fn fix_speed(line: &mut JudgeLine, speed: f64, track_end: f64) {
+    if line.notes.is_empty() {
+        return;
+    }
+    // 流速不是正数时判定线一动不动、按键永远落不下来，正数才能积分
+    let speed = speed.max(1e-3);
+    let end_time = line
+        .notes
+        .iter()
+        .map(|it| match it.kind {
+            NoteKind::Hold { end_time, .. } => end_time,
+            _ => it.time,
+        })
+        .fold(track_end.max(0.), f64::max)
+        + 1.;
+    // 判断「原地判定」要拿原来的高度曲线比，拍平之后就没有依据了
+    let original = line.height.clone();
+    line.height = crate::core::pure_config::speed_curve(end_time, speed);
+    for note in line.notes.iter_mut() {
+        fix_speed_note(note, speed, &original);
+    }
+}
+
+/// 判定「原地判定」的取样窗口：按键判定前这几秒。判定线在这段时间里一直停在按键所在的高度，
+/// 就说明按键是被判定线带着走的（自己不用下落），判定前在屏幕上也一动不动。
+const FROZEN_WINDOW: [f64; 6] = [0., 0.25, 0.5, 1., 1.5, 2.5];
+
+/// 高度差小于这个数就算「贴在同一个高度上」。谱面高度单位，屏幕上远不到一个像素。
+const FROZEN_EPS: f64 = 1e-3;
+
+/// 这个按键是不是「原地判定」的：判定前一段时间里判定线一动不动，而按键一直就贴在它上面。
+///
+/// 谱面里有按键不是自然落下来的：判定线长时间停在同一个高度，按键从一开始就贴在线上，靠判定线
+/// 带着走。它的屏幕位置只由判定线决定，所以固定流速不能让它按新流速从远处落下来 —— 那样它会在
+/// 判定前突然出现在半空中，和原来看到的完全不是一回事。
+///
+/// 判据只看原来的高度曲线：按键的 `height` 是判定时刻那条曲线的值，如果判定前它也在同一个高度上，
+/// 那它这段时间就是贴在线上不动的。反过来，正常下落的按键离判定线还有一段距离，判定前的高度差
+/// 远大于 [`FROZEN_EPS`]，不会被误判。
+fn frozen_on_line(height: &AnimFloatF64, note: &Note) -> bool {
+    let mut curve = height.clone();
+    FROZEN_WINDOW.iter().all(|before| {
+        curve.set_time((note.time - before).max(0.));
+        (curve.now() - note.height).abs() < FROZEN_EPS
+    })
+}
+
+/// 把一个按键换到常量速度积分上。
+///
+/// `height` 与判定线的高度曲线取自同一条积分，所以按键在判定时刻正好落在判定线上；`speed` 归 1，
+/// 免得按键自带的流速倍率再把它从线上带走。
+///
+/// 原地判定的按键反着处理：`speed` 归 0，让判定线的位置直接决定它画在哪（见 [`Note::speed`] 在
+/// 绘制里的用法：偏移是 `(height - 判定线高度) * speed`，归 0 就只剩判定线），高度留着原来的值 ——
+/// 流速 0 时它不参与定位，留着反而保住了原来的位置。
+///
+/// 长条不套「原地判定」：长条的身体长度是 `(尾端高度 - 高度) * speed`，流速归 0 就把身体压成一条
+/// 线（只剩头部那一小片在判定线上）。所以长条一律按新流速正常下落，判定时刻照样落在判定线上，
+/// 可见长度也只由时间差与流速决定。
+fn fix_speed_note(note: &mut Note, speed: f64, line_height: &AnimFloatF64) {
+    // 本来就绑在判定线上的按键（流速 0）一直贴着线，判定线换成什么形状都不影响它
+    if note.speed == 0. {
+        return;
+    }
+    if !matches!(note.kind, NoteKind::Hold { .. }) && frozen_on_line(line_height, note) {
+        note.speed = 0.;
+        return;
+    }
+    note.height = crate::core::pure_config::height_at(note.time, speed);
+    note.speed = 1.;
+    if let NoteKind::Hold { end_time, end_height, end_speed } = &mut note.kind {
+        *end_height = crate::core::pure_config::height_at(*end_time, speed);
+        *end_speed = Some(speed);
     }
 }
 
@@ -465,6 +579,8 @@ fn split_hold(out: &mut Vec<Note>, template: &Note, end_time: f64, note_type: No
     while tick <= end {
         let time = tick / ticks;
         let mut note = new_note(time, x, template.above, template.fake);
+        // 音效跟着原来那个按键走：谱面自带的自定义音效要跟着一起拆开，不然拆完只剩内置 click
+        note.hitsound = template.hitsound.clone();
         note.height = curve_at(curve, time);
         set_note_type(&mut note, note_type, (interval + 1.) / ticks, curve);
         out.push(note);
@@ -631,8 +747,8 @@ pub(crate) fn arrange_notes(lines: &mut [JudgeLine], arrange: &Arrange) -> Optio
 
 /// 把按键换成 `note_type`；换成长按时补一截长度 `hold_len`（秒）。
 ///
-/// 本来就是长按的不动（更不该被截短），`hold_len` 只对原本不是长按的按键起作用；换完键型，音效也
-/// 跟着键型走（谱面自带的自定义音效同样被换掉）。
+/// 本来就是长按的不动（更不该被截短），`hold_len` 只对原本不是长按的按键起作用。音效只换内置那几种：
+/// 谱面自带的自定义音效（RPE 的 `hitsound`）跟着按键走，换键型不该把谱面自备的音听丢。
 fn set_note_type(note: &mut Note, note_type: NoteType, hold_len: f64, curve: &mut AnimFloatF64) {
     if note_type.matches_kind(&note.kind) {
         return;
@@ -651,7 +767,9 @@ fn set_note_type(note: &mut Note, note_type: NoteType, hold_len: f64, curve: &mu
             end_speed: None,
         },
     };
-    note.hitsound = HitSound::default_from_kind(&note.kind);
+    if !matches!(note.hitsound, HitSound::Custom(_)) {
+        note.hitsound = HitSound::default_from_kind(&note.kind);
+    }
 }
 
 /// 造一个还没定位的新按键：颜色 / 特效动画留空（用资源包默认样式），判定状态是待判定。
@@ -697,4 +815,213 @@ fn curve_at(curve: &mut AnimFloatF64, time: f64) -> f64 {
 /// 一秒里有多少个 1/32 拍 tick。
 fn ticks_per_sec(bpm_list: &mut BpmList, time: f64) -> f64 {
     bpm_list.now_bpm(time) / TIME_BASE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hold_note(hitsound: HitSound) -> Note {
+        let mut note = new_note(1., 0., true, false);
+        note.hitsound = hitsound;
+        note.kind = NoteKind::Hold { end_time: 2., end_height: 0., end_speed: None };
+        note
+    }
+
+    fn height_curve() -> AnimFloatF64 {
+        AnimFloatF64::new(vec![Keyframe::new(0., 0., 2), Keyframe::new(10., 10., 0)])
+    }
+
+    // 换键型只改内置音效：谱面自带的 hitsound（RPE 的 Custom）不能被换掉，换了听起来就不是这张谱了
+    #[test]
+    fn set_note_type_keeps_custom_hitsound() {
+        let mut curve = height_curve();
+        let mut note = hold_note(HitSound::Custom(String::from("boom.ogg")));
+        set_note_type(&mut note, NoteType::Flick, 0.1, &mut curve);
+        assert!(matches!(note.kind, NoteKind::Flick));
+        assert!(matches!(note.hitsound, HitSound::Custom(_)));
+    }
+
+    // 内置音效要跟着新键型走，不然点按会响拖动的声音
+    #[test]
+    fn set_note_type_swaps_builtin_hitsound() {
+        let mut curve = height_curve();
+        let mut note = hold_note(HitSound::Click);
+        set_note_type(&mut note, NoteType::Drag, 0.1, &mut curve);
+        assert!(matches!(note.kind, NoteKind::Drag));
+        assert!(matches!(note.hitsound, HitSound::Drag));
+    }
+
+    // 固定流速之后按键必须还在判定线上：两条高度取自同一条常量速度积分，且按键自己的流速归 1
+    #[test]
+    fn fix_speed_puts_note_on_line() {
+        let speed = 3.;
+        let mut note = hold_note(HitSound::Click);
+        note.height = 123.;
+        note.speed = 2.5;
+        fix_speed_note(&mut note, speed, &height_curve());
+        let mut curve = crate::core::pure_config::speed_curve(10., speed);
+        // 高度曲线内部按 f32 补间，直接算与曲线取值在末位上差 1e-7 量级（屏幕上不足 1e-5 像素），
+        // 这里按 1e-5 比 —— 要比的是「两者同源」，不是浮点末位
+        assert!((note.height - curve_at(&mut curve, note.time)).abs() < 1e-5);
+        assert_eq!(note.speed, 1.);
+        if let NoteKind::Hold { end_time, end_height, end_speed } = note.kind {
+            assert!((end_height - curve_at(&mut curve, end_time)).abs() < 1e-5);
+            // 尾端按同一个流速相对判定线下降，长按的可见长度只由时间差与流速决定
+            assert_eq!(end_speed, Some(speed));
+        } else {
+            panic!("长按被改成了别的键型");
+        }
+    }
+
+    // 原地判定的按键：判定前判定线一动不动、按键一直贴在线上，固定流速之后它还得贴着线 ——
+    // 流速归 0 由判定线带着走，高度留着原来的值（流速 0 时它只由判定线定位）
+    #[test]
+    fn fix_speed_keeps_a_note_sitting_still_on_the_line() {
+        let mut note = new_note(4., 0., true, false);
+        note.height = 3.;
+        note.speed = 1.;
+        fix_speed_note(&mut note, 3., &AnimFloatF64::fixed(3.));
+        assert_eq!(note.speed, 0.);
+        assert_eq!(note.height, 3.);
+    }
+
+    // 长条不套「原地判定」：流速归 0 会把身体压成一条线，所以它照样落到新积分上，尾端也换新流速
+    #[test]
+    fn fix_speed_gives_a_frozen_hold_the_new_fall() {
+        let mut note = hold_note(HitSound::Click);
+        note.time = 4.;
+        note.height = 3.;
+        note.speed = 1.;
+        fix_speed_note(&mut note, 3., &AnimFloatF64::fixed(3.));
+        assert_eq!(note.speed, 1.);
+        assert!((note.height - crate::core::pure_config::height_at(note.time, 3.)).abs() < 1e-3);
+        if let NoteKind::Hold { end_time, end_height, end_speed } = note.kind {
+            assert!((end_height - crate::core::pure_config::height_at(end_time, 3.)).abs() < 1e-3);
+            assert_eq!(end_speed, Some(3.));
+        } else {
+            panic!("长按被改成了别的键型");
+        }
+    }
+
+    // 判定线停着、但按键还在半空（没贴在线上）时不算原地判定：固定流速照样把它换到新积分上
+    #[test]
+    fn fix_speed_moves_a_note_hovering_above_a_still_line() {
+        let mut note = hold_note(HitSound::Click);
+        note.time = 4.;
+        note.height = 40.;
+        note.speed = 1.;
+        fix_speed_note(&mut note, 3., &AnimFloatF64::fixed(3.));
+        assert_eq!(note.speed, 1.);
+        assert!((note.height - crate::core::pure_config::height_at(note.time, 3.)).abs() < 1e-3);
+    }
+
+    // 本来就绑在判定线上的按键（流速 0）原样留着：它一直贴着线，判定线换成什么形状都不影响它
+    #[test]
+    fn fix_speed_keeps_a_bound_note() {
+        let mut note = hold_note(HitSound::Click);
+        note.height = 42.;
+        note.speed = 0.;
+        fix_speed_note(&mut note, 3., &height_curve());
+        assert_eq!(note.speed, 0.);
+        assert_eq!(note.height, 42.);
+    }
+
+    /// `example/` 下的一个文件（与别处同名工具同一套找法）；没有示例谱面时返回 `None`。
+    fn example_path(rel: &str) -> Option<std::path::PathBuf> {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(dir) = std::env::var("DPS_EXAMPLE_DIR") {
+            if !dir.is_empty() {
+                candidates.push(std::path::PathBuf::from(dir));
+            }
+        }
+        let mut cur = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        while let Some(parent) = cur.parent() {
+            candidates.push(parent.join("example"));
+            cur = parent;
+        }
+        candidates.into_iter().find_map(|dir| {
+            let path = dir.join(rel);
+            path.is_file().then_some(path)
+        })
+    }
+
+    // 拿真谱面验固定流速：这张官谱有近两千条非 1 速的速度事件，落完之后每条可编辑判定线的高度都
+    // 必须是一条常量速度的积分，每个按键（连长按尾端）都落在同一条曲线上。只拍平判定线、不改按键，
+    // 或者两者用了不同的积分，按键就会在判定时刻脱离判定线，这条断言会挂。
+    #[test]
+    fn fix_speed_flattens_a_real_chart() {
+        let Some(path) = example_path("pez/DesultorySignals.technoplanet.0.IN.pez") else {
+            eprintln!("skip: example chart not found");
+            return;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("skip: example chart not found");
+            return;
+        };
+        let text = {
+            use std::io::Read;
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut text = String::new();
+            zip.by_name("IN.json").unwrap().read_to_string(&mut text).unwrap();
+            text
+        };
+        let mut chart = crate::parse::parse_phigros(&text, crate::core::ChartExtra::default()).unwrap();
+        let speed = 2.8;
+        let mods = Mods { steps: vec![Step::FixedSpeed(speed)], lane: None, hide: false };
+        chart.apply_chart_mods(&mods, 16. / 9., 200.);
+
+        let mut checked = 0usize;
+        let mut frozen = 0usize;
+        for line in chart.lines.iter_mut() {
+            if !editable(line) {
+                continue;
+            }
+            let mut curve = line.height.clone();
+            let expect = |t: f64| crate::core::pure_config::height_at(t, speed);
+            for note in line.notes.iter() {
+                checked += 1;
+                // 判定线的高度曲线上，判定时刻的值就是按键该在的位置
+                assert!(
+                    (curve_at(&mut curve, note.time) - expect(note.time)).abs() < 1e-3,
+                    "判定线在 {} 秒不是常量流速",
+                    note.time
+                );
+                // 原地判定 / 本来绑线的按键留在原地：流速归 0，位置只由判定线决定
+                if note.speed == 0. {
+                    frozen += 1;
+                    continue;
+                }
+                assert!(
+                    (note.height - expect(note.time)).abs() < 1e-3,
+                    "按键在 {} 秒离开了判定线：{} != {}",
+                    note.time,
+                    note.height,
+                    expect(note.time)
+                );
+                assert_eq!(note.speed, 1.);
+                if let NoteKind::Hold { end_time, end_height, end_speed } = note.kind {
+                    assert!((curve_at(&mut curve, end_time) - expect(end_time)).abs() < 1e-3);
+                    assert!((end_height - expect(end_time)).abs() < 1e-3);
+                    assert_eq!(end_speed, Some(speed));
+                }
+            }
+        }
+        // 这张谱面有一千多个按键；一条都没检查到说明找错谱面或解析失败
+        assert!(checked > 1000, "只检查了 {checked} 个按键");
+        // 这条规则只该命中少数特例（这张谱面有几条判定线中途停住，上面躺着的按键算原地判定）
+        assert!(frozen * 10 < checked, "{frozen} / {checked} 个按键被当成了原地判定");
+    }
+
+    // 长条填充拆出来的每个按键都沿用原来那根长按的音效
+    #[test]
+    fn split_hold_keeps_custom_hitsound() {
+        let mut bpm_list = BpmList::new(vec![(0., 200.)]);
+        let mut curve = height_curve();
+        let template = hold_note(HitSound::Custom(String::from("boom.ogg")));
+        let mut out = Vec::new();
+        split_hold(&mut out, &template, 2., NoteType::Tap, 4., &mut curve, &mut bpm_list);
+        assert!(!out.is_empty());
+        assert!(out.iter().all(|it| matches!(it.hitsound, HitSound::Custom(_))));
+    }
 }

@@ -472,7 +472,10 @@ impl Note {
     }
 
     pub(crate) fn init_ctrl_obj(&self, ctrl_obj: &mut CtrlObject, line_height: f64) {
-        ctrl_obj.set_height((self.height - line_height + self.object.translation.1.now() as f64 / self.speed) * RPE_HEIGHT as f64 / 2.);
+        // 流速 0 的按键由判定线带着走，纵向位移按流速折算这一步对它没有意义；不挡掉就是除以 0
+        // ⇒ 控制对象的伪时间成了 NaN，之后 `speed * ctrl.y` 一乘（流速 0 也救不回来）整个变换都变 NaN。
+        let shift = if self.speed == 0. { 0. } else { self.object.translation.1.now() as f64 / self.speed };
+        ctrl_obj.set_height((self.height - line_height + shift) * RPE_HEIGHT as f64 / 2.);
     }
 
     pub fn now_transform(&self, res: &Resource, ctrl_obj: &CtrlObject, base: f32, incline_sin: f32, can_scale_x: bool, can_scale_y: bool) -> Matrix {

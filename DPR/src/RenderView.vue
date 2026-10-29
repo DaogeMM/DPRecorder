@@ -33,7 +33,7 @@ import type { AppendantItem } from './appendant';
 import { formatLvl, useLvlField } from './lvl';
 import type { AppConfig, ChartInfo, FileDropEvent, RenderConfig } from './model';
 import type { WorkingState } from './config/types';
-import { chartSideOf } from './config/chartSide';
+import { chartModMarker, chartSideOf } from './config/chartSide';
 import { jumpToFirstError } from './formError';
 
 import { VForm } from 'vuetify/components';
@@ -323,9 +323,13 @@ async function buildParams() {
   // 谱面侧渲染参数（宽高比 / 强制宽高比 / 折叠式入场 / 判定线长度 / 总分 / 预览起止 / 偏移 /
   // 背景压暗 …）现在是配置项：**以配置为准**，所以展开在谱面信息**之后**覆盖同名键。
   // 其余键（名称 / 难度 / 曲绘 / Tip …）仍然来自解析出来的 chartInfo。
+  // 难度文本也在配置这一侧：开着「谱面修改」时换成 `（功能名 → 功能名）` 的标记（见 config/chartSide.ts），
+  // 融合过的谱面把「谱面融合」摆在最前面。
   return {
     path: chartPath.value,
-    info: chartInfo.value ? { ...chartInfo.value, ...chartSideOf(config) } : chartInfo.value,
+    info: chartInfo.value
+      ? { ...chartInfo.value, ...chartSideOf(config, chartModMarker(config, t, chartInfo.value.difficulty)) }
+      : chartInfo.value,
     config,
   };
 }

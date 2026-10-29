@@ -16,12 +16,13 @@
  * （弹窗 teleport 到 body，写百分比只会按视口算，会把左侧导航也算进去）。
  * 卡片圆角清 0；标题 1.5rem、上下留出间距；底色由本地变量控制的半透明（见 `.phi-submenu__dialog`）。
  * 卡片底部没有 action 排，靠 v-dialog 默认的点遮罩关闭（`Esc` 也仍能关）。
- * 开关关着、或所在二级分区关着时，齿轮连同弹窗入口一起不渲染。
+ * 开关关着、或所在二级分区关着时，齿轮连同弹窗入口一起不渲染；没有默认插槽（纯开关、没有可配参数）
+ * 时也不给齿轮入口。
  * 弹窗标题**水平居中**，标题前与 body 左侧都没有竖线。
  *
  * `id` 只用于定位/调试，不参与左栏滚动联动。
  */
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, useSlots } from 'vue';
 import CfgSwitch from './CfgSwitch.vue';
 
 const props = defineProps<{
@@ -52,6 +53,14 @@ const emit = defineEmits<{
 
 /** 齿轮弹窗的开合。弹窗里的内容由父组件用默认插槽塞进来。 */
 const dialog = ref(false);
+
+/**
+ * 有没有可配的内容。
+ * 没有默认插槽的那些三级菜单（例如「随机按键」，开了就是这一个动作、没有参数）只渲染闸门行与开关：
+ * 齿轮点开只会是一张空卡片，所以干脆不给入口。
+ */
+const slots = useSlots();
+const hasBody = computed(() => !!slots.default);
 
 /**
  * 弹窗宽度 = **内容区宽度的 60%**（一行两个条目，再宽反而空）。
@@ -94,7 +103,7 @@ onUnmounted(() => {
            的 `margin-right` 给正边距（不能用负边距去抵消 v-btn 内边距贴紧开关）。
            **没启用就不显示** —— 开关关着、或所在二级分区关着，都没什么可配的。 -->
       <v-btn
-        v-if="(modelValue || noToggle) && !disabled"
+        v-if="(modelValue || noToggle) && !disabled && hasBody"
         class="phi-submenu__gear"
         icon
         variant="text"

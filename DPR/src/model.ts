@@ -505,16 +505,19 @@ export interface RenderConfig {
   chartModReplaceHold: string;
   /** 按键替换：`FLICK` 换成哪种键型 */
   chartModReplaceFlick: string;
-  /** 「谱面修改 · 随机按键与流速」：随机换键型、随机乘流速，两样可以只开一样 */
+  /** 「谱面修改 · 随机按键」：每个按键在四种键型里随机挑一个 */
   chartModRandom: boolean;
-  /** 随机键型：每个按键在四种键型里随机挑一个 */
-  chartModRandomType: boolean;
-  /** 随机流速：每个按键随机乘一个倍率（长按连尾端一起乘，判定时刻不变） */
+  /** 「谱面修改 · 随机流速」：每个按键随机乘一个倍率（长按连尾端一起乘，判定时刻不变） */
   chartModRandomSpeed: boolean;
   /** 随机流速的倍率下限（1 是不变） */
   chartModRandomSpeedMin: number;
   /** 随机流速的倍率上限 */
   chartModRandomSpeedMax: number;
+  /** 「固定流速」：整张谱面的下落节奏钉成 chartModFixedSpeedValue，谱面自带的变速事件全部失效。
+   *  整张谱面一起改，单独一类（与其余谱面修改互斥、不进落地顺序），界面上归在「测试」那一栏 */
+  chartModFixedSpeed: boolean;
+  /** 固定流速的流速 */
+  chartModFixedSpeedValue: number;
   /** 「谱面修改 · 长条填充」：每个长按拆成一串按键，其余按键换成指定键型 */
   chartModSpreadHold: boolean;
   /** 长条填充：拆出来的按键换成哪种键型（tap / drag / hold / flick） */
@@ -545,12 +548,12 @@ export interface RenderConfig {
   chartModArrangeSpeed: number;
   /**
    * 「谱面修改」的落地顺序：界面按勾选的先后把功能名写进来
-   * （`pure` / `arrange` / `replace` / `random` / `random_pos` / `spread` / `extend` / `copy`），
+   * （`replace` / `random` / `random_pos` / `spread` / `extend` / `copy`），
    * 齿轮左边那个序号就是下标 + 1。空表、或表里没提到的功能按界面行序排在后面。
-   * 定轨谱面不在这个表里：它固定跟在纯配置谱面后面落地。
+   * 纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速各自是单独一类，不在这张表里。
    */
   chartModOrder: string[];
-  /** 「谱面修改 · 隐藏按键」：按键整颗不画出来，判定照常；不参与落地顺序（永远最后一步） */
+  /** 「谱面修改 · 隐藏按键」：按键整颗不画出来，判定照常；单独一类，与其余谱面修改互斥 */
   chartModHide: boolean;
   /** 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对改谱面的功能生效） */
   playSplitView: boolean;
@@ -817,10 +820,11 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   chartModReplaceHold: 'hold',
   chartModReplaceFlick: 'flick',
   chartModRandom: false,
-  chartModRandomType: true,
-  chartModRandomSpeed: true,
+  chartModRandomSpeed: false,
   chartModRandomSpeedMin: 0.2,
   chartModRandomSpeedMax: 2.0,
+  chartModFixedSpeed: false,
+  chartModFixedSpeedValue: 2.8,
   chartModSpreadHold: false,
   chartModSpreadHoldNoteType: 'hold',
   chartModSpreadHoldInterval: 4.0,

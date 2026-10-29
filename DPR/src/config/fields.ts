@@ -250,7 +250,7 @@ const CHART = {
   fixedLaneInterval: { widget: 'number' },
   fixedLaneHoldLength: { widget: 'checkbox' },
   fixedLaneThird: { widget: 'checkbox' },
-  // 「谱面修改」七项（按键替换 / 随机按键与流速 / 长条填充 / 长条延长 / 复制音符 / 随机位置 /
+  // 「谱面修改」七项（按键替换 / 随机按键 / 随机流速 / 长条填充 / 长条延长 / 复制音符 / 随机位置 /
   // 陈列按键）：与纯配置谱面、定轨谱面同族，参数同样**不能**写 `uiValue: 'number'`。
   chartModReplace: { widget: 'checkbox' },
   // 按键替换是四组映射（TAP→? / DRAG→? / HOLD→? / FLICK→?），每组一个下拉框
@@ -283,10 +283,11 @@ const CHART = {
       ctx.noteTypes[STD_NOTE_TYPES.indexOf(value as (typeof STD_NOTE_TYPES)[number])] ?? ctx.noteTypes[3] ?? value,
   },
   chartModRandom: { widget: 'checkbox' },
-  chartModRandomType: { widget: 'checkbox' },
   chartModRandomSpeed: { widget: 'checkbox' },
   chartModRandomSpeedMin: { widget: 'number' },
   chartModRandomSpeedMax: { widget: 'number' },
+  chartModFixedSpeed: { widget: 'checkbox' },
+  chartModFixedSpeedValue: { widget: 'number' },
   chartModSpreadHold: { widget: 'checkbox' },
   chartModSpreadHoldNoteType: {
     widget: 'autocomplete',

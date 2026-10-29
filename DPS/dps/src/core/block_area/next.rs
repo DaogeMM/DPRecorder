@@ -216,6 +216,9 @@ struct AreaData {
     scale_x_events: Vec<Event>,
     #[serde(default)]
     scale_y_events: Vec<Event>,
+    /// 这块噪域的颜色，写法与按键的 `color` 一致（见 [`super::RawBlockArea::color`]）。
+    #[serde(default, deserialize_with = "super::deserialize_zone_color")]
+    color: Option<[f32; 3]>,
 }
 
 /// 齐次仿射矩阵（`f64`，与参考实现一致）。
@@ -523,6 +526,8 @@ pub struct NextArea {
     invert: bool,
     /// 横移、纵移、旋转、横缩放、纵缩放。
     tracks: [Track; 5],
+    /// 这块噪域的颜色（`None` = 原生红），见 [`super::RawBlockArea::color`]。
+    color: Option<[f32; 3]>,
 }
 
 /// 某一时刻解算出来的结果。
@@ -586,6 +591,7 @@ impl NextArea {
                 track(data.scale_x_events, Axis::X, 1., "scaleXEvents")?,
                 track(data.scale_y_events, Axis::Y, 1., "scaleYEvents")?,
             ],
+            color: data.color,
         })
     }
 
@@ -633,8 +639,8 @@ impl NextArea {
             // 不参与「简化噪域文字」编号。
             index: usize::MAX,
             judge_cover: 0,
-            // rpe-next 噪域在自己的块层里带颜色，这条管线不接色：固定原生红。
-            color: None,
+            // 谱面里给了颜色就跟原生噪域一样走彩色材质（按它的色相旋转官方配色）。
+            color: self.color,
         };
         Some(Sample { zone, state: if active { 2 } else if ready { 1 } else { 0 } })
     }
@@ -764,6 +770,21 @@ mod tests {
         assert_eq!(areas[0].sample(0.7, 1.5).unwrap().state, 1);
         assert_eq!(areas[0].sample(2.5, 1.5).unwrap().state, 0);
         assert!(areas[0].sample(3.1, 1.5).is_none());
+    }
+
+    /// 谱面里给的 `color` 一路传到 `Zone`：rpe-next 噪域和原生噪域走同一条彩色材质路径。
+    #[test]
+    fn color_flows_from_the_chart_file() {
+        let tempo = tempo_120();
+        let close = |zone: &Zone, want: [f32; 3]| zone.color.is_some_and(|c| c.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-6));
+        let areas = parse_next(&[full_canvas(json!({"color": "#3366CC"}))], &tempo);
+        assert!(close(&areas[0].sample(1.5, 1.5).unwrap().zone, [0.2, 0.4, 0.8]));
+        // 按键那种 0~255 写法也认。
+        let areas = parse_next(&[full_canvas(json!({"color": [51, 102, 204]}))], &tempo);
+        assert!(close(&areas[0].sample(1.5, 1.5).unwrap().zone, [0.2, 0.4, 0.8]));
+        // 不写就是原生红，走无颜色的原路径。
+        let areas = parse_next(&[full_canvas(json!({}))], &tempo);
+        assert_eq!(areas[0].sample(1.5, 1.5).unwrap().zone.color, None);
     }
 
     #[test]

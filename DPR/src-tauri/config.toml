@@ -99,7 +99,7 @@ pureConfigChartNoiseHeight = 0.1      # 纯配置谱面：噪域矩形高度，�
 pureConfigChartNoiseWidth = 1.1       # 纯配置谱面：噪域矩形宽度，半宽占屏幕高度的比例（再除以 10）
 pureConfigChartNoiseTime = 0.13       # 纯配置谱面：噪域时间窗（秒），判定时刻进入本值以内才长矩形
 pureConfigChartNoiseDelay = 0         # 纯配置谱面：噪域延后视窗（秒），判定完成后矩形再停留这么久
-fixedLaneChart = false         # 谱面修改·定轨谱面（界面在隐藏的「测试」分区里）：把所有判定线拍平成一条横向基准线，按键按判定时刻吸附到固定轨道（与纯配置 / 隐藏按键 / 其它谱面修改互斥）
+fixedLaneChart = false         # 谱面修改·定轨谱面（单独一类，界面在隐藏的「测试」分区里）：把所有判定线拍平成一条横向基准线，按键按判定时刻吸附到固定轨道（与纯配置 / 隐藏按键 / 陈列按键 / 其它谱面修改互斥）
 fixedLaneGap = 0.14            # 定轨谱面：相邻轨道间隔，屏宽的几成（0.14 = 屏宽 14%）
 fixedLaneSpeed = 2.8           # 定轨谱面：按键流速，越大落得越快
 fixedLaneLineY = 0.1           # 定轨谱面：判定线高度，0 = 屏幕底边、1 = 屏幕顶边、0.5 = 正中
@@ -111,11 +111,10 @@ chartModReplaceTap = "tap"     # 按键替换：TAP 换成哪种键型（tap / d
 chartModReplaceDrag = "drag"   # 按键替换：DRAG 换成哪种键型
 chartModReplaceHold = "hold"   # 按键替换：HOLD 换成哪种键型
 chartModReplaceFlick = "flick" # 按键替换：FLICK 换成哪种键型
-chartModRandom = false         # 谱面修改·随机按键与流速：随机换键型、随机乘流速，两样可以只开一样
-chartModRandomType = true      # 随机按键与流速：随机键型，每个按键在四种键型里随机挑一个
-chartModRandomSpeed = true     # 随机按键与流速：随机流速，每个按键随机乘一个倍率（长按连尾端一起乘）
-chartModRandomSpeedMin = 0.2   # 随机按键与流速：流速倍率下限（1 = 不变）
-chartModRandomSpeedMax = 2.0   # 随机按键与流速：流速倍率上限
+chartModRandom = false         # 谱面修改·随机按键：每个按键在四种键型里随机挑一个
+chartModRandomSpeed = false    # 谱面修改·随机流速：每个按键随机乘一个倍率（长按连尾端一起乘）
+chartModRandomSpeedMin = 0.2   # 随机流速：流速倍率下限（1 = 不变）
+chartModRandomSpeedMax = 2.0   # 随机流速：流速倍率上限
 chartModSpreadHold = false     # 谱面修改·长条填充：每个长按拆成一串按键，其他键型原样不动
 chartModSpreadHoldNoteType = "hold"  # 长条填充：拆出来的按键换成哪种键型（tap / drag / hold / flick）
 chartModSpreadHoldInterval = 4.0     # 长条填充：间隔，单位是 1/32 拍（谱面修改工具里的一「tick」）
@@ -126,12 +125,12 @@ chartModCopyTimes = 2          # 复制音符：复制后一共几份（1 = 原�
 chartModCopyOffset = 0.0       # 复制音符：几份以原按键中轴左右对称散开的总跨度，半屏宽是 1（0 = 叠在原位）
 chartModRandomPos = false      # 谱面修改·随机位置：每个按键的横向位置随机打散
 chartModRandomPosRange = 0.84  # 随机位置：横向幅度，半个屏幕宽是 1（0.84 铺满整屏）
-chartModArrange = false        # 谱面修改·陈列按键：整张谱面的按键按时间收到一条基准线的四条站位上
+chartModArrange = false        # 谱面修改·陈列按键（单独一类）：整张谱面的按键按时间收到一条基准线的四条站位上（与纯配置 / 定轨 / 隐藏按键 / 其它谱面修改互斥）
 chartModArrangeGap = 0.169     # 陈列按键：四条站位的横向间隔，半屏宽是 1（站位移在 ±间隔 与 ±3×间隔）
 chartModArrangeLineY = 0.1     # 陈列按键：基准线钉在屏幕纵向的哪个高度（0 屏幕底边、1 屏幕顶边）
 chartModArrangeSpeed = 2.8     # 陈列按键：基准线的按键流速
-chartModOrder = []             # 谱面修改·按键那一类的落地顺序（勾选先后）；空表按界面行序，取值 arrange/replace/random/random_pos/spread/extend/copy
-chartModHide = false           # 谱面修改·隐藏按键：按键整颗不画，判定照常（与纯配置 / 定轨 / 其它谱面修改互斥）
+chartModOrder = []             # 谱面修改·按键那一类的落地顺序（勾选先后）；空表按界面行序，取值 replace/random/random_pos/spread/extend/copy
+chartModHide = false           # 谱面修改·隐藏按键（单独一类）：按键整颗不画，判定照常（与纯配置 / 定轨 / 陈列按键 / 其它谱面修改互斥）
 playSplitView = false          # 游玩分屏：试玩时开两个窗口，左主谱面、右改谱面（只对「谱面修改」里的功能生效）
 renderBlockArea = true        # 噪域（Phigros 4.0 blockAreaList），Phira-Pro 原生实现
 blockAreaHover = true         # 噪域打击效果：按键命中时在噪域上亮起官方的触摸光晕（0.1 秒放大 → 0.1 秒缩回）

@@ -252,8 +252,8 @@ fn is_side_note(angle: f32, threshold: f32) -> bool {
     magnitude > threshold && magnitude < 180. - threshold
 }
 
-/// 判定线高度积分在 `time` 时刻的值。
-fn height_at(time: f64, speed: f64) -> f64 {
+/// 判定线高度积分在 `time` 时刻的值（一条常量速度事件）。「固定流速」也按它重算按键高度。
+pub(crate) fn height_at(time: f64, speed: f64) -> f64 {
     time * speed / HEIGHT_RATIO
 }
 

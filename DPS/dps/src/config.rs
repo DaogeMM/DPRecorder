@@ -576,17 +576,21 @@ pub struct Config {
     pub chart_mod_replace_hold: String,
     /// 按键替换：`flick` 换成哪种键型。
     pub chart_mod_replace_flick: String,
-    /// 「谱面修改 · 随机按键与流速」：每个按键随机换键型（`chart_mod_random_type`）、随机乘流速
-    /// （`chart_mod_random_speed`），两样可以只开一样。默认关闭。
+    /// 「谱面修改 · 随机按键」：每个按键在四种键型里随机挑一个（长按换成别的键型时流速回到 1，
+    /// 与按键替换一致）。默认关闭。
     pub chart_mod_random: bool,
-    /// 随机键型：每个按键在四种键型里随机挑一个。
-    pub chart_mod_random_type: bool,
-    /// 随机流速：每个按键随机乘一个流速倍率（长按连尾端一起乘，判定时刻不变）。
+    /// 「谱面修改 · 随机流速」：每个按键随机乘一个流速倍率（长按连尾端一起乘，判定时刻不变）。
+    /// 默认关闭。
     pub chart_mod_random_speed: bool,
     /// 随机流速的倍率下限（`1` 是不变，默认 `0.2` 倍）。
     pub chart_mod_random_speed_min: f64,
     /// 随机流速的倍率上限（默认 `2` 倍）。
     pub chart_mod_random_speed_max: f64,
+    /// 「谱面修改 · 固定流速」：整张谱面的流速钉成 `chart_mod_fixed_speed_value`，谱面自带的变速事件
+    /// 全部失效（判定线高度换成一条常量速度的积分，按键与长按尾端按同一条积分重算）。默认关闭。
+    pub chart_mod_fixed_speed: bool,
+    /// 固定流速的流速（默认 `2.8`，与纯配置谱面 / 陈列按键同一个口径）。
+    pub chart_mod_fixed_speed_value: f64,
     /// 「谱面修改 · 长条填充」：每个长按按 `chart_mod_spread_hold_interval` 拆成一串按键，其余按键
     /// 换成 `chart_mod_spread_hold_note_type` 这一种键型。默认关闭。
     pub chart_mod_spread_hold: bool,
@@ -613,7 +617,7 @@ pub struct Config {
     /// 随机位置的横向幅度（半个屏幕宽是 1；默认 `0.84`，铺满整屏）。
     pub chart_mod_random_pos_range: f32,
     /// 「谱面修改 · 陈列按键」：把整张谱面的按键按时间收到一条基准线的四个站位上 —— 点按 / 长按 /
-    /// 拖动 / 滑动各占一条（见 `core::chart_mod`）。默认关闭。
+    /// 拖动 / 滑动各占一条（见 `core::chart_mod`）。单独一类，与其余谱面修改互斥。默认关闭。
     pub chart_mod_arrange: bool,
     /// 陈列按键：四条站位的横向间隔（半个屏幕宽是 1，站位移在 `±gap` 与 `±3 * gap`，默认 `0.169`）。
     pub chart_mod_arrange_gap: f32,
@@ -622,13 +626,13 @@ pub struct Config {
     /// 陈列按键：基准线的按键流速（默认 `2.8`）。
     pub chart_mod_arrange_speed: f64,
     /// 「谱面修改」的落地顺序：界面按用户勾选的先后把功能名写进来，取值是
-    /// `arrange` / `replace` / `random` / `random_pos` / `spread` / `extend` / `copy`，
+    /// `replace` / `random` / `fixed_speed` / `random_pos` / `spread` / `extend` / `copy`，
     /// 转换时按这个顺序逐个落地 —— 顺序不同结果就不同（例如先复制再长条填充，与先填充再复制不一样）。
     /// 空表、或表里没提到的功能，按界面行序排在后面，所以老的 config.toml 不用改也能照常跑。
-    /// 纯配置谱面 / 定轨谱面 / 隐藏按键各自与这一类互斥，不在这张表里。
+    /// 纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键各自与这一类互斥，不在这张表里。
     pub chart_mod_order: Vec<String>,
     /// 「谱面修改 · 隐藏按键」：按键整颗不画出来（连判定范围、待判染色、强制定位挖洞一起跳过），
-    /// 判定照常按时间那条链路走。与纯配置谱面 / 定轨谱面 / 按键那一类互斥。默认关闭。
+    /// 判定照常按时间那条链路走。与纯配置谱面 / 定轨谱面 / 陈列按键 / 按键那一类互斥。默认关闭。
     pub chart_mod_hide: bool,
     pub bg_blurriness: f32,
 
@@ -895,10 +899,11 @@ impl Default for Config {
             chart_mod_replace_hold: "hold".to_owned(),
             chart_mod_replace_flick: "flick".to_owned(),
             chart_mod_random: false,
-            chart_mod_random_type: true,
-            chart_mod_random_speed: true,
+            chart_mod_random_speed: false,
             chart_mod_random_speed_min: 0.2,
             chart_mod_random_speed_max: 2.,
+            chart_mod_fixed_speed: false,
+            chart_mod_fixed_speed_value: 2.8,
             chart_mod_spread_hold: false,
             chart_mod_spread_hold_note_type: "hold".to_owned(),
             chart_mod_spread_hold_interval: 4.,

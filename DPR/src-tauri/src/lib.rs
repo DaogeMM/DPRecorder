@@ -6,6 +6,7 @@ dps::tl_file!("main" mtl);
 mod common;
 mod icon;
 mod ipc;
+mod merge;
 mod preview;
 mod render;
 mod split;
@@ -329,6 +330,7 @@ pub fn run() -> Result<()> {
                 delete_autosave,
                 save_info,
                 read_info,
+                merge::merge_charts,
             ])
             .on_window_event(|_, event| match event {
                 //WindowEvent::CloseRequested { api, .. } => {

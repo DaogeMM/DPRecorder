@@ -197,10 +197,11 @@ const {
   pureConfigChartNoiseHeight, pureConfigChartNoiseWidth, pureConfigChartNoiseTime, pureConfigChartNoiseDelay,
   fixedLaneChart, fixedLaneGap, fixedLaneSpeed, fixedLaneLineY, fixedLaneInterval,
   fixedLaneHoldLength, fixedLaneThird, playSplitView,
-  // 谱面修改（按键替换 / 随机按键与流速 / 长条填充 / 长条延长 / 复制音符 / 随机位置 / 陈列按键 / 隐藏按键）
+  // 谱面修改（按键替换 / 随机按键 / 随机流速 / 固定流速 / 长条填充 / 长条延长 / 复制音符 / 随机位置 / 陈列按键 / 隐藏按键）
   chartModReplace, chartModReplaceTap, chartModReplaceDrag, chartModReplaceHold, chartModReplaceFlick,
-  chartModRandom, chartModRandomType, chartModRandomSpeed,
-  chartModRandomSpeedMin, chartModRandomSpeedMax, chartModSpreadHold, chartModSpreadHoldNoteType,
+  chartModRandom, chartModRandomSpeed,
+  chartModRandomSpeedMin, chartModRandomSpeedMax, chartModFixedSpeed, chartModFixedSpeedValue,
+  chartModSpreadHold, chartModSpreadHoldNoteType,
   chartModSpreadHoldInterval, chartModExtendHold, chartModExtendHoldBlank, chartModCopy,
   chartModCopyTimes, chartModCopyOffset, chartModRandomPos, chartModRandomPosRange, chartModArrange, chartModArrangeGap,
   chartModArrangeLineY, chartModArrangeSpeed, chartModHide,
@@ -268,9 +269,9 @@ watch(
   { immediate: true },
 );
 
-/* ---------- 「谱面修改」四类互斥 + 按键那一类按勾选先后落地 ----------
- * 四类互斥：纯配置谱面 / 定轨谱面 / 隐藏按键 / 按键那一类（陈列按键、按键替换、随机、随机位置、
- * 长条填充、长条延长、复制音符）—— 同一时刻只有一类生效，勾上哪一类就把另外三类整个关掉
+/* ---------- 「谱面修改」六类互斥 + 按键那一类按勾选先后落地 ----------
+ * 六类互斥：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 按键那一类（按键替换、随机、随机位置、
+ * 长条填充、长条延长、复制音符）—— 同一时刻只有一类生效，勾上哪一类就把另外几类整个关掉
  * （见下面的 `closeOtherChartMods`）。
  * 按键那一类内部可以同时开多个：dps 按界面上勾选的先后逐个落地（配置里记在 `chartModOrder`），
  * 齿轮左边那个序号就是这个次序。所以这里只维护那张顺序表：
@@ -278,23 +279,26 @@ watch(
  *   - 载入预设 / 切页回来 / 手改的 config.toml 里可能带着「开着却没记进表」的项，按界面行序补到末尾
  *     （dps 那边也是同样的兜底规则，两边的次序才对得上）。
  * 序号 = 表里的下标 + 1；`chartModIndex()` 取不到就不传 badge，界面上没有序号。
- * 只有按键那一类有序号：另外三类各自都是单独一步。「游玩分屏」不是改谱面的功能，不受影响，
- * 它的开关在隐藏的「测试」分区里（`sec-chart-test`）。 */
+ * 只有按键那一类有序号：另外几类各自都是单独一步。固定流速也在「测试」分区里（`sec-chart-test`），
+ * 它把整张谱面的下落节奏换掉，和别的功能叠在一起没有意义，所以不进顺序表。
+ * 「游玩分屏」不是改谱面的功能，不受影响，它的开关同样在那条隐藏的「测试」分区里。 */
 const chartModGroups: { key: string; flag: Ref<boolean> | undefined }[] = [
   { key: 'pure', flag: pureConfigChart },
   { key: 'lane', flag: fixedLaneChart },
   { key: 'hide', flag: chartModHide },
+  { key: 'arrange', flag: chartModArrange },
+  { key: 'fixed_speed', flag: chartModFixedSpeed },
 ];
 const chartMods: { key: string; flag: Ref<boolean> | undefined }[] = [
-  { key: 'arrange', flag: chartModArrange },
   { key: 'replace', flag: chartModReplace },
   { key: 'random', flag: chartModRandom },
+  { key: 'random_speed', flag: chartModRandomSpeed },
   { key: 'random_pos', flag: chartModRandomPos },
   { key: 'spread', flag: chartModSpreadHold },
   { key: 'extend', flag: chartModExtendHold },
   { key: 'copy', flag: chartModCopy },
 ];
-/** 勾上某一类时，把另外三类整个关掉（`opened` 是这一次被勾上的那个开关）。 */
+/** 勾上某一类时，把另外四类整个关掉（`opened` 是这一次被勾上的那个开关）。 */
 function closeOtherChartMods(opened: Ref<boolean> | undefined) {
   const inMods = chartMods.some((it) => it.flag === opened);
   for (const group of chartModGroups) {
@@ -1041,18 +1045,16 @@ defineExpose({
       <!-- ===== 谱面修改 =====
            这些功能同属一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏
            走的是同一份转换，dps 里的入口只有一个（`Chart::apply_chart_mods`）。
-           **四类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 按键那一类，同一时刻只有一类生效 ——
-           勾上哪一类，另外三类整个关掉（见上面 `closeOtherChartMods`）。前三类各自都是把整张谱面
-           重排一遍，叠在一起只会互相覆盖，所以不给选。
-           按键那一类（陈列按键、按键替换、随机、随机位置、长条填充、长条延长、复制音符）内部
-           **可以同时开**，落地顺序就是界面上勾选的先后：勾上的那一项追加到顺序表末尾，齿轮左边那个
-           数字就是它在这一次转换里的次序（见上面 `chartMods` 的 watch 与 `chartModIndex`）。配置里记着
-           这张表（`chartModOrder`），dps 按同一个次序逐个落地 —— 先开哪个，后面的功能就在它改完的
-           谱面上再改一遍。载入预设 / 手改 config.toml 里没这张表时按下面这个行序补齐。
-           陈列按键会重排整张谱面，所以它落在哪一步就决定后面几项看到的是不是已经摊平过的谱面：
-           排第一时后面几项都在基准线上改，排最后时它把前面几项的结果一起收进基准线。
-           只有按键那一类有齿轮序号；纯配置谱面、隐藏按键与（隐藏的「测试」分区里的）定轨谱面都是
-           单独一步。每一行左边 ✅/❌ 是这一项的开关、齿轮里是它的参数。 -->
+           **五类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 按键那一类，同一时刻只有一类
+           生效 —— 勾上哪一类，另外四类整个关掉（见上面 `closeOtherChartMods`）。这五类各自都是把整张
+           谱面重排一遍（或整体改可见性），叠在一起只会互相覆盖，所以不给选。
+           按键那一类（按键替换、随机、随机位置、长条填充、长条延长、复制音符）内部**可以同时开**，
+           落地顺序就是界面上勾选的先后：勾上的那一项追加到顺序表末尾，齿轮左边那个数字就是它在这一次
+           转换里的次序（见上面 `chartMods` 的 watch 与 `chartModIndex`）。配置里记着这张表
+           （`chartModOrder`），dps 按同一个次序逐个落地 —— 先开哪个，后面的功能就在它改完的谱面上再
+           改一遍。载入预设 / 手改 config.toml 里没这张表时按下面这个行序补齐。
+           只有按键那一类有齿轮序号；纯配置谱面、隐藏按键、陈列按键与（隐藏的「测试」分区里的）定轨
+           谱面都是单独一步。每一行左边 ✅/❌ 是这一项的开关、齿轮里是它的参数。 -->
       <PhiSection id="sec-chart-mod" :title="t('title.chart-mod')">
         <div class="cfg-grid">
           <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
@@ -1075,12 +1077,14 @@ defineExpose({
           </PhiSubMenu>
           <!-- 「隐藏按键」：按键整颗不画出来，判定照常按时间那条链路走（不搬 modify 的隐藏机制，
                而是在渲染前给按键打一个「不画」的标记）。没有齿轮、也没有序号 —— 它是单独一类，
-               与纯配置谱面 / 定轨谱面 / 按键那一类互斥。 -->
+               与纯配置谱面 / 定轨谱面 / 陈列按键 / 按键那一类互斥。 -->
           <CfgSwitch :label="t('chart-mod-hide')" v-model="chartModHide" :tip="t('chart-mod-hide-tip')" />
-          <!-- 往后是按键那几个功能（见 dps 的 `core::chart_mod`），各占一个齿轮弹窗、开关就是齿轮
+          <!-- 「陈列按键」会把整张谱面收到一条基准线上，等于重排一遍，所以它和纯配置谱面 / 定轨
+               谱面 / 隐藏按键 / 固定流速一样是单独一类：没有序号，与上面那几类互斥（见本分区开头的注释）。 -->
+          <!-- 再往后是按键那六个功能（见 dps 的 `core::chart_mod`），各占一个齿轮弹窗、开关就是齿轮
                左边那个 ✅/❌。它们可以同时开，齿轮左边那个数字是这一次转换里的落地次序（1 = 最先落地），
                顺序就是勾选的先后，见本分区开头的注释。 -->
-          <PhiSubMenu id="sec3-chart-mod-arrange" :label="t('chart-mod-arrange')" :tip="t('chart-mod-arrange-tip')" :badge="chartModIndex('arrange')" v-model="chartModArrange">
+          <PhiSubMenu id="sec3-chart-mod-arrange" :label="t('chart-mod-arrange')" :tip="t('chart-mod-arrange-tip')" v-model="chartModArrange">
             <div class="cfg-grid">
               <CfgField :label="t('chart-mod-arrange-gap')" :tip="t('chart-mod-arrange-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
               <CfgField :label="t('chart-mod-arrange-line-y')" :tip="t('chart-mod-arrange-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
@@ -1096,12 +1100,11 @@ defineExpose({
               <CfgField :label="t('note-types').split(',')[3]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceFlick"></v-autocomplete></CfgField>
             </div>
           </PhiSubMenu>
-          <PhiSubMenu id="sec3-chart-mod-random" :label="t('chart-mod-random')" :tip="t('chart-mod-random-tip')" :badge="chartModIndex('random')" v-model="chartModRandom">
+          <PhiSubMenu id="sec3-chart-mod-random" :label="t('chart-mod-random')" :tip="t('chart-mod-random-tip')" :badge="chartModIndex('random')" v-model="chartModRandom"></PhiSubMenu>
+          <PhiSubMenu id="sec3-chart-mod-random-speed" :label="t('chart-mod-random-speed')" :tip="t('chart-mod-random-speed-tip')" :badge="chartModIndex('random_speed')" v-model="chartModRandomSpeed">
             <div class="cfg-grid">
-              <CfgSwitch :label="t('chart-mod-random-type')" :tip="t('chart-mod-random-type-tip')" v-model="chartModRandomType" />
-              <CfgSwitch :label="t('chart-mod-random-speed')" :tip="t('chart-mod-random-speed-tip')" v-model="chartModRandomSpeed" />
-              <CfgField :label="t('chart-mod-random-speed-min')" :tip="t('chart-mod-random-speed-min-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!chartModRandomSpeed" v-model="chartModRandomSpeedMin" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('chart-mod-random-speed-max')" :tip="t('chart-mod-random-speed-max-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!chartModRandomSpeed" v-model="chartModRandomSpeedMax" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-mod-random-speed-min')" :tip="t('chart-mod-random-speed-min-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomSpeedMin" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-mod-random-speed-max')" :tip="t('chart-mod-random-speed-max-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomSpeedMax" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
           <PhiSubMenu id="sec3-chart-mod-random-pos" :label="t('chart-mod-random-pos')" :tip="t('chart-mod-random-pos-tip')" :badge="chartModIndex('random_pos')" v-model="chartModRandomPos">
@@ -1232,7 +1235,8 @@ defineExpose({
           <CfgSwitch :label="t('play-split-view')" v-model="playSplitView" :tip="t('play-split-view-tip')" />
           <!-- 定轨谱面：把整张谱面拍平成一条横向基准线 + 若干条固定轨道，按键按判定时刻吸附到
                轨道上（正中那条固定给 Flick / Drag，常规单侧两条、拥挤时才启用第三条）。
-               它是「谱面修改」四类里的一类：与纯配置谱面 / 隐藏按键 / 按键那一类互斥，所以不用序号。 -->
+               它是「谱面修改」六类里的一类：与纯配置谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 按键那
+               一类互斥，所以不用序号。 -->
           <PhiSubMenu id="sec3-fixed-lane" :label="t('fixed-lane-chart')" :tip="t('fixed-lane-chart-tip')" v-model="fixedLaneChart">
             <div class="cfg-grid">
               <CfgField :label="t('fixed-lane-gap')" :tip="t('fixed-lane-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
@@ -1241,6 +1245,13 @@ defineExpose({
               <CfgField :label="t('fixed-lane-interval')" :tip="t('fixed-lane-interval-tip')"><v-text-field density="compact" hide-details="auto" v-model="fixedLaneInterval" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
               <CfgSwitch :label="t('fixed-lane-hold-length')" :tip="t('fixed-lane-hold-length-tip')" v-model="fixedLaneHoldLength" />
               <CfgSwitch :label="t('fixed-lane-third')" :tip="t('fixed-lane-third-tip')" v-model="fixedLaneThird" />
+            </div>
+          </PhiSubMenu>
+          <!-- 固定流速：整张谱面的下落节奏钉成一个值，谱面自带的变速事件全部失效。它整张谱面一起改，
+               和别的谱面修改叠在一起没有意义，所以同样不进落地顺序、与其余各类互斥。 -->
+          <PhiSubMenu id="sec3-chart-mod-fixed-speed" :label="t('chart-mod-fixed-speed')" :tip="t('chart-mod-fixed-speed-tip')" v-model="chartModFixedSpeed">
+            <div class="cfg-grid">
+              <CfgField :label="t('chart-mod-fixed-speed-value')" :tip="t('chart-mod-fixed-speed-value-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModFixedSpeedValue" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
           <!-- 落点模拟：AUTOPLAY 下不再无条件 Perfect —— 每颗按键由一根合成的手指自动点击，

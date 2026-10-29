@@ -129,7 +129,9 @@ pub struct ZipFileSystem(pub Arc<Mutex<ZipArchive<Cursor<Vec<u8>>>>>, String);
 /// 有的打包工具改过包内文件名却没同步这个扩展字段：CRC 对不上时 `zip` 判定整个中央目录不可信
 /// （整个包打不开），CRC 对得上时它又会拿字段里那份旧名字当条目名（按新名字查不到）。
 /// 两种都只影响这一个扩展字段，去掉它、按中央目录里存的文件名解析即可。
-pub(crate) fn open_zip(bytes: Vec<u8>) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
+///
+/// 公开给 DPR：「谱面融合」要把一个谱面包按条目重写成另一个包，用的就是它 + [`update_zip`]。
+pub fn open_zip(bytes: Vec<u8>) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
     if let Ok(zip) = ZipArchive::new(Cursor::new(bytes.clone())) {
         return Ok(zip);
     }

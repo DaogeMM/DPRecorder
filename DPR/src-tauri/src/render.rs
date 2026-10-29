@@ -508,16 +508,18 @@ pub struct RenderConfig {
     pub chart_mod_replace_hold: String,
     /// 按键替换：`FLICK` 换成哪种键型
     pub chart_mod_replace_flick: String,
-    /// 「谱面修改 · 随机按键与流速」：随机换键型、随机乘流速，两样可以只开一样，默认关闭
+    /// 「谱面修改 · 随机按键」：每个按键在四种键型里随机挑一个，默认关闭
     pub chart_mod_random: bool,
-    /// 随机键型：每个按键在四种键型里随机挑一个
-    pub chart_mod_random_type: bool,
-    /// 随机流速：每个按键随机乘一个倍率（长按连尾端一起乘，判定时刻不变）
+    /// 「谱面修改 · 随机流速」：每个按键随机乘一个倍率（长按连尾端一起乘，判定时刻不变），默认关闭
     pub chart_mod_random_speed: bool,
     /// 随机流速的倍率下限（`1` 是不变）
     pub chart_mod_random_speed_min: f64,
     /// 随机流速的倍率上限
     pub chart_mod_random_speed_max: f64,
+    /// 「谱面修改 · 固定流速」：整张谱面的流速钉成 `chart_mod_fixed_speed_value`，谱面自带的变速事件全部失效，默认关闭
+    pub chart_mod_fixed_speed: bool,
+    /// 固定流速的流速
+    pub chart_mod_fixed_speed_value: f64,
     /// 「谱面修改 · 长条填充」：每个长按拆成一串按键，其余按键换成指定键型，默认关闭
     pub chart_mod_spread_hold: bool,
     /// 长条填充：拆出来的按键换成哪种键型（`tap` / `drag` / `hold` / `flick`）
@@ -547,11 +549,11 @@ pub struct RenderConfig {
     /// 陈列按键：基准线的按键流速
     pub chart_mod_arrange_speed: f64,
     /// 「谱面修改」的落地顺序：界面按用户勾选的先后写进来
-    /// （`arrange` / `replace` / `random` / `random_pos` / `spread` / `extend` / `copy`），
+    /// （`replace` / `random` / `fixed_speed` / `random_pos` / `spread` / `extend` / `copy`），
     /// dps 按这个顺序逐个落地。空表、或表里没提到的功能按界面行序排在后面。
-    /// 纯配置谱面 / 定轨谱面 / 隐藏按键各自与这一类互斥，不在这张表里。
+    /// 纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键各自与这一类互斥，不在这张表里。
     pub chart_mod_order: Vec<String>,
-    /// 「谱面修改 · 隐藏按键」：按键整颗不画出来，判定照常。与纯配置谱面 / 定轨谱面 / 其它谱面修改互斥
+    /// 「谱面修改 · 隐藏按键」：按键整颗不画出来，判定照常。与其余谱面修改互斥
     pub chart_mod_hide: bool,
     /// 「游玩分屏」：试玩时开两个窗口，主窗口放原谱面、副窗口放改过的谱面（仅对改谱面的功能生效，
     /// 见 [`RenderConfig::clear_chart_mods`]）。只影响试玩入口，不影响渲染成片。
@@ -567,8 +569,8 @@ pub struct RenderConfig {
 }
 
 impl RenderConfig {
-    /// 关掉「谱面修改」这一类里的全部功能：纯配置谱面、定轨谱面与七个按键功能（它们走 dps 里同一个
-    /// 入口，见 `Chart::apply_chart_mods`）。
+    /// 关掉「谱面修改」这一类里的全部功能：纯配置谱面、定轨谱面、陈列按键、隐藏按键与六个按键功能
+    /// （它们走 dps 里同一个入口，见 `Chart::apply_chart_mods`）。
     ///
     /// 游玩分屏的副窗口要原样留着，主窗口则要还原成原谱面 —— 判断「哪些配置算改谱面」只在这里
     /// 写一遍，以后再加同类功能就只要往这里补一行。
@@ -577,6 +579,7 @@ impl RenderConfig {
         self.fixed_lane_chart = false;
         self.chart_mod_replace = false;
         self.chart_mod_random = false;
+        self.chart_mod_fixed_speed = false;
         self.chart_mod_spread_hold = false;
         self.chart_mod_extend_hold = false;
         self.chart_mod_copy = false;
@@ -807,10 +810,11 @@ impl RenderConfig {
             chart_mod_replace_hold: self.chart_mod_replace_hold.clone(),
             chart_mod_replace_flick: self.chart_mod_replace_flick.clone(),
             chart_mod_random: self.chart_mod_random,
-            chart_mod_random_type: self.chart_mod_random_type,
             chart_mod_random_speed: self.chart_mod_random_speed,
             chart_mod_random_speed_min: self.chart_mod_random_speed_min,
             chart_mod_random_speed_max: self.chart_mod_random_speed_max,
+            chart_mod_fixed_speed: self.chart_mod_fixed_speed,
+            chart_mod_fixed_speed_value: self.chart_mod_fixed_speed_value,
             chart_mod_spread_hold: self.chart_mod_spread_hold,
             chart_mod_spread_hold_note_type: self.chart_mod_spread_hold_note_type.clone(),
             chart_mod_spread_hold_interval: self.chart_mod_spread_hold_interval,
@@ -1103,10 +1107,11 @@ impl Default for RenderConfig {
             chart_mod_replace_hold: "hold".to_owned(),
             chart_mod_replace_flick: "flick".to_owned(),
             chart_mod_random: false,
-            chart_mod_random_type: true,
-            chart_mod_random_speed: true,
+            chart_mod_random_speed: false,
             chart_mod_random_speed_min: 0.2,
             chart_mod_random_speed_max: 2.,
+            chart_mod_fixed_speed: false,
+            chart_mod_fixed_speed_value: 2.8,
             chart_mod_spread_hold: false,
             chart_mod_spread_hold_note_type: "hold".to_owned(),
             chart_mod_spread_hold_interval: 4.,
@@ -1935,7 +1940,7 @@ pub async fn main(cmd: bool) -> Result<()> {
         });
     }
 
-    let (chart, format) = GameScene::load_chart(fs.deref_mut(), &info, &prpr_config)
+    let (mut chart, format) = GameScene::load_chart(fs.deref_mut(), &info, &prpr_config)
         .await
         .with_context(|| tl!("load-chart-failed"))?;
     let res_pack = ResourcePack::from_path(prpr_config.res_pack_path.as_ref())
@@ -1949,6 +1954,18 @@ pub async fn main(cmd: bool) -> Result<()> {
     let music = resample_to(&music, sample_rate, "music");
     let music_length = music.length();
     let music_sample_rate = music.sample_rate();
+
+    // 谱面修改本来在 `GameScene::new` 里做，但下面这条打击音轨是从 `chart` 的按键音头离线铺出来的 ——
+    // 音轨还按原谱面铺、画面却按改过的谱面画，就成了「改谱后按键音和画面对不上」。
+    // 所以先把同一批修改落到 `chart` 上，参数与 `GameScene::new` 里那份一致：同一个纵横比、
+    // 同一个 `track_length`（`Resource::new` 里也是这么算的）。`GameScene::new` 之后还会按同一份
+    // 配置再调一次，那边被 `Chart::chart_mods_applied` 挡掉，不会改两遍。
+    let chart_mods = dps::core::chart_mod::Mods::from_config(&prpr_config);
+    if !chart_mods.is_empty() {
+        let aspect = prpr_config.aspect_ratio.unwrap_or(info.aspect_ratio);
+        let track_length = prpr_config.play_end_time.unwrap_or(music_length).min(music_length);
+        chart.apply_chart_mods(&chart_mods, aspect, track_length);
+    }
     let ending_music = resample_to(&res_pack.endings[0], sample_rate, "ending_music");
     let ending_music_sample_rate = ending_music.sample_rate();
     let sfx_click = resample_to(&res_pack.sfx_click, sample_rate, "sfx_click");
