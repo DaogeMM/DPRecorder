@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "dpr"
-version = "1.1.2"
+version = "1.1.7"
 dependencies = [
  "anyhow",
  "chrono",
