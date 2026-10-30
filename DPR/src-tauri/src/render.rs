@@ -339,6 +339,10 @@ pub struct RenderConfig {
     pub xuejiang_sp_face_text_hit: String,
     pub render_bg: bool,
     pub render_bg_dim: bool,
+    /// 「纯色背景」：给了颜色就不画谱面背景贴图，整屏直接铺这一个颜色（rgb，0~1）。
+    /// `None`（默认）= 照旧画背景图；界面上留空即关。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solid_bg: Option<[f32; 3]>,
     /// 「背景暗淡」：黑色遮罩的不透明度（0~1）。作为渲染参数时会**覆盖**谱面信息里的同名值。
     pub background_dim: f32,
 
@@ -733,6 +737,7 @@ impl RenderConfig {
             xuejiang_sp_face_text_hit: self.xuejiang_sp_face_text_hit.clone(),
             render_bg: self.render_bg,
             render_bg_dim: self.render_bg_dim,
+            solid_bg: self.solid_bg,
             render_block_area: self.render_block_area,
             simplified_block_area: self.simplified_block_area,
             block_area_hover: self.block_area_hover,
@@ -1007,6 +1012,7 @@ impl Default for RenderConfig {
             xuejiang_sp_face_text_hit: "Ｏ(≧▽≦)Ｏ".to_owned(),
             render_bg: true,
             render_bg_dim: true,
+            solid_bg: None,
             background_dim: 0.1,
             // 谱面侧渲染参数：默认值与前端 DEFAULT_RENDER_CONFIG 一致。注意 dps
             // `ChartInfo::default()` 的值与这里不同

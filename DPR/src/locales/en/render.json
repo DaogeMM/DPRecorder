@@ -82,5 +82,6 @@
     "read-success": "Read successfully",
     "save-info": "Save Info",
     "read-info": "Read Info",
-    "phira-chart-info": "Phira Chart Info"
+    "phira-chart-info": "Phira Chart Info",
+    "chart-config-failed": "Failed to read the chart's config.toml: {err}"
 }

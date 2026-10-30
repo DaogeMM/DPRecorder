@@ -15,7 +15,7 @@
     "output": "Output",
     "remove-task": "Remove Task",
     "remove-task-confirm": "Remove the selected task(s)?",
-    "remove-task-running": "Tasks that are still rendering will be cancelled first.",
+    "remove-task-running": "Tasks that are still rendering will be cancelled first",
     "remove-task-file-confirm": "Remove the output files as well?",
     "remove-task-only": "Remove only tasks",
     "remove-task-and-file": "Remove tasks and files",

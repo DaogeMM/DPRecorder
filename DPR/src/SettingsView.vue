@@ -178,6 +178,19 @@ async function updateOutputDirDefault() {
 }
 updateOutputDirDefault();
 
+/** 临时（中间产物）目录的默认值：后端认定的系统临时目录下 `DPRecorder` 那一层。
+ *  那格没设置时显示它 —— 跟输出目录一个做法，默认也让用户看到完整路径。 */
+const tempDirDefault = ref('');
+async function updateTempDirDefault() {
+  try {
+    tempDirDefault.value = (await invoke('get_temp_dir_path')) as string;
+  } catch (e) {
+    // 旧版本的二进制没有这条命令：留空，框里就只显示一句提示
+    tempDirDefault.value = '';
+  }
+}
+updateTempDirDefault();
+
 /** exe（程序）所在文件夹的绝对路径：`.\output`、`.\config\presets.toml` 这种相对写法拿它当基准。
  *  开发时是 `target\debug`，打包后就是安装目录 —— 两者都是 `output/`、`config/` 的家。 */
 const appDir = ref('');
@@ -217,6 +230,13 @@ const outputDirFull = computed(() => config.value.outputDir || outputDirDefault.
 const outputDirShown = computed({
   get: () => asAppRelative(outputDirFull.value),
   set: (value: string) => { config.value.outputDir = value || null; },
+});
+/** 临时文件目录的**完整路径**：设置里没填就是后端给的那个系统临时目录下 `DPRecorder`。
+ *  跟输出目录一样：完整路径挂 `:title`，框里写相对形态。 */
+const tempDirFull = computed(() => config.value.tempDir || tempDirDefault.value);
+const tempDirShown = computed({
+  get: () => asAppRelative(tempDirFull.value) || t('temp-dir-auto'),
+  set: (value: string) => { config.value.tempDir = value || null; },
 });
 /** 配置文件目录：完整路径给 `:title`，框里写相对的 `.\config`。这格只读。
  *  `presets.toml` 就在里面，但显示与打开的**都是目录**。 */
@@ -322,6 +342,17 @@ async function selectOutputDir() {
       toastError(e);
     }
   }
+}
+
+/** 临时文件目录（工具类功能的中间产物先写这里）。选完不用验：后端生成时自己会建。 */
+async function selectTempDir() {
+  let path = await selectDir(t('temp-dir'));
+  if (path) config.value.tempDir = path;
+}
+
+/** 右键那格打开临时目录；目录还没建出来（没生成过任何东西）时后端会报错，按普通错误提示。 */
+function openTempDir() {
+  if (tempDirFull.value) invoke('open_dir', { path: tempDirFull.value }).catch(toastError);
 }
 
 /** 「FFmpeg 路径」选的是**目录**（exe 所在文件夹），不写 exe 本身，
@@ -598,6 +629,16 @@ const forkedDeps = [
                   </template>
                 </v-text-field>
               </CfgField>
+              <!-- 「临时文件目录」：工具类功能（噪域播放器）先把中间产物写这里，成型了再搬进输出目录。
+                   留空 = 系统临时目录下的 `DPRecorder`（框里的占位文字就是它的完整路径）。
+                   改这里只影响之后的生成，已有的临时文件夹不会自动搬走。 -->
+              <CfgField :label="t('temp-dir')" :tip="t('temp-dir-tip')">
+                <v-text-field :class="{ 'settings-path--default': !config.tempDir }" readonly density="compact" hide-details="auto" v-model="tempDirShown" :title="tempDirFull" @contextmenu="openTempDir">
+                  <template #append-inner>
+                    <v-icon :title="t('folder-tip')" :aria-label="t('folder-tip')" @click="selectTempDir">mdi-folder-open</v-icon>
+                  </template>
+                </v-text-field>
+              </CfgField>
               <!-- 「资源包」文件夹：放资源包的地方就在程序旁边
                    （`<程序目录>/respack`，和 output / config 一个待遇），所以框里写 `.\respack`、
                    悬停提示给完整路径。这格不给改（目录固定），文字按常灰处理。 -->
@@ -641,13 +682,13 @@ const forkedDeps = [
               <CfgSwitch v-if="false" :label="t('print-stderr')" :tip="t('print-stderr-tip')" v-model="config.printStderr"></CfgSwitch>
               <CfgSwitch v-if="false" :label="t('show-detailed-log')" :tip="t('show-detailed-log-tip')" v-model="config.showDetailedLog"></CfgSwitch>
               <!-- 「开启『游玩』按钮」：打开后「渲染」页那一排按钮里会多出「游玩」，用它直接进
-                   游戏里试谱（后端 `preview_play`）。 -->
-              <CfgSwitch :label="t('enable-play-button')" :tip="t('enable-play-button-tip')" v-model="config.enablePlayButton"></CfgSwitch>
+                    游戏里试谱（后端 `preview_play`）。归在「显示隐藏选项」里 —— 勾了它之后才出现。 -->
               <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
               <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
               <!-- 「显示隐藏选项」：这一条本身也要先被露出来 —— Ctrl+Shift+点击左栏的「设置」才出现，
                    之后按 localStorage 记着。勾上后「渲染」页末尾才会多出「谱面·调试」分区。 -->
               <CfgSwitch v-if="debugRevealed" :label="t('show-debug')" :tip="t('show-debug-tip')" v-model="debugEnabled"></CfgSwitch>
+              <CfgSwitch v-if="debugEnabled" :label="t('enable-play-button')" :tip="t('enable-play-button-tip')" v-model="config.enablePlayButton"></CfgSwitch>
               <!-- 「高性能模式」：它跟上面那个「默认展开侧边栏」是两回事：那一个是纯界面偏好（存
                    localStorage），这个是 app 配置项（写进 `config.toml`），由后端在提交渲染 /
                    游玩时注入那个渲染进程 —— 值落在 `config.highPerformance`。

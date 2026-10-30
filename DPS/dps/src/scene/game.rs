@@ -2184,7 +2184,14 @@ impl Scene for GameScene {
         if !trail {
             clear_background(BLACK);
         }
-        if res.config.render_bg {
+        // 纯色背景优先：填了颜色就整屏铺这一种颜色，既不画谱面背景贴图、也不叠
+        // `draw_background` 里那层 0.5 黑色压暗 —— 要的就是这个颜色本身。
+        // 它不看 `render_bg`：噪域谱面自带的 `config.toml` 会把 `render_bg` 关掉，
+        // 要是跟着一起关，用户填的底色就永远不出来了。
+        if let Some(c) = res.config.solid_bg {
+            let top = 1. / screen_aspect();
+            draw_rectangle(-1., -top, 2., top * 2., Color::new(c[0], c[1], c[2], res.alpha));
+        } else if res.config.render_bg {
             draw_background(*res.background, res.config.render_bg_dim);
         }
 
@@ -2198,7 +2205,10 @@ impl Scene for GameScene {
             draw_rectangle(1., -h,-x_range * 2., h * 2., dim); // Right
             draw_rectangle(-1., -h,2., -y_range * 2., dim); // Top
             draw_rectangle(-1., h,2., y_range * 2., dim); // Bottom
-            draw_rectangle(x_range * 2. - 1., -h, (1. - x_range * 2.) * 2., h * 2., Color::new(0., 0., 0., res.alpha * res.info.background_dim));
+            // 「背景暗淡」压的是谱面背景图；纯色背景底下没有图，再压一层就不是用户填的颜色了。
+            if res.config.solid_bg.is_none() {
+                draw_rectangle(x_range * 2. - 1., -h, (1. - x_range * 2.) * 2., h * 2., Color::new(0., 0., 0., res.alpha * res.info.background_dim));
+            }
         }
 
         let chart_zoom = if res.config.chart_ratio < 1. { vec2(asp2_chart / asp2_window * ratio, -asp2_chart * ratio) } else { vec2(1. * ratio, -asp2_chart * ratio) };
@@ -2219,7 +2229,10 @@ impl Scene for GameScene {
                 ..Default::default()
             });
             self.gl.quad_gl.render_pass(chart_onto.map(|it| it.render_pass));
-            draw_rectangle(-1., -h, 2., h * 2., Color::new(0., 0., 0., res.alpha * res.info.background_dim));
+            // 同上：纯色背景不叠这层压暗（谱面底色由用户填的那个颜色决定）。
+            if res.config.solid_bg.is_none() {
+                draw_rectangle(-1., -h, 2., h * 2., Color::new(0., 0., 0., res.alpha * res.info.background_dim));
+            }
         }
 
         let angle = if res.config.rotation_mode {

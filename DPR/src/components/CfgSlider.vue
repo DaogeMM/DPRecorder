@@ -9,6 +9,8 @@ const props = withDefaults(
   defineProps<{
     modelValue: number;
     label?: string;
+    /** 标签右侧的小字（如换算出来的等效值），只占位、不参与交互 */
+    note?: string;
     tip?: string;
     min?: number;
     max?: number;
@@ -17,6 +19,8 @@ const props = withDefaults(
     full?: boolean;
     /** 显示几位小数，默认按 step 推 */
     decimals?: number;
+    /** 数值后面的单位（如 `%`），不传就不显示 */
+    suffix?: string;
   }>(),
   { min: 0, max: 1, step: 0.01 },
 );
@@ -37,6 +41,7 @@ function text(): string {
 <template>
   <div class="cfg-item" :class="{ 'cfg-item--full': full }" :title="tip || undefined">
     <span v-if="label" class="cfg-item__label">{{ label }}</span>
+    <span v-if="note" class="cfg-slider__note">{{ note }}</span>
     <div class="cfg-item__control">
       <v-slider
         class="cfg-slider"
@@ -51,7 +56,18 @@ function text(): string {
         thumb-size="14"
         @update:model-value="onInput"
       ></v-slider>
-      <span class="cfg-slider__value">{{ text() }}</span>
+      <span class="cfg-slider__value">{{ text() }}<template v-if="suffix">{{ suffix }}</template></span>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 标签右侧的换算值：小一号、次要色，贴在标签后面，不挤压滑条（滑条仍占 40%） */
+.cfg-slider__note {
+  flex: none;
+  margin-left: var(--phi-space-2);
+  font-size: 12px;
+  color: var(--phi-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+</style>

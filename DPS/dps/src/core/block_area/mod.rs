@@ -22,6 +22,7 @@
 
 mod native;
 mod next;
+pub mod simple;
 
 pub use native::{
     block_touch_blocked, collect as collect_zones, judge_paint_view, render_all as render_native_block_areas, reset_block_effects as reset_native_block_effects,

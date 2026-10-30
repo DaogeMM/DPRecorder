@@ -105,6 +105,10 @@ struct PgrChart {
     /// 不做 T(拍) 换算，所以这里原样保留 JSON，交给 `block_area` 模块解析。
     #[serde(default)]
     block_area_list: Option<serde_json::Value>,
+    /// 噪域播放器（DPR）写的紧凑噪域表，与 `blockAreaList` 记同一件事，只是编码更省
+    /// （见 `core::block_area::simple`）。官方谱面不会有这个字段。
+    #[serde(default)]
+    simple_block_area: Option<serde_json::Value>,
 }
 
 macro_rules! validate_events {
@@ -507,6 +511,14 @@ pub fn parse_phigros(source: &str, extra: ChartExtra) -> Result<Chart> {
 
     // Phigros 4.0 剧情遮挡区域：注意 time 单位就是秒，不走 _time_coverter
     let mut block_areas = crate::core::parse_block_areas(pgr.block_area_list.as_ref());
+    // 噪域播放器的紧凑表接在官方条目后面。两边的 `index` 各自从 0 起，拼起来之后统一重排成
+    // 它们在 `block_areas` 里的位置 —— 这个序号就是「简化噪域文字」印的号。
+    block_areas.extend(crate::core::simple_block_area::parse(pgr.simple_block_area.as_ref()));
+    for (i, area) in block_areas.iter_mut().enumerate() {
+        area.index = i;
+        area.group = i;
+        area.slot = i;
+    }
     // 官方格式没有全局 beat 表（`BPMList` 只按判定线索引给），rpe-next v220 噪域的时间就是
     // 全局 beat，换算不出秒，所以这里不解析它们：`parse_block_areas` 会跳过 next 形状的条目，
     // 只提示一句，免得以为是解析器漏了。

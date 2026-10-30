@@ -189,7 +189,7 @@ const {
   limitThreshold,
   loudnessEqualization, audioMixOptimization, fileNameFormat, renderLine, renderLineExtra,
   renderNote, renderDoubleHint, renderPendingNote, pendingNoteColor, renderUiPause, renderUiName, renderUiLevel, renderUiDifficulty,
-  renderUiScore, renderUiCombo, renderUiBar, renderBg, renderBgDim, backgroundDim,
+  renderUiScore, renderUiCombo, renderUiBar, renderBg, renderBgDim, solidBg, backgroundDim,
   // 谱面侧渲染参数：它们与谱面信息（ChartInfo）同名，`RenderView.buildParams()` 会并进 info，
   // **配置值优先** ⇒ 导入谱面不再覆盖这些设置（详见下面对「宽 : 高」与「偏移」的说明）
   forceAspectRatio, foldAnimation, pureConfigChart, pureConfigChartLineY, pureConfigChartSpeed,
@@ -965,6 +965,8 @@ defineExpose({
           <CfgField :label="t('bg-blurriness')" :tip="t('bg-blurriness-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBg" v-model="bgBlurriness" type="number" :rules="[RULES.positiveOrZero, RULES.less10000]"></v-text-field></CfgField>
           <CfgField :label="t('watermark')" :tip="t('watermark-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow v-model="watermark"></v-textarea></CfgField>
           <CfgField :label="t('combo')" :tip="t('combo-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiCombo" :rules="[RULES.notCOMBO]" v-model="combo"></v-textarea></CfgField>
+          <!-- 「纯色背景」：填了十六进制颜色就整屏铺这个颜色（不画背景贴图）；留空 = 用谱面自带背景。 -->
+          <CfgField :label="t('solid-bg')" :tip="t('solid-bg-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow v-model="solidBg" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('difficulty')" :tip="t('difficulty-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiDifficulty" v-model="difficulty"></v-textarea></CfgField>
         </div>
       </PhiSection>

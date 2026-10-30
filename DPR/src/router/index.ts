@@ -6,6 +6,9 @@ import BatchView from '../BatchView.vue';
 import RPEView from '../RPEView.vue';
 import TasksView from '../TasksView.vue';
 import SettingsView from '../SettingsView.vue';
+import VideoNoiseView from '../tools/VideoNoiseView.vue';
+
+import { toolProjects } from '../tools/projects';
 
 import { useOnLoaded } from '../App.vue';
 import { beginPageLoad } from '../pageLoad';
@@ -19,6 +22,10 @@ const router = createRouter({
     { path: '/batch', name: 'batch', component: BatchView },
     { path: '/bind', name: 'bind', component: RPEView },
     { path: '/tasks', name: 'tasks', component: TasksView },
+    // 「工具」是一级导航的最后一项，里面每个项目各一条路由：项目之间**只能**用左栏切换，
+    // 所以没有工具列表页，`/tools` 直接落到第一个项目。
+    { path: '/tools', name: 'tools', redirect: { name: toolProjects[0]!.name } },
+    { path: '/tools/video-noise', name: 'tool-video-noise', component: VideoNoiseView },
     { path: '/settings', name: 'settings', component: SettingsView },
   ],
   scrollBehavior(_to, from, savedPosition) {

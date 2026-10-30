@@ -9,7 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { event } from '@tauri-apps/api';
 
 import { toastError, RULES, toast, anyFilter, isString, openExternal } from './common';
-import { DEFAULT_APP_CONFIG } from './model';
+import { DEFAULT_APP_CONFIG, DEFAULT_RENDER_CONFIG } from './model';
 import {
   APPENDANT_DOWNLOAD_PASSWORD,
   APPENDANT_DOWNLOAD_URL,
@@ -34,6 +34,7 @@ import { formatLvl, useLvlField } from './lvl';
 import type { AppConfig, ChartInfo, FileDropEvent, RenderConfig } from './model';
 import type { WorkingState } from './config/types';
 import { chartModMarker, chartSideOf } from './config/chartSide';
+import { readChartConfig, withChartConfig } from './chartConfig';
 import { jumpToFirstError } from './formError';
 
 import { VForm } from 'vuetify/components';
@@ -45,7 +46,7 @@ import CfgField from './components/CfgField.vue';
 import moment from 'moment';
 import * as dialog from "@tauri-apps/plugin-dialog"
 
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { StorageSerializers, useStorage } from '@vueuse/core';
 import { finishPageLoad } from './pageLoad';
 
@@ -100,8 +101,11 @@ watch(
 //   - 解析完谱面 / 套用预设时，ConfigView 通过 `setChartInfoSlots()` 把配置里的值写进来；
 //   - 用户在这里改了，就回写进 ConfigView（`configView.setChartInfoSlots()`）——buildConfig() 会取它。
 // 用字符串是为了跟其它输入框一样随手打、不清空中间态；换算与校验交给 buildConfig() 与 rules。
-const offsetText = ref('');
-const scoreTotalText = ref('');
+// 初值取默认配置而不是空串：`ConfigView` 还没把配置推过来（它在 `Suspense` 里，父组件的
+// `onMounted` 时可能还没挂载、`configView.value` 还是空）时，空串会让 `rules` 直接判
+// 「不能为空」，整张谱面都渲不了。真实配置一到就会被 `onChartInfoSlots` 覆盖。
+const offsetText = ref(String(Math.round(DEFAULT_RENDER_CONFIG.offset * 1000)));
+const scoreTotalText = ref(String(DEFAULT_RENDER_CONFIG.scoreTotal));
 const chartInfoSlotsReady = ref(false); // 配置里的值还没拿到之前，别把空字符串写回去
 
 // 「游玩」按钮默认不显示, 由「设置」里的「开启游玩按键」决定(读的是后端 config.toml)
@@ -116,6 +120,25 @@ const appConfigReady = invoke('read_config')
   });
 
 const chartPath = ref('');
+
+/**
+ * 谱面自带的强制渲染配置：谱面包根上的 `config.toml`（只有 DPR 认它，引擎不读）。
+ * 导入谱面时读出来，渲染 / 试玩 / 预览时盖在工作配置上 —— 谱面自己决定怎么被画。
+ * `null` 表示这张谱面没有这个文件（常态）。
+ */
+const chartForcedConfig = ref<Partial<RenderConfig> | null>(null);
+
+async function loadChartConfig(file: string) {
+  chartForcedConfig.value = null;
+  if (!file) return;
+  try {
+    chartForcedConfig.value = await readChartConfig(file);
+  } catch (e) {
+    // 谱面带了这个文件却读不出来（写错键名、不是合法 TOML）：提示出来，
+    // 静默忽略会让「谱面配置没生效」查不出原因。
+    toast(t('chart-config-failed', { err: String(e) }), 'warning');
+  }
+}
 
 const loadingParsingChart = ref(false);
 
@@ -143,6 +166,9 @@ async function loadChart(file: string, info?: ChartInfo, config?: RenderConfig) 
     // 谱面里带的那批值（宽高比 / 偏移 / 判定线长度 / 总分 / 预览起止 / 各开关）不能覆盖配置：
     // 它们是**配置项**（见 model.ts 的「谱面侧渲染参数」与 config/chartSide.ts）——
     // 配置里存的是什么就用什么，否则「把预设存下来」就没有意义了。
+    // 例外是谱面自带的 `config.toml`：那是谱面作者写明「这张谱面就该这么画」的强制项，
+    // 在 buildParams() 里盖住工作配置（不写回配置本身，用户之后换谱面就恢复）。
+    await loadChartConfig(file);
     // 不强制跳转: 不切页签、不改当前步骤, 用户就停在自己正在看的地方
     await nextTick();
     if (config) {
@@ -200,6 +226,11 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  // 窗口级监听与快捷键都跟着本页走：留在窗口上会让别的页面也吃到拖入 / PageDown。
+  for (const unlisten of dropUnlisteners) unlisten();
+  dropUnlisteners.length = 0;
+  document.removeEventListener('keydown', onPageDown);
+
   if (chartRowTimer === undefined) return;
   clearTimeout(chartRowTimer);
   saveChartRow();
@@ -207,21 +238,26 @@ onBeforeUnmount(() => {
 
 const fileHovering = ref(false);
 
-listen('tauri://drag-over', () => (fileHovering.value = true));
-listen('tauri://drag-leave', () => (fileHovering.value = false));
+/** 拖入导入谱面的监听：页面销毁时**必须解绑**。
+ *  它们是挂在窗口上的，不解绑的话切到别的页面再拖文件，这里仍会收到 drop 并去 loadChart ——
+ *  在「工具」页拖一个视频进来就会报「读取谱面失败」（parse_chart 把视频当 zip 打开）。 */
+const dropUnlisteners: UnlistenFn[] = [];
+listen('tauri://drag-over', () => (fileHovering.value = true)).then((unlisten) => dropUnlisteners.push(unlisten));
+listen('tauri://drag-leave', () => (fileHovering.value = false)).then((unlisten) => dropUnlisteners.push(unlisten));
 listen('tauri://drag-drop', async (event) => {
   const files = (event.payload as FileDropEvent).paths;
-  
+
   // 只支持拖动导入谱面: 拖入后直接解析, 并回到"渲染参数"页(谱面信息就在这一页最下面)
   fileHovering.value = false;
   await loadChart(files[0] as string);
-});
+}).then((unlisten) => dropUnlisteners.push(unlisten));
 
-document.addEventListener('keydown', async (event) => {
+async function onPageDown(event: KeyboardEvent) {
   if (document.hasFocus() && event.key === 'PageDown') {
     await moveNext();
   }
-});
+}
+document.addEventListener('keydown', onPageDown);
 
 const form = ref<VForm>();
 
@@ -319,6 +355,9 @@ async function buildParams() {
   if (!(await checkInfo())) return null;
   let config = await configView.value!.buildConfig();
   if (!config) return null;
+  // 谱面自带的 `config.toml`：盖在工作配置上 —— 谱面要求怎么画就怎么画（它不许改的分辨率 /
+  // 编码器之类不在白名单里，见后端的 chart_config.rs）。渲染 / 试玩 / 预览都走这里。
+  config = withChartConfig(config, chartForcedConfig.value);
   if (!(await checkAppendants(config))) return null;
   // 谱面侧渲染参数（宽高比 / 强制宽高比 / 折叠式入场 / 判定线长度 / 总分 / 预览起止 / 偏移 /
   // 背景压暗 …）现在是配置项：**以配置为准**，所以展开在谱面信息**之后**覆盖同名键。
@@ -481,8 +520,13 @@ function onChartInfoSlots(values: { scoreTotal: number; offset: number }) {
   chartInfoSlotsReady.value = true;
   // 这一批是表单自己改出来的回声：不要再写回去（会把正在敲的「12.3」取整成「12」）
   if (pushingFromForm) return;
-  offsetText.value = String(Math.round(values.offset * 1000));
-  scoreTotalText.value = String(values.scoreTotal);
+  // 配置里这两个槽位还没被写过（比如工作配置是旧版本存的、缺这两个键）时，回填
+  // 「没值」会让输入框空着、`rules` 直接判「不能为空」，整张谱面都渲染不了。
+  // 所以取不到有限数就退回默认值 —— 后端拿到的参数本来就是配置值优先。
+  const offset = Number.isFinite(values.offset) ? values.offset : DEFAULT_RENDER_CONFIG.offset;
+  const scoreTotal = Number.isFinite(values.scoreTotal) ? values.scoreTotal : DEFAULT_RENDER_CONFIG.scoreTotal;
+  offsetText.value = String(Math.round(offset * 1000));
+  scoreTotalText.value = String(scoreTotal);
 }
 
 /** 表单里改了「总分 / 偏移」：写回配置（配置是唯一的存储，这两个输入框只是它的控件） */
@@ -513,6 +557,8 @@ if (!isString(chartInQuery)) {
         // 最近一次导入的谱面本身也放回去：谱面信息里那些文字框、标签、以及「渲染」要用的路径
         if (savedChart.chartPath) chartPath.value = savedChart.chartPath;
         if (savedChart.chartInfo) chartInfo.value = savedChart.chartInfo;
+        // 谱面自带的 config.toml 也要跟着重新读：不然重启后「以谱面为准」的那几项会失效
+        await loadChartConfig(savedChart.chartPath ?? '');
       }
       const saved = readWorking();
       if (!saved) return;
@@ -641,9 +687,11 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
                只剩 简介 那个 `full` 网格单独一块。
                分网格的理由：`design/config.css:55-60` 的 `:has()` 规则只给「里面全是 full 条目」的网格
                去掉栏间竖线，full 与普通条目混在一个网格里时竖线会横穿整行的长输入框（Tip / 文件名格式踩过）。 -->
+          <!-- 谱面自带的 `config.toml` 写明了这张谱面要强制用的渲染项（噪域谱面只留噪域、
+               偏移 0、总分 1）。这里不放提示：以谱面配置为准的是发给后端的参数
+               （`buildParams()` 里盖在工作配置上），下面输入框照旧显示用户自己的值。 -->
           <div class="cfg-grid cfg-grid--two">
-            <CfgField :label="t('info.name')">
-              <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.name"></v-textarea>
+            <CfgField :label="t('info.name')">              <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.name"></v-textarea>
             </CfgField>
             <CfgField :label="t('info.composer')">
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" v-model="chartInfo.composer"></v-textarea>
@@ -800,6 +848,8 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
   color: var(--phi-label-inverted) !important;
 }
 
+/* 谱面自带 `config.toml` 时谱面信息顶部的那条提示：左侧强调色竖条 + 深底，
+   只解释「哪些项由谱面钉死」，不参与布局（不挡下面那些输入框）。 */
 /* 整页铺满内容区（外面没有卡片、也没有 pa-8 内边距） */
 .render-view {
   position: relative;

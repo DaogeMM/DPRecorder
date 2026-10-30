@@ -564,11 +564,21 @@ fn draw_zone_numbers(aspect: f32, zones: &[Zone], active_color: [f32; 3], pale_c
 /// 位置），「简化噪域文字」印的就是这个号。`reuse` 是「噪域优化」：改成印 `BlockArea::slot`，
 /// 也就是**复用号**——同一时刻存在的噪域一定不同号，一条消失后它的号立刻被下一条复用。
 pub fn collect(blocks: &[BlockArea], t: f64, aspect: f32, reuse: bool) -> Vec<Zone> {
-    blocks
-        .iter()
-        .filter_map(|b| {
-            let index = if reuse { b.slot } else { b.index };
-            Zone::from_area(b, t, aspect).map(|zone| Zone { index, ..zone })
-        })
-        .collect()
+    // 噪域谱面一帧要扫几十万条（60 s 的 720p 噪域谱就有 85 万条），单线程扫一遍就是一个核
+    // 跑满整帧。这里按条数分片并行：`par_iter` 的 `filter_map` + `collect` **保持原顺序**，
+    // 所以 `zones` 的次序与串行逐条过滤完全一致，后续栅格化/合成的结果逐像素不变。
+    // 条数少时（普通谱面几十到几千条）起线程池反而更贵，仍走串行的那条路。
+    let keep = |b: &BlockArea| {
+        let index = if reuse { b.slot } else { b.index };
+        Zone::from_area(b, t, aspect).map(|zone| Zone { index, ..zone })
+    };
+    if blocks.len() >= PARALLEL_COLLECT_MIN {
+        use rayon::prelude::*;
+        blocks.par_iter().filter_map(keep).collect()
+    } else {
+        blocks.iter().filter_map(keep).collect()
+    }
 }
+
+/// [`collect`] 从多少条起改用 rayon 并行。低于它时线程池的唤醒与合并比扫描本身还贵。
+const PARALLEL_COLLECT_MIN: usize = 4096;

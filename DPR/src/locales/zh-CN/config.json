@@ -304,6 +304,8 @@
   "multi-lang-gate-tip": "勾上才显示下面两个模式开关，只影响界面显隐",
   "combo": "COMBO 文字",
   "combo-tip": "连击数下面那行小字，留空不画",
+  "solid-bg": "纯色背景",
+  "solid-bg-tip": "填六位十六进制颜色（如 #FFFFFF）就整屏铺这个颜色；留空用谱面自带的背景图",
   "difficulty": "自定义难度",
   "difficulty-tip": "加载界面色块里的难度，留空则取谱面难度文本",
   "offset": "延时",

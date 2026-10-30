@@ -305,6 +305,8 @@
   "multi-lang-gate-tip": "Reveals the two mode switches below; only affects the UI",
   "combo": "COMBO text",
   "combo-tip": "Small text under the combo; blank hides it",
+  "solid-bg": "Solid background",
+  "solid-bg-tip": "Six hex digits (e.g. #FFFFFF) fill the whole screen with that colour; blank uses the chart's own background image",
   "difficulty": "Custom Difficulty",
   "difficulty-tip": "Difficulty shown in the loading block; blank takes it from the chart",
   "offset": "Offset",

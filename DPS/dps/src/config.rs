@@ -331,6 +331,10 @@ pub struct Config {
     pub mopemope_sp_color_b: [f32; 3],
     pub render_bg: bool,
     pub render_bg_dim: bool,
+    /// 「纯色背景」：`Some(rgb)`（0~1）时不画谱面背景贴图，整屏直接铺这一个颜色；
+    /// `None`（默认）= 照旧画背景图。由渲染页「界面」里的「纯色背景」填，留空即关。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solid_bg: Option<[f32; 3]>,
     /// Phigros 4.0 `blockAreaList` 剧情遮挡区域（默认开启）
     pub render_block_area: bool,
     /// 「噪域打击效果」：按键命中时，在噪域上亮起一圈官方的触摸光晕
@@ -822,6 +826,7 @@ impl Default for Config {
             mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],
             render_bg: true,
             render_bg_dim: true,
+            solid_bg: None,
             render_block_area: true,
             block_area_hover: true,
             block_area_hover_radius: 0.5,

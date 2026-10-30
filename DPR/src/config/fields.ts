@@ -13,6 +13,7 @@
  * 检查表是否覆盖了 RenderConfig 的每一个键 —— 漏一个就直接报错点名。
  */
 import type { RenderConfig } from '../model';
+import { hexToRgb, rgbToHex } from './convert';
 import type { FieldSpec, FieldTable, SectionId } from './types';
 
 /** 挑战模式颜色：界面上是本地化名字，落盘成这几个英文词（下标一一对应） */
@@ -220,6 +221,17 @@ const CHART = {
   bgBlurriness: { widget: 'number' },
   watermark: { widget: 'textarea' },
   combo: { widget: 'textarea' },
+  /**
+   * 「纯色背景」：留空 = 照旧画谱面自带的背景贴图；填了 HEX 就整屏铺这一个颜色。
+   *
+   * 不用 `color` 那套默认换算：默认换算把空串当成白色（`hexToRgb('')` 回落白），
+   * 而这里空串必须表示「没有纯色背景」，所以两边都自己写。
+   */
+  solidBg: {
+    widget: 'color',
+    toUi: (value) => (value ? rgbToHex(value) : ''),
+    toConfig: (ui) => (String(ui.solidBg ?? '').trim() ? hexToRgb(String(ui.solidBg)) : null),
+  },
   difficulty: { widget: 'textarea' },
   // ------------------------- 谱面侧渲染参数 -------------------------
   // 「谱面修改」这一族（纯配置谱面 / 七个按键功能 / 隐藏按键）在界面上各占一行、同处一个分区

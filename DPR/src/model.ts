@@ -352,6 +352,11 @@ export interface RenderConfig {
   clockParadoxSpFlash4Fade: number;
   renderBg: boolean;
   renderBgDim: boolean;
+  /**
+   * 纯色背景：给了 `[r, g, b]`（0~1）就不画谱面背景贴图，整屏铺这一个颜色。
+   * `null` = 关（用谱面自带的背景图），界面上对应的输入框留空。
+   */
+  solidBg: [number, number, number] | null;
   /** 背景暗淡：黑色遮罩的不透明度（0~1），覆盖谱面信息里的同名值，默认 0.1 */
   backgroundDim: number;
 
@@ -724,6 +729,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   clockParadoxSpFlash4Fade: 145.077,
   renderBg: true,
   renderBgDim: true,
+  solidBg: null,
   backgroundDim: 0.1,
   // 谱面侧渲染参数：默认值与 RenderView 原来的 CHART_ROW_DEFAULTS 一致（导入谱面不再覆盖它们）
   forceAspectRatio: true,
@@ -855,6 +861,8 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
 export interface AppConfig {
   rpeDir: string | null;
   outputDir: string | null;
+  /** 临时（中间产物）目录，工具类功能用；留空 = 系统临时目录下的 `DPRecorder`。 */
+  tempDir: string | null;
   encoderAvc: string | null;
   encoderHevc: string | null;
   ffmpegPath: string | null;
@@ -872,6 +880,7 @@ export interface AppConfig {
 export const DEFAULT_APP_CONFIG: AppConfig = {
   rpeDir: null,
   outputDir: null,
+  tempDir: null,
   encoderAvc: null,
   encoderHevc: null,
   ffmpegPath: null,

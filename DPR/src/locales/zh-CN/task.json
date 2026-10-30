@@ -15,7 +15,7 @@
     "output": "输出",
     "remove-task": "移除任务",
     "remove-task-confirm": "确认移除任务？",
-    "remove-task-running": "正在渲染的任务会先被取消。",
+    "remove-task-running": "正在渲染的任务会先被取消",
     "remove-task-file-confirm": "输出文件也一并移除吗？",
     "remove-task-only": "仅移除任务",
     "remove-task-and-file": "任务和文件都移除",

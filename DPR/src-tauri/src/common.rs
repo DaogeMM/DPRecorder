@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -212,6 +212,32 @@ pub fn get_output_dir() -> Result<PathBuf> {
     } else {
         Ok(default_output_dir()?)
     }
+}
+
+/// 工具类功能用的临时目录：配置里填了就用它，否则退回系统临时目录下的 `DPRecorder`。
+///
+/// 调用方把中间产物先写这里，成型后再搬进输出目录 —— 转换半路失败时输出目录里
+/// 不会留下半套文件，大文件的中间产物也能指到别的盘上。
+pub fn get_temp_dir() -> Result<PathBuf> {
+    let dir = match read_config()?.temp_dir {
+        Some(dir) => dir,
+        None => std::env::temp_dir().join("DPRecorder"),
+    };
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)?;
+    } else if !dir.is_dir() {
+        bail!("temp directory is not a directory");
+    }
+    Ok(dir)
+}
+
+/// 工具页「噪域播放器」的默认输出目录：**`<程序目录>/tools/blockAreaPlayer`**。
+///
+/// 另起一层 `tools/` 而不是塞进 `output/`：这里的产物是谱面（`.pez`），
+/// 不是渲染出来的视频，混在一起不好找。
+pub fn video_tool_dir() -> Result<PathBuf> {
+    let exe_dir = exe_dir().ok_or_else(|| anyhow!("failed to locate exe dir"))?;
+    Ok(exe_dir.join("tools").join("blockAreaPlayer"))
 }
 
 pub fn test_output_dir(dir: PathBuf) -> Result<()> {
@@ -498,6 +524,11 @@ pub async fn save_presets(presets: &HashMap<String, RenderConfig>) -> Result<()>
 pub struct AppConfig {
     pub rpe_dir: Option<PathBuf>,
     pub output_dir: Option<PathBuf>,
+    /// 临时（中间产物）目录，工具类功能用。留空就用系统临时目录下的 `DPRecorder`。
+    ///
+    /// 中间产物（抽出来的音轨、封面、谱面草稿）先写这里，成型后再搬进输出目录：
+    /// 半路失败不会在输出目录里留下半成品，大文件的中间产物也能指到另一块盘上。
+    pub temp_dir: Option<PathBuf>,
     pub encoder_avc: Option<String>,
     pub encoder_hevc: Option<String>,
     pub ffmpeg_path: Option<String>,
@@ -524,6 +555,7 @@ impl Default for AppConfig {
         Self {
             rpe_dir: None,
             output_dir: None,
+            temp_dir: None,
             encoder_avc: None,
             encoder_hevc: None,
             ffmpeg_path: None,
@@ -637,25 +669,112 @@ pub fn collect_chart_files(
     Ok(file_list)
 }
 
-pub async fn create_zip(output_path: PathBuf, files: HashMap<String, PathBuf>) -> Result<()> {
-    let file = File::create(&output_path)?;
-    let mut zip = ZipWriter::new(BufWriter::new(file));
+/// 已经是压缩格式的后缀：再 deflate 一遍体积几乎不变，只是白烧 CPU（几十 MB 的谱面包里
+/// 音频与图片占大头，跳过它们能省下打包时间的大半）。
+fn zip_method_of(path: &Path) -> CompressionMethod {
+    let extension = path
+        .extension()
+        .map(|it| it.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match extension.as_str() {
+        "mp3" | "ogg" | "m4a" | "aac" | "flac" | "jpg" | "jpeg" | "png" | "webp" | "zip" | "pez" => CompressionMethod::Stored,
+        _ => CompressionMethod::Deflated,
+    }
+}
 
-    let options = FileOptions::<()>::default()
-        .compression_method(CompressionMethod::Deflated)
-        .compression_level(Some(9))
-        .unix_permissions(0o755);
+/// 边生成边打包的 zip 写入器：条目的内容由调用方现写（内存块或者流），**不落中间文件**。
+///
+/// 工具页的噪域谱面靠它省掉一趟搬运：谱面 JSON 有几十 MB，先写进临时目录再读回来压缩，
+/// 等于把同样的字节在磁盘上搬两遍。这里内容直接从生成处流进 zip，谱面包从一开始就写在
+/// 输出目录里。
+///
+/// 写到一半失败要能收场：先落 `<目标名>.part`，[`Self::finish`] 时才改名成目标名 ——
+/// 半路出错（抽帧失败、程序被杀）不会在输出目录里留下一个看起来能打开、其实不完整的包。
+pub struct ZipPack {
+    /// `finish` 之后变成 `None`：那时文件已经改名，`Drop` 不该再删。
+    zip: Option<ZipWriter<BufWriter<File>>>,
+    path: PathBuf,
+    part: PathBuf,
+    level: i64,
+}
 
-    for (file_name, file_path) in files {
-        zip.start_file_from_path(file_name, options)?;
-        let mut buffer = Vec::new();
-        File::open(&file_path)?.read_to_end(&mut buffer)?;
-        zip.write_all(&buffer)?;
+impl ZipPack {
+    /// 建一个包，`level` 是 deflate 压缩级别（0~9）。
+    pub fn create(path: impl Into<PathBuf>, level: i64) -> Result<Self> {
+        let path = path.into();
+        let part = path.with_extension(match path.extension() {
+            Some(extension) => format!("{}.part", extension.to_string_lossy()),
+            None => "part".to_owned(),
+        });
+        let file = File::create(&part)?;
+        Ok(Self {
+            zip: Some(ZipWriter::new(BufWriter::new(file))),
+            path,
+            part,
+            level,
+        })
     }
 
-    zip.finish()?;
-    info!("Create ZIP: {}", output_path.display());
-    Ok(())
+    /// 写一个已经在内存里的条目（`info.yml`、`config.toml`、音频、曲绘这类）。
+    pub fn bytes(&mut self, name: &str, data: &[u8]) -> Result<()> {
+        self.entry(name, |out| Ok(out.write_all(data)?))
+    }
+
+    /// 写一个内容现生成的条目：`write` 拿到的是 zip 里那条数据的写入端。
+    pub fn entry<F>(&mut self, name: &str, write: F) -> Result<()>
+    where
+        F: FnOnce(&mut dyn Write) -> Result<()>,
+    {
+        let zip = self.zip.as_mut().ok_or_else(|| anyhow!("zip 已经收尾"))?;
+        let method = zip_method_of(Path::new(name));
+        let options = FileOptions::<()>::default()
+            .compression_method(method)
+            // `Stored` 不接受压缩级别：给了会得到 `Unsupported compression level`
+            .compression_level(matches!(method, CompressionMethod::Deflated).then_some(self.level))
+            .unix_permissions(0o755);
+        zip.start_file_from_path(name, options)?;
+        write(zip)
+    }
+
+    /// 收尾：写完中央目录，再把 `.part` 改名成目标文件。
+    pub fn finish(mut self) -> Result<()> {
+        let zip = self.zip.take().ok_or_else(|| anyhow!("zip 已经收尾"))?;
+        let mut file = zip.finish()?;
+        file.flush()?;
+        drop(file);
+        std::fs::rename(&self.part, &self.path)?;
+        info!("Create ZIP: {}", self.path.display());
+        Ok(())
+    }
+}
+
+impl Drop for ZipPack {
+    fn drop(&mut self) {
+        // 没收尾就丢掉：删掉半成品
+        if self.zip.is_some() {
+            let _ = std::fs::remove_file(&self.part);
+        }
+    }
+}
+
+/// 打包成 zip（`.pez` 谱面包、导出谱面共用），最高压缩级别。
+pub async fn create_zip(output_path: PathBuf, files: HashMap<String, PathBuf>) -> Result<()> {
+    let mut pack = ZipPack::create(output_path, 9)?;
+    let mut buffer = vec![0u8; 1 << 20];
+    for (file_name, file_path) in files {
+        let mut source = File::open(&file_path)?;
+        pack.entry(&file_name, |out| {
+            loop {
+                // 读到 0 就等于 EOF：一块一块往下送，不整份读进内存
+                let read = source.read(&mut buffer)?;
+                if read == 0 {
+                    return Ok(());
+                }
+                out.write_all(&buffer[..read])?;
+            }
+        })?;
+    }
+    pack.finish()
 }
 
 #[cfg(test)]

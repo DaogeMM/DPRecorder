@@ -18,6 +18,22 @@ static DISPLACE: Lazy<image::RgbImage> = Lazy::new(|| {
 /// 4096 个居中噪声样本（`value/255 - 0.5`，按 mediump 舍入）。
 static CENTERED_NOISE: Lazy<[f32; 256]> = Lazy::new(|| std::array::from_fn(|value| medium(medium(value as f32 / 255.) - 0.5)));
 
+/// 噪域条数到多少才值得按行分带并行。低密度谱面分带的调度开销比栅格化本身还大，
+/// 所以小批量的帧仍走单带（等价于原来的串行路径）。
+const PARALLEL_RASTER_MIN: usize = 512;
+
+/// 一条行带：`Masks::rasterize_zones` 并行时分给一个线程，它只写自己这几行。
+///
+/// 六张相机层与两张绿色平面都按 `(y1 - y0) * bw` 切过，跨线程的写区间互不相交。
+struct RowBand<'a> {
+    y0: usize,
+    y1: usize,
+    layers: [&'a mut [u8]; 6],
+    raw_green: &'a mut [u8],
+    ready_green: &'a mut [u8],
+    lava_uv: Option<&'a mut [u8]>,
+}
+
 #[derive(Default)]
 pub(super) struct Masks {
     /// 送往着色器的 `uMasks`：R = 合成掩码（无符号，用阈值窗口处理减算），
@@ -265,71 +281,7 @@ impl Masks {
             // 只有会画出来的方块。合成块（`judge_cover > 0`）走下面 `covers` 那半边 —
             // 传进来的 `zones` 里不该有它们（生产调用点在 `shader.rs` 已经 partition 过）。
             debug_assert!(!zones.iter().any(|z| z.judge_cover > 0), "covers must go through the `covers` argument");
-            for z in zones {
-                let layer = if z.active { usize::from(z.invert) } else { 2 + usize::from(z.invert) };
-                let opacity = if z.invert { 0.1 } else { z.opacity };
-                // 层的累加是 `unorm(旧值/255 + alpha)`，等价于「饱和加 `round(alpha * 255)`」：
-                // `round(n + f) == n + round(f)`（`n` 是整数），钳位两边也一样。换成整数饱和加
-                // 之后逐像素结果完全相同，但省掉每格两次浮点除法 / 一次 `round`。
-                let add = unorm(opacity);
-                let add_green = unorm(0.1 * z.opacity);
-                let ready_layer = 4 + usize::from(z.invert);
-                let ready = z.ready;
-                let green = z.invert && !z.active;
-                let ready_green = ready && z.invert;
-                // 「拉伸进每个噪域」那档要的逐纹素局部坐标：顺手在同一次栅格化里写，
-                // 免得为它再跑一遍 `raster_rows`。映射是每个噪域自己的仿射变换
-                // （先减中心、再转回去、再按半宽半高归一化），所以整张图正好铺满这个矩形。
-                let (s, c) = z.angle.sin_cos();
-                let (ux, uy) = (0.5 / z.half.x, 0.5 / z.half.y);
-                // 纹素中心的局部坐标 → 0~1 的贴图坐标。整张图铺满这个矩形；出了矩形
-                // 就是 0~1 以外，普通块靠采样器的环绕接上（减算块见下面那段）。
-                let uv_at = |x: usize, y: usize| {
-                    let py = ((y as f32 + 0.5) * 2. / bh as f32 - 1.) / aspect - z.center.y;
-                    let px = (x as f32 + 0.5) * 2. / bw as f32 - 1. - z.center.x;
-                    [(c * px + s * py) * ux + 0.5, (c * py - s * px) * uy + 0.5]
-                };
-                raster_rows(bw, bh, aspect, z, |y, first, last| {
-                    for x in first..last {
-                        let i = y * bw + x;
-                        if need_lava_uv {
-                            let uv = uv_at(x, y);
-                            self.lava_uv[i * 4] = unorm(uv[0]);
-                            self.lava_uv[i * 4 + 1] = unorm(uv[1]);
-                            self.lava_uv[i * 4 + 3] = 255;
-                        }
-                        let cell = &mut self.layers[layer];
-                        cell[i] = cell[i].saturating_add(add);
-                        if green {
-                            let g = &mut self.raw_disabled_green;
-                            g[i] = g[i].saturating_add(add_green);
-                        }
-                        if ready {
-                            let cell = &mut self.layers[ready_layer];
-                            cell[i] = cell[i].saturating_add(add);
-                            if ready_green {
-                                let g = &mut self.ready_green;
-                                g[i] = g[i].saturating_add(add_green);
-                            }
-                        }
-                    }
-                });
-                if z.invert && need_lava_uv {
-                    // 减算块画的是矩形**外面**那一圈，所以它的贴图坐标也要铺满整屏：
-                    // 只写矩形内部的话，外面那圈全落在同一个纹素上，整块就变成一个纯色。
-                    // 外面那些纹素落在 0~1 以外，这里先对 1 取余，于是贴图在外面重复铺开
-                    // （不取余就只能得到放大后的边缘像素，看起来是一条条色带）。
-                    for y in 0..bh {
-                        for x in 0..bw {
-                            let i = y * bw + x;
-                            let uv = uv_at(x, y);
-                            self.lava_uv[i * 4] = unorm(uv[0].rem_euclid(1.));
-                            self.lava_uv[i * 4 + 1] = unorm(uv[1].rem_euclid(1.));
-                            self.lava_uv[i * 4 + 3] = 255;
-                        }
-                    }
-                }
-            }
+            self.rasterize_zones(bw, bh, aspect, zones, need_lava_uv);
         }
         // 颜色归属只在层变化时重算（它只依赖几何），位移每帧都会把颜色搬到输出平面。
         if self.colored && layers_dirty {
@@ -356,29 +308,40 @@ impl Masks {
             self.sources_rgba.resize(bw * bh * 4, 0);
             self.enabled_compose.resize(bw * bh, 0);
             self.point_aux.resize(bw * bh, [0; 3]);
-            for i in 0..bw * bh {
-                for c in 0..4 {
-                    self.sources_rgba[i * 4 + c] = self.layers[c][i];
-                }
-                // 「判定范围让位」：`alpha *= 1 - cover / 255`（上游 `judge_range.glsl` 的语义）。
-                // `judge_cover` 只取 0 / 255（见 `mod.rs::push_quad_zones`），所以这里等于整块擦掉，
-                // 掩码里不会留下中间灰度 —— 这是 `render_rings` 能走位图路径的前提。
-                let composed = self.layers[0][i].abs_diff(if subtract_enabled(self.layers[1][i]) == 1. { 255 } else { 0 });
-                let cover = self.judge_cover[i] as u32;
-                self.enabled_compose[i] = if cover == 0 { composed } else { (composed as u32 * (255 - cover) / 255) as u8 };
-                let disabled = if self.layers[2][i] == 0 && self.layers[3][i] == 0 && self.raw_disabled_green[i] == 0 {
-                    0
-                } else {
-                    let (sr, sg) = subtract_disabled(self.layers[3][i], self.raw_disabled_green[i]);
-                    unorm((sr * sg - self.layers[2][i] as f32 / 255.).abs())
-                };
-                let ready_s = if self.ready_green[i] == 0 {
-                    0
-                } else {
-                    unorm(subtract_disabled(self.layers[5][i], self.ready_green[i]).1)
-                };
-                self.point_aux[i] = [self.layers[4][i], ready_s, disabled];
-            }
+            // 逐掩码像素并行：每个像素只读六张层与两张绿色平面、只写自己的那几格，
+            // 各线程碰的区间互不相交，结果与串行逐像素合成相同。
+            let layers = &self.layers;
+            let judge_cover = &self.judge_cover;
+            let raw_green = &self.raw_disabled_green;
+            let ready_green = &self.ready_green;
+            self.sources_rgba
+                .par_chunks_mut(4)
+                .zip(self.enabled_compose.par_chunks_mut(1))
+                .zip(self.point_aux.par_chunks_mut(1))
+                .enumerate()
+                .for_each(|(i, ((source, enabled), point))| {
+                    for (c, cell) in source.iter_mut().enumerate() {
+                        *cell = layers[c][i];
+                    }
+                    // 「判定范围让位」：`alpha *= 1 - cover / 255`（上游 `judge_range.glsl` 的语义）。
+                    // `judge_cover` 只取 0 / 255（见 `mod.rs::push_quad_zones`），所以这里等于整块擦掉，
+                    // 掩码里不会留下中间灰度 —— 这是 `render_rings` 能走位图路径的前提。
+                    let composed = layers[0][i].abs_diff(if subtract_enabled(layers[1][i]) == 1. { 255 } else { 0 });
+                    let cover = judge_cover[i] as u32;
+                    enabled[0] = if cover == 0 { composed } else { (composed as u32 * (255 - cover) / 255) as u8 };
+                    let disabled = if layers[2][i] == 0 && layers[3][i] == 0 && raw_green[i] == 0 {
+                        0
+                    } else {
+                        let (sr, sg) = subtract_disabled(layers[3][i], raw_green[i]);
+                        unorm((sr * sg - layers[2][i] as f32 / 255.).abs())
+                    };
+                    let ready_s = if ready_green[i] == 0 {
+                        0
+                    } else {
+                        unorm(subtract_disabled(layers[5][i], ready_green[i]).1)
+                    };
+                    point[0] = [layers[4][i], ready_s, disabled];
+                });
         }
         self.width = ew;
         self.height = eh;
@@ -464,6 +427,167 @@ impl Masks {
         self.render_rings();
         self.last_time = Some(time);
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// 把 `zones` 逐块栅格化进六张相机层与两张绿色平面（`need_lava_uv` 时顺带写逐噪域的贴图坐标）。
+    ///
+    /// 按**行分带**交给 rayon：一帧噪域谱面要栅格化成万个方块，这一趟串行就是「渲染只用一个核」
+    /// 的主要来源。每条带只写 `bw × bh` 里属于自己的那几条行，带内仍按原顺序逐块处理
+    /// （减算块「后画的覆盖先画的」只在带内成立，这样顺序不变），层累加是饱和加，
+    /// 所以合并结果与串行逐块栅格化**逐字节相同**。
+    fn rasterize_zones(&mut self, bw: usize, bh: usize, aspect: f32, zones: &[Zone], need_lava_uv: bool) {
+        // 减算块会把贴图坐标铺满整条带（见 `rasterize_band` 末尾那段），那是「后写的覆盖先写的」，
+        // 分带之后只有含减算块的那条带会铺 —— 语义就变了。这档本来只有「拉伸进每个噪域」的皮肤
+        // 才会开，退回单带（原串行路径）保证与原来逐字节相同。
+        let lava_spread = need_lava_uv && zones.iter().any(|zone| zone.invert);
+        let bands = if zones.len() >= PARALLEL_RASTER_MIN && !lava_spread {
+            rayon::current_num_threads().min(bh).max(1)
+        } else {
+            1
+        };
+        self.rasterize_zone_bands(bw, bh, aspect, zones, need_lava_uv, bands);
+    }
+
+    /// `bands` 是行带条数；`1` 就是原来的串行路径，`rasterize_zones` 只负责决定用几条，
+    /// 测试拿两种切法对比「逐字节相同」。
+    fn rasterize_zone_bands(&mut self, bw: usize, bh: usize, aspect: f32, zones: &[Zone], need_lava_uv: bool, bands: usize) {
+        let bands = bands.max(1);
+        let rows = bh.div_ceil(bands);
+        let cells = rows * bw;
+        let [l0, l1, l2, l3, l4, l5] = &mut self.layers;
+        let mut layer_chunks = [l0.chunks_mut(cells), l1.chunks_mut(cells), l2.chunks_mut(cells), l3.chunks_mut(cells), l4.chunks_mut(cells), l5.chunks_mut(cells)];
+        let mut raw_chunks = self.raw_disabled_green.chunks_mut(cells);
+        let mut ready_chunks = self.ready_green.chunks_mut(cells);
+        // `need_lava_uv` 为假时 `lava_uv` 可能还是空的（它只在那档启用时才 resize），
+        // 这时不要向它要分带，`RowBand::lava_uv` 直接给 `None`。
+        let mut lava_chunks = self.lava_uv.chunks_mut(cells * 4);
+        let mut bands_vec: Vec<RowBand> = Vec::with_capacity(bands);
+        let mut y0 = 0;
+        while y0 < bh {
+            let y1 = (y0 + rows).min(bh);
+            bands_vec.push(RowBand {
+                y0,
+                y1,
+                layers: [
+                    layer_chunks[0].next().expect("row band"),
+                    layer_chunks[1].next().expect("row band"),
+                    layer_chunks[2].next().expect("row band"),
+                    layer_chunks[3].next().expect("row band"),
+                    layer_chunks[4].next().expect("row band"),
+                    layer_chunks[5].next().expect("row band"),
+                ],
+                raw_green: raw_chunks.next().expect("row band"),
+                ready_green: ready_chunks.next().expect("row band"),
+                lava_uv: if need_lava_uv { lava_chunks.next() } else { None },
+            });
+            y0 = y1;
+        }
+        let mut tasks: Vec<(RowBand, Vec<&Zone>)> = Vec::with_capacity(bands_vec.len());
+        if bands_vec.len() > 1 {
+            // 先串行扫一遍每块的行区间，再把噪域分派给与之相交的带。带内只处理自己的噪域，
+            // 否则每条带都要把整张表的逐块初始化（三角函数、`uv_at` 的倒数）重跑一遍 ——
+            // 噪域谱面的方块基本只有一两行高，那份初始化比栅格化本身还贵，分带反而更慢。
+            let mut per_band: Vec<Vec<&Zone>> = vec![Vec::new(); bands_vec.len()];
+            for zone in zones {
+                let mut first_row = usize::MAX;
+                let mut last_row = 0;
+                raster_rows(bw, bh, aspect, zone, |y, _, _| {
+                    first_row = first_row.min(y);
+                    last_row = last_row.max(y);
+                });
+                if first_row == usize::MAX {
+                    continue;
+                }
+                for (index, band) in bands_vec.iter().enumerate() {
+                    if first_row < band.y1 && last_row >= band.y0 {
+                        per_band[index].push(zone);
+                    }
+                }
+            }
+            for (band, zones) in bands_vec.into_iter().zip(per_band) {
+                tasks.push((band, zones));
+            }
+        } else {
+            for band in bands_vec {
+                tasks.push((band, zones.iter().collect()));
+            }
+        }
+        tasks.into_par_iter().for_each(|(band, zones)| Self::rasterize_band(band, &zones, bw, bh, aspect));
+    }
+
+    /// 一条行带内部：照原顺序逐块栅格化，只写落在 `[y0, y1)` 里的行。
+    fn rasterize_band(band: RowBand, zones: &[&Zone], bw: usize, bh: usize, aspect: f32) {
+        let RowBand { y0, y1, mut layers, raw_green, ready_green, mut lava_uv } = band;
+        for z in zones.iter().copied() {
+            let layer = if z.active { usize::from(z.invert) } else { 2 + usize::from(z.invert) };
+            let opacity = if z.invert { 0.1 } else { z.opacity };
+            // 层的累加是 `unorm(旧值/255 + alpha)`，等价于「饱和加 `round(alpha * 255)`」：
+            // `round(n + f) == n + round(f)`（`n` 是整数），钳位两边也一样。换成整数饱和加
+            // 之后逐像素结果完全相同，但省掉每格两次浮点除法 / 一次 `round`。
+            let add = unorm(opacity);
+            let add_green = unorm(0.1 * z.opacity);
+            let ready_layer = 4 + usize::from(z.invert);
+            let ready = z.ready;
+            let green = z.invert && !z.active;
+            let ready_green_on = ready && z.invert;
+            // 「拉伸进每个噪域」那档要的逐纹素局部坐标：顺手在同一次栅格化里写，
+            // 免得为它再跑一遍 `raster_rows`。映射是每个噪域自己的仿射变换
+            // （先减中心、再转回去、再按半宽半高归一化），所以整张图正好铺满这个矩形。
+            let (s, c) = z.angle.sin_cos();
+            let (ux, uy) = (0.5 / z.half.x, 0.5 / z.half.y);
+            // 纹素中心的局部坐标 → 0~1 的贴图坐标。整张图铺满这个矩形；出了矩形
+            // 就是 0~1 以外，普通块靠采样器的环绕接上（减算块见下面那段）。
+            let uv_at = |x: usize, y: usize| {
+                let py = ((y as f32 + 0.5) * 2. / bh as f32 - 1.) / aspect - z.center.y;
+                let px = (x as f32 + 0.5) * 2. / bw as f32 - 1. - z.center.x;
+                [(c * px + s * py) * ux + 0.5, (c * py - s * px) * uy + 0.5]
+            };
+            raster_rows(bw, bh, aspect, z, |y, first, last| {
+                if y < y0 || y >= y1 {
+                    return;
+                }
+                let row = (y - y0) * bw;
+                for x in first..last {
+                    let i = row + x;
+                    if let Some(uv) = lava_uv.as_deref_mut() {
+                        let at = uv_at(x, y);
+                        uv[i * 4] = unorm(at[0]);
+                        uv[i * 4 + 1] = unorm(at[1]);
+                        uv[i * 4 + 3] = 255;
+                    }
+                    let cell = &mut layers[layer];
+                    cell[i] = cell[i].saturating_add(add);
+                    if green {
+                        raw_green[i] = raw_green[i].saturating_add(add_green);
+                    }
+                    if ready {
+                        let cell = &mut layers[ready_layer];
+                        cell[i] = cell[i].saturating_add(add);
+                        if ready_green_on {
+                            ready_green[i] = ready_green[i].saturating_add(add_green);
+                        }
+                    }
+                }
+            });
+            if z.invert {
+                if let Some(uv) = lava_uv.as_deref_mut() {
+                    // 减算块画的是矩形**外面**那一圈，所以它的贴图坐标也要铺满整屏：
+                    // 只写矩形内部的话，外面那圈全落在同一个纹素上，整块就变成一个纯色。
+                    // 外面那些纹素落在 0~1 以外，这里先对 1 取余，于是贴图在外面重复铺开
+                    // （不取余就只能得到放大后的边缘像素，看起来是一条条色带）。
+                    for y in y0..y1 {
+                        let row = (y - y0) * bw;
+                        for x in 0..bw {
+                            let i = row + x;
+                            let at = uv_at(x, y);
+                            uv[i * 4] = unorm(at[0].rem_euclid(1.));
+                            uv[i * 4 + 1] = unorm(at[1].rem_euclid(1.));
+                            uv[i * 4 + 3] = 255;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// 把「每个源像素属于哪个噪域、那个噪域什么颜色」烘成两张 `bw × bh` 的 RGBA 平面。
@@ -579,24 +703,26 @@ impl Masks {
                 break;
             }
             dilate(&self.ping, &mut self.pong, width, height);
-            for y in 0..height {
+            // 逐行并行：只读两张位图、只写自己那一行的 `rgba`，合并结果与串行逐位相同。
+            let (ping, pong) = (&self.ping, &self.pong);
+            self.rgba.par_chunks_mut(width * 4).enumerate().for_each(|(y, row)| {
                 for word in 0..stride {
                     let i = y * stride + word;
-                    let mut ring = self.pong[i] & !self.ping[i];
+                    let mut ring = pong[i] & !ping[i];
                     while ring != 0 {
                         let bit = ring.trailing_zeros() as usize;
                         let x = word * 64 + bit;
                         if x < width {
-                            let dst = (y * width + x) * 4;
+                            let dst = x * 4;
                             if pass == 0 {
-                                self.rgba[dst + 1] = 255;
+                                row[dst + 1] = 255;
                             }
-                            self.rgba[dst + 2] = unorm(weight);
+                            row[dst + 2] = unorm(weight);
                         }
                         ring &= ring - 1;
                     }
                 }
-            }
+            });
             std::mem::swap(&mut self.ping, &mut self.pong);
         }
     }
@@ -616,48 +742,58 @@ impl Masks {
             // 截断处理（用 `saturating_sub` / `min` 夹住下标），结果与逐像素九宫格完全一致。
             // 拆开是为了让内层没有范围迭代，1280×720 下一趟就是一条能向量化的直线循环 ——
             // 原版那个 `for yy in ...saturating_sub(1)..=(y+1).min(h-1)` 嵌套实测 79 ms/帧。
-            for y in 0..h {
-                let row = y * w;
-                for x in 0..w {
-                    let center = row + x;
-                    let mut maximum = self.gray_ping[center];
-                    if x > 0 && self.gray_ping[center - 1] > maximum {
-                        maximum = self.gray_ping[center - 1];
+            // 两趟都逐行并行：横趟只读 `gray_ping` 写 `gray_pong`，纵趟只读 `gray_pong` 写
+            // `gray_ping` 与自己那一行 `rgba`，各线程碰的区间互不相交。
+            {
+                let ping = &self.gray_ping;
+                self.gray_pong.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+                    let base = y * w;
+                    for (x, cell) in row.iter_mut().enumerate() {
+                        let center = base + x;
+                        let mut maximum = ping[center];
+                        if x > 0 && ping[center - 1] > maximum {
+                            maximum = ping[center - 1];
+                        }
+                        if x + 1 < w && ping[center + 1] > maximum {
+                            maximum = ping[center + 1];
+                        }
+                        *cell = maximum;
                     }
-                    if x + 1 < w && self.gray_ping[center + 1] > maximum {
-                        maximum = self.gray_ping[center + 1];
-                    }
-                    self.gray_pong[center] = maximum;
-                }
+                });
             }
-            for y in 0..h {
-                let row = y * w;
-                let up = y.saturating_sub(1) * w;
-                let down = (y + 1).min(h - 1) * w;
-                for x in 0..w {
-                    let i = row + x;
-                    let mut maximum = self.gray_pong[i];
-                    if self.gray_pong[up + x] > maximum {
-                        maximum = self.gray_pong[up + x];
-                    }
-                    if self.gray_pong[down + x] > maximum {
-                        maximum = self.gray_pong[down + x];
-                    }
-                    let source = self.gray_ping[i];
-                    self.gray_ping[i] = maximum;
-                    let delta = maximum - source;
-                    if pass == 0 {
-                        self.rgba[i * 4 + 1] = delta;
-                    }
-                    // 九宫格里没有更大的值 ⇒ 这一趟对它没有任何影响（`unorm(x / 255.0)`
-                    // 对整数 x 会原样写回），跳过它与原版逐位相同，能省下大部分浮点计算：
-                    // 噪声内部绝大多数像素都是这个情况，只有描边附近才真的有差。
-                    if delta != 0 {
-                        let outside = 1. - self.rgba[i * 4] as f32 / 255.;
-                        self.rgba[i * 4 + 2] =
-                            unorm(weight * (outside * (delta as f32 / 255.)) + self.rgba[i * 4 + 2] as f32 / 255.);
-                    }
-                }
+            {
+                let pong = &self.gray_pong;
+                self.gray_ping
+                    .par_chunks_mut(w)
+                    .zip(self.rgba.par_chunks_mut(w * 4))
+                    .enumerate()
+                    .for_each(|(y, (row, rgba_row))| {
+                        let base = y * w;
+                        let up = y.saturating_sub(1) * w;
+                        let down = (y + 1).min(h - 1) * w;
+                        for (x, cell) in row.iter_mut().enumerate() {
+                            let mut maximum = pong[base + x];
+                            if pong[up + x] > maximum {
+                                maximum = pong[up + x];
+                            }
+                            if pong[down + x] > maximum {
+                                maximum = pong[down + x];
+                            }
+                            let source = *cell;
+                            *cell = maximum;
+                            let delta = maximum - source;
+                            if pass == 0 {
+                                rgba_row[x * 4 + 1] = delta;
+                            }
+                            // 九宫格里没有更大的值 ⇒ 这一趟对它没有任何影响（`unorm(x / 255.0)`
+                            // 对整数 x 会原样写回），跳过它与原版逐位相同，能省下大部分浮点计算：
+                            // 噪声内部绝大多数像素都是这个情况，只有描边附近才真的有差。
+                            if delta != 0 {
+                                let outside = 1. - rgba_row[x * 4] as f32 / 255.;
+                                rgba_row[x * 4 + 2] = unorm(weight * (outside * (delta as f32 / 255.)) + rgba_row[x * 4 + 2] as f32 / 255.);
+                            }
+                        }
+                    });
             }
         }
     }
@@ -783,22 +919,23 @@ fn raster_rows(width: usize, height: usize, aspect: f32, zone: &Zone, mut write:
     }
 }
 
+/// 九宫格膨胀（按 `u64` 位行）。逐行并行：每个输出行只读 `source` 的三行、只写自己那一行。
 fn dilate(source: &[u64], dest: &mut [u64], width: usize, height: usize) {
     let stride = width.div_ceil(64);
     let last_mask = u64::MAX >> ((64 - width % 64) % 64);
-    for y in 0..height {
-        for x in 0..stride {
+    dest.par_chunks_mut(stride).enumerate().for_each(|(y, row)| {
+        for (x, cell) in row.iter_mut().enumerate() {
             let mut value = 0;
-            for row in y.saturating_sub(1)..=(y + 1).min(height - 1) {
-                let idx = row * stride + x;
+            for source_row in y.saturating_sub(1)..=(y + 1).min(height - 1) {
+                let idx = source_row * stride + x;
                 let mid = source[idx];
                 let left = if x > 0 { source[idx - 1] >> 63 } else { 0 };
                 let right = if x + 1 < stride { source[idx + 1] << 63 } else { 0 };
                 value |= mid | (mid << 1) | left | (mid >> 1) | right;
             }
-            dest[y * stride + x] = if x + 1 == stride { value & last_mask } else { value };
+            *cell = if x + 1 == stride { value & last_mask } else { value };
         }
-    }
+    });
 }
 
 #[cfg(test)]
@@ -845,6 +982,66 @@ mod tests {
         zone.set_color(Some(color));
         zone
     }
+
+    /// 已经按 `bw × bh` 开好各平面的掩码（生产路径由 `render_displaced_covers` 负责 resize）。
+    fn sized_masks(bw: usize, bh: usize) -> Masks {
+        let mut masks = Masks::default();
+        masks.layers = std::array::from_fn(|_| vec![0_u8; bw * bh]);
+        masks.raw_disabled_green = vec![0; bw * bh];
+        masks.ready_green = vec![0; bw * bh];
+        masks.lava_uv = vec![0; bw * bh * 4];
+        masks
+    }
+
+    /// 一帧噪域：正块/减算块交错铺满整屏，覆盖到六张层、两张绿色平面与贴图坐标平面。
+    fn dense_zones(count: usize) -> Vec<Zone> {
+        let mut zones = Vec::with_capacity(count);
+        for i in 0..count {
+            let x = (i % 16) as f32 / 8. - 1.;
+            let y = (i / 16 % 12) as f32 / 6. - 1.;
+            let mut zone = zone(x, y, 0.06, 0.05, (i % 7) as f32 * 0.3, i % 3 == 0);
+            zone.active = i % 5 != 0;
+            zone.ready = i % 4 == 0;
+            zone.opacity = 0.4 + (i % 5) as f32 * 0.1;
+            zones.push(zone);
+        }
+        zones
+    }
+
+    /// 按行分带并行必须与单带（原串行路径）**逐字节相同**：层只有饱和加、各带写区间互不相交。
+    #[test]
+    fn zone_bands_match_single_band_rasterization() {
+        let (bw, bh, aspect) = (64_usize, 48_usize, 16. / 9.);
+        // 不开贴图坐标：普通块与减算块交错，覆盖六张层与两张绿色平面。
+        let zones = dense_zones(2048);
+        let mut single = sized_masks(bw, bh);
+        single.rasterize_zone_bands(bw, bh, aspect, &zones, false, 1);
+        let mut banded = sized_masks(bw, bh);
+        banded.rasterize_zone_bands(bw, bh, aspect, &zones, false, 7);
+        for layer in 0..6 {
+            assert_eq!(single.layers[layer], banded.layers[layer], "layer {layer}");
+        }
+        assert_eq!(single.raw_disabled_green, banded.raw_disabled_green);
+        assert_eq!(single.ready_green, banded.ready_green);
+
+        // 开贴图坐标（「拉伸进每个噪域」那档）：不含减算块时，逐纹素的坐标也只写在各自那几条行里。
+        // 含减算块时 `rasterize_zones` 会退回单带，那条路径与原来逐字节相同，这里不重复测。
+        let mut zones = dense_zones(2048);
+        for zone in &mut zones {
+            zone.invert = false;
+        }
+        let mut single = sized_masks(bw, bh);
+        single.rasterize_zone_bands(bw, bh, aspect, &zones, true, 1);
+        let mut banded = sized_masks(bw, bh);
+        banded.rasterize_zone_bands(bw, bh, aspect, &zones, true, 7);
+        for layer in 0..6 {
+            assert_eq!(single.layers[layer], banded.layers[layer], "layer {layer}");
+        }
+        assert_eq!(single.raw_disabled_green, banded.raw_disabled_green);
+        assert_eq!(single.ready_green, banded.ready_green);
+        assert_eq!(single.lava_uv, banded.lava_uv);
+    }
+
 
     #[test]
     fn nine_tap_dilation_matches_pixel_reference_across_word_boundaries() {

@@ -3,6 +3,7 @@
 
 dps::tl_file!("main" mtl);
 
+mod chart_config;
 mod common;
 mod icon;
 mod ipc;
@@ -11,6 +12,7 @@ mod preview;
 mod render;
 mod split;
 mod task;
+mod tool_video;
 
 use anyhow::{bail, Context, Result};
 use common::{
@@ -288,6 +290,7 @@ pub fn run() -> Result<()> {
                 preview_play,
                 parse_chart,
                 read_chart_asset,
+                read_chart_config,
                 post_render,
                 get_tasks,
                 cancel_task,
@@ -305,6 +308,8 @@ pub fn run() -> Result<()> {
                 remove_preset,
                 get_presets_path,
                 get_output_dir_path,
+                get_temp_dir_path,
+            get_video_tool_dir_path,
                 get_app_dir,
                 get_respack_dir_path,
                 get_appendant_dir_path,
@@ -330,6 +335,11 @@ pub fn run() -> Result<()> {
                 delete_autosave,
                 save_info,
                 read_info,
+                tool_video::tool_video_probe,
+                tool_video::tool_video_convert,
+                tool_video::tool_video_progress,
+                tool_video::tool_video_reveal,
+        tool_video::tool_video_outputs,
                 merge::merge_charts,
             ])
             .on_window_event(|_, event| match event {
@@ -934,6 +944,17 @@ async fn parse_chart(path: &Path) -> Result<ChartInfo, InvokeError> {
     .await
 }
 
+/// 读谱面根上的 `config.toml`（只有 DPR 认它，引擎不读）：谱面自带的强制渲染配置。
+///
+/// 没有这个文件返回 `null`；文件在但读不出来则报错，由前端提示 —— 静默忽略会让
+/// 写错键名的谱面看起来「配置没生效」，用户查不出原因。
+#[tauri::command]
+async fn read_chart_config(
+    path: std::path::PathBuf,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, InvokeError> {
+    wrap_async(chart_config::read(&path)).await
+}
+
 pub fn cmd_hidden(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let cmd = tokio::process::Command::new(program);
     /*#[cfg(target_os = "windows")] // Without terminal, there is no log
@@ -1401,6 +1422,24 @@ fn get_presets_path() -> Result<String, InvokeError> {
 #[tauri::command]
 fn get_output_dir_path() -> Result<String, InvokeError> {
     common::get_output_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// 临时（中间产物）目录的有效路径：设置里没填就是系统临时目录下的 `DPRecorder`。
+/// 设置页那格空着时拿它当占位提示 —— 默认值也看得见、也能一键打开。
+#[tauri::command]
+fn get_temp_dir_path() -> Result<String, InvokeError> {
+    common::get_temp_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// 工具页「噪域播放器」的默认输出目录：`<程序目录>/tools/blockAreaPlayer`。
+/// 工具页那格空着时拿它当占位提示 —— 默认值看得见、也能一键打开。
+#[tauri::command]
+fn get_video_tool_dir_path() -> Result<String, InvokeError> {
+    common::video_tool_dir()
         .map(|path| path.to_string_lossy().to_string())
         .map_err(InvokeError::from_anyhow)
 }

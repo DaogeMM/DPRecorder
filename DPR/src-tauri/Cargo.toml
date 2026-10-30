@@ -29,7 +29,7 @@ macroquad = { git = "https://github.com/2278535805/prpr-macroquad", default-feat
 dps = { path = "../../DPS/dps", default-features = false, features = ["log", "video"] }
 
 sasa = { git = "https://github.com/2278535805/sasa" }
-tokio = { version = "1.45.0", features = ["process", "rt-multi-thread", "fs"] }
+tokio = { version = "1.45.0", features = ["process", "rt-multi-thread", "fs", "io-util"] }
 tracing = "0.1.37"
 tempfile = "3.16.0"
 chrono = "0.4.28"

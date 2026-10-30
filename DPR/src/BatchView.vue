@@ -33,6 +33,7 @@ import { diffTier, diffLvl } from './tasks';
 import { DEFAULT_RENDER_CONFIG, type ChartInfo, type RenderConfig, type RenderChart, type Preset, type FileDropEvent, type Task } from './model';
 import { sameRenderConfig } from './config/useRenderConfig';
 import { chartModMarker, chartSideOf } from './config/chartSide';
+import { readChartConfig, withChartConfig } from './chartConfig';
 import { jumpToFirstError, type FormError } from './formError';
 import { finishPageLoad } from './pageLoad';
 import router from './router';
@@ -43,7 +44,7 @@ import ChartHero from './components/ChartHero.vue';
 import ChartInfoForm from './components/ChartInfoForm.vue';
 import ChartThumb from './components/ChartThumb.vue';
 
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const { t } = useI18n();
 
@@ -184,13 +185,16 @@ const selectedCount = computed(() => charts.value.filter((chart) => chart.isSele
 
 const fileHovering = ref(false);
 let files: string[] = [];
+/** 拖入导入谱面的监听：和渲染页一样是挂在窗口上的，页面销毁时要解绑，
+ *  否则切到别的页面拖文件仍会走到 loadCharts（在「工具」页拖视频就会报读取谱面失败）。 */
+const dropUnlisteners: UnlistenFn[] = [];
 listen('tauri://drag-over', () => {
   if (loadingParsingChart.value) return;
   fileHovering.value = true
-});
+}).then((unlisten) => dropUnlisteners.push(unlisten));
 listen('tauri://drag-leave', () => {
   fileHovering.value = false
-});
+}).then((unlisten) => dropUnlisteners.push(unlisten));
 listen('tauri://drag-drop', async (event) => {
   fileHovering.value = false
   const newFiles = (event.payload as FileDropEvent).paths;
@@ -198,12 +202,19 @@ listen('tauri://drag-drop', async (event) => {
   if (loadingParsingChart.value) return;
   await loadCharts(files);
   files = [];
-});
+}).then((unlisten) => dropUnlisteners.push(unlisten));
 
 async function buildParams(chart: RenderChart) {
   // 校验不过就返回 null，调用方（postRender / previewChart）会直接放弃。
   if (!(await checkInfo(chart))) return null;
-  const config = preset.value.config;
+  // 谱面自带的 `config.toml`：先读出来盖到预设上（读不出来只提示，不拦这一趟渲染）
+  let forced: Partial<RenderConfig> | null = null;
+  try {
+    forced = await readChartConfig(chart.path);
+  } catch (e) {
+    toast(t('chart-config-failed', { err: String(e) }), 'warning');
+  }
+  const config = withChartConfig(preset.value.config, forced);
   // 预览片段窗口不超过 15 秒：预览开始 / 结束时间现在是**配置项**，所以这条校验跟着配置走
   // （渲染页那边由 ConfigView.buildConfig() 保证；批量页直接读预设里那份 config）。
   if (config.previewEnd && config.previewEnd - config.previewStart > 15) {
@@ -513,7 +524,11 @@ applySort();
 await updateList();
 
 const updateTask = setInterval(updateList, 700);
-onUnmounted(() => clearInterval(updateTask));
+onUnmounted(() => {
+  clearInterval(updateTask);
+  for (const unlisten of dropUnlisteners) unlisten();
+  dropUnlisteners.length = 0;
+});
 </script>
 
 <template>

@@ -29,6 +29,7 @@ import renderEn from './locales/en/render.json';
 import rpeEn from './locales/en/rpe.json';
 import settingEn from './locales/en/setting.json';
 import taskEn from './locales/en/task.json';
+import toolsEn from './locales/en/tools.json';
 
 import mainZhCN from './locales/zh-CN/main.json';
 import appzhCN from './locales/zh-CN/app.json';
@@ -38,6 +39,7 @@ import renderzhCN from './locales/zh-CN/render.json';
 import rpezhCN from './locales/zh-CN/rpe.json';
 import settingzhCN from './locales/zh-CN/setting.json';
 import taskzhCN from './locales/zh-CN/task.json';
+import toolszhCN from './locales/zh-CN/tools.json';
 
 export const SUPPORTED_LOCALES: string[] = ['en', 'zh-CN', 'zh-TW'];
 export const SUPPORTED_LOCALES_NAME: { name: string, code: string }[] = [
@@ -64,6 +66,7 @@ const i18n = createI18n({
       ...rpeEn,
       ...settingEn,
       ...taskEn,
+      ...toolsEn,
     },
     'zh-CN': {
       ...mainZhCN,
@@ -74,6 +77,7 @@ const i18n = createI18n({
       ...rpezhCN,
       ...settingzhCN,
       ...taskzhCN,
+      ...toolszhCN,
     },
   },
   legacy: false,

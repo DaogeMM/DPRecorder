@@ -48,6 +48,7 @@ import { applyPhiTheme } from './design/theme';
 import { sectionGateState } from './config/sectionGate';
 import TaskStrip from './components/TaskStrip.vue';
 import { useTasks } from './tasks';
+import { toolProjects } from './tools/projects';
 import { pageReady } from './pageLoad';
 const appWindow = getCurrentWindow();
 const theme = useTheme();
@@ -109,7 +110,18 @@ const primaryNav = [
   { name: 'render', icon: 'mdi-auto-fix' },
   { name: 'batch', icon: 'mdi-filmstrip-box-multiple' },
   { name: 'tasks', icon: 'mdi-server' },
+  // 「工具」放在一级导航最下面：工具页里的项目**只能**用左栏切换（见 tools/projects.ts）
+  { name: 'tools', icon: 'mdi-tools' },
 ];
+
+/**
+ * 一级导航的选中态。工具页下挂着一堆项目路由（`tool-video-noise` …），
+ * 走到任何一个项目页时「工具」这一项都该亮着。
+ */
+function navActive(name: string) {
+  if (route.name === name) return true;
+  return name === 'tools' && toolProjects.some((project) => project.name === route.name);
+}
 
 // 「设置」固定在左栏最下面（和上面几个一级区域分开，中间用弹性空白撑开）
 const settingsNav = [{ name: 'settings', icon: 'mdi-cog' }];
@@ -454,7 +466,7 @@ onUnmounted(() => {
             v-for="item in primaryNav"
             :key="item.name"
             class="phi-nav__item"
-            :class="{ 'phi-nav__item--active': route.name === item.name }"
+            :class="{ 'phi-nav__item--active': navActive(item.name) }"
             type="button"
             :title="t(item.name)"
             @click="routerPush(item.name)"
@@ -508,6 +520,23 @@ onUnmounted(() => {
                 <span class="phi-nav__label">{{ t(leaf.label) }}</span>
               </button>
             </template>
+          </nav>
+        </template>
+        <template v-else-if="route.name !== 'render' && toolProjects.some((project) => project.name === route.name) && !railCollapsed">
+          <!-- 工具页的项目：**只**在这里切换（工具页内不放选项卡/下拉框） -->
+          <nav class="phi-nav__section phi-nav__section--sub">
+            <button
+              v-for="project in toolProjects"
+              :key="project.name"
+              class="phi-nav__item phi-nav__item--sub"
+              :class="{ 'phi-nav__item--active': route.name === project.name }"
+              type="button"
+              :title="t(project.label)"
+              @click="routerPush(project.name)"
+            >
+              <i class="mdi" :class="project.icon"></i>
+              <span class="phi-nav__label">{{ t(project.label) }}</span>
+            </button>
           </nav>
         </template>
         <div class="phi-nav__spacer"></div>
