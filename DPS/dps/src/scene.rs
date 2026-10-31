@@ -476,6 +476,11 @@ pub trait Scene {
     fn next_scene(&mut self, _tm: &mut TimeManager) -> NextScene {
         NextScene::None
     }
+    /// 把自己借出去供宿主定位：预览宿主（DPE）要找到栈里的 `GameScene`
+    /// 才能热重载谱面、按命令拨播放头。只有需要外部操控的场景才返回 `Some`。
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        None
+    }
 }
 
 pub trait RenderTargetChooser {
@@ -721,6 +726,12 @@ impl Main {
     /// 把播放时刻拨到 `time`：分屏的副窗口靠它跟着主窗口走。
     pub fn seek_time(&mut self, time: f64) {
         self.tm.seek_to(time);
+    }
+
+    /// 同时借出场景栈与时钟。
+    /// 预览宿主拨播放头要拿时钟、热重载要拿场景，两者分属不同字段，所以一起借出去。
+    pub fn scenes_and_time(&mut self) -> (&mut Vec<Box<dyn Scene>>, &mut TimeManager) {
+        (&mut self.scenes, &mut self.tm)
     }
 
     pub fn pause(&mut self) -> Result<()> {        self.paused = true;

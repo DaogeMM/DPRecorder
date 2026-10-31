@@ -3,12 +3,11 @@ import { createRouter, createWebHistory } from 'vue-router';
 
 import RenderView from '../RenderView.vue';
 import BatchView from '../BatchView.vue';
+import ChartModView from '@dpe/ChartModView.vue';
 import RPEView from '../RPEView.vue';
 import TasksView from '../TasksView.vue';
 import SettingsView from '../SettingsView.vue';
-import VideoNoiseView from '../tools/VideoNoiseView.vue';
-
-import { toolProjects } from '../tools/projects';
+import VideoNoiseView from '@dpe/VideoNoiseView.vue';
 
 import { useOnLoaded } from '../App.vue';
 import { beginPageLoad } from '../pageLoad';
@@ -20,12 +19,13 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'render', component: RenderView },
     { path: '/batch', name: 'batch', component: BatchView },
+    // DPE 的谱面列表：与批量页是同一份页面，但去掉底部那条批量操作（`listOnly`），
+    // 存储也另起一份（`scope: 'dpe'`），与 DPR 的「批量」互不共用。
+    { path: '/charts', name: 'chart-list', component: BatchView, props: { listOnly: true, scope: 'dpe' } },
+    { path: '/chart-mod', name: 'chart-mod', component: ChartModView },
     { path: '/bind', name: 'bind', component: RPEView },
     { path: '/tasks', name: 'tasks', component: TasksView },
-    // 「工具」是一级导航的最后一项，里面每个项目各一条路由：项目之间**只能**用左栏切换，
-    // 所以没有工具列表页，`/tools` 直接落到第一个项目。
-    { path: '/tools', name: 'tools', redirect: { name: toolProjects[0]!.name } },
-    { path: '/tools/video-noise', name: 'tool-video-noise', component: VideoNoiseView },
+    { path: '/noise', name: 'tool-video-noise', component: VideoNoiseView },
     { path: '/settings', name: 'settings', component: SettingsView },
   ],
   scrollBehavior(_to, from, savedPosition) {

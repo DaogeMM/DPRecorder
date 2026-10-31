@@ -24,7 +24,8 @@ use crate::common::{collect_chart_files, create_zip};
 const MERGE_DIR: &str = "merge";
 
 /// 融合后的难度（难度标识与难度文本都写这一份），曲名照旧：只看难度就知道这张是拼出来的。
-const DIFF_TEXT: &str = "（谱面融合）";
+/// 在融合结果上再生成谱面时，括号里的这个名字会被当成修改链的第一段。
+pub(crate) const DIFF_TEXT: &str = "（谱面融合）";
 
 /// 融合包的文件名后缀。路径会显示在渲染页底部，用 ASCII 免得全角括号看着别扭。
 const FILE_TAG: &str = "JOIN";

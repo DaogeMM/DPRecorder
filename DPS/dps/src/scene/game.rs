@@ -29,6 +29,7 @@ use macroquad::{prelude::*, window::InternalGlContext};
 use sasa::{AudioClip, Music, MusicParams};
 use serde::{Deserialize, Serialize};
 use std::{
+    any::Any,
     io::Cursor,
     ops::{DerefMut, Range},
     sync::Arc,
@@ -682,6 +683,80 @@ impl GameScene {
                 ..Default::default()
             },
         )
+    }
+
+    /// 编辑器预览宿主用的播放控制：把播放头放到 `time` 秒处，`playing` 决定之后是否继续走。
+    ///
+    /// 走的是空格键那几条现成路径：时钟（`TimeManager`）、音乐、判定一起对齐，所以暂停时画面照样
+    /// 每帧重绘（不能用 `Main::pause`，那会让整个 `update` / `render` 早退）。
+    /// 入场动画与前奏阶段直接跳过：编辑器拖到哪里就该看到哪里，不该先播一遍入场。
+    /// 往回拖之后的复位（谱面、判定、粒子）由下一次 `update` 里「时间倒退」那条分支完成。
+    pub fn scrub(&mut self, tm: &mut TimeManager, time: f64, playing: bool) -> Result<()> {
+        if !matches!(self.state, State::Playing) {
+            self.state = State::Playing;
+            self.res.alpha = 1.;
+            self.first_in = false;
+        }
+        // 先定「走不走」再拨位置：`seek_to` 按当前暂停状态换算基准时刻，顺序反了就差了暂停时长。
+        if playing {
+            if tm.paused() {
+                tm.resume();
+            }
+        } else if !tm.paused() {
+            tm.pause();
+        }
+        let time = time.max(0.);
+        tm.seek_to(time);
+        self.music.seek_to(time)?;
+        if playing {
+            self.music.play()?;
+        } else {
+            self.music.pause()?;
+        }
+        self.pause_rewind = PauseRewind {
+            time: Some(tm.now()),
+            duration: Some(REWIND_MUTE),
+            dim: false,
+        };
+        self.res.disable_hit_fx = true;
+        // 停顿或大幅跳转期间攒下的帧间隔不能留给特效，否则粒子会瞬移
+        self.last_update_time = tm.real_time();
+        Ok(())
+    }
+
+    /// 编辑器预览宿主用的热重载：原地换成新解析出来的谱面，不重建窗口、不重建场景。
+    ///
+    /// 与 `new` 里那套一致（判定重建、特效重建、命中音效重建、字体接回资源），
+    /// 之后把谱面与判定一起退回到当前播放头 —— 否则新谱面从 0 开始、而时钟还在原地。
+    /// `line_length` 不重算：它在构造时按谱面格式（Rpe 要 ×4000/宽/6）调过，重载同一张谱面不会改格式。
+    pub fn reload_chart(&mut self, mut chart: Chart) -> Result<()> {
+        let effects = std::mem::take(&mut chart.extra.global_effects);
+        if self.res.config.fxaa {
+            chart.extra.effects.push(Effect::new(0.0..f64::INFINITY, include_str!("fxaa.glsl"), Vec::new(), false).unwrap());
+        }
+        let chart_mods = crate::core::chart_mod::Mods::from_config(&self.res.config);
+        if !chart_mods.is_empty() {
+            chart.apply_chart_mods(&chart_mods, self.res.aspect_ratio, self.res.track_length);
+        }
+        let mut judge = Judge::new(&chart);
+        let now = self.res.time;
+        chart.rewind_to(now);
+        judge.rewind_to(&chart, now);
+        self.res.extra_sfxs.clear();
+        chart.hitsounds.drain().for_each(|(name, clip)| {
+            if let Ok(clip) = self.res.audio.create_sfx(clip, Some(BUFFER_SIZE)) {
+                self.res.extra_sfxs.insert(name, clip);
+            }
+        });
+        self.res.fonts = std::mem::take(&mut chart.fonts);
+        let offset = chart.offset + self.info_offset + self.res.config.offset;
+        self.exercise_range = offset + self.res.config.play_start_time..self.res.track_length;
+        self.effects = effects;
+        self.chart = chart;
+        self.judge = judge;
+        self.bad_notes.clear();
+        self.res.disable_hit_fx = true;
+        Ok(())
     }
 
     /// 「雪降SP」特殊演出：全曲可判定音符的判定时刻（升序）。
@@ -1742,6 +1817,11 @@ impl Scene for GameScene {
             tm.resume();
         }
         Ok(())
+    }
+
+    /// 预览宿主靠它拿到本场景，才能热重载与拨播放头（见 `GameScene::scrub`）。
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
     }
 
     fn foucus_pause(&mut self, tm: &mut TimeManager) -> Result<()> {

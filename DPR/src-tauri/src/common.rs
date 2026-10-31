@@ -214,14 +214,31 @@ pub fn get_output_dir() -> Result<PathBuf> {
     }
 }
 
-/// 工具类功能用的临时目录：配置里填了就用它，否则退回系统临时目录下的 `DPRecorder`。
+/// 临时目录的**根**：设置里填了就用它，否则退回系统临时目录
+/// （`lib.rs` 启动时已把 `TEMP` 指到 `<程序目录>/tmp`）。
 ///
-/// 调用方把中间产物先写这里，成型后再搬进输出目录 —— 转换半路失败时输出目录里
-/// 不会留下半套文件，大文件的中间产物也能指到别的盘上。
-pub fn get_temp_dir() -> Result<PathBuf> {
+/// 两个部分各自在根下开一层子目录：DPR 用 `DPR`、DPE 用 `DPE`，
+/// 两边的缓存互不覆盖，清一边不会带走另一边。
+pub fn temp_root() -> Result<PathBuf> {
+    // 没设置时用 `<程序目录>/tmp`，跟 `lib.rs` 启动时给 `TEMP` 指的地方一样
+    // （只有那里也写不进去，`lib.rs` 才退回系统临时目录）。
     let dir = match read_config()?.temp_dir {
         Some(dir) => dir,
-        None => std::env::temp_dir().join("DPRecorder"),
+        None => exe_dir().map_or_else(std::env::temp_dir, |dir| dir.join("tmp")),
+    };
+    // Windows 的 `GetTempPath` 把结尾的分隔符一起返回（`...\tmp\`），
+    // 带着它往下拼就成了 `...\tmp\\DPR`、界面上还会多显示一个反斜杠，这里统一去掉
+    // （盘根 `C:\` 保留原样）。
+    let dir = match dir.to_str() {
+        Some(text) if text.len() > 3 => {
+            let trimmed = text.trim_end_matches(['\\', '/']);
+            if trimmed.len() >= 3 {
+                PathBuf::from(trimmed)
+            } else {
+                dir
+            }
+        }
+        _ => dir,
     };
     if !dir.exists() {
         std::fs::create_dir_all(&dir)?;
@@ -231,13 +248,59 @@ pub fn get_temp_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// 工具页「噪域播放器」的默认输出目录：**`<程序目录>/tools/blockAreaPlayer`**。
+/// 确保临时目录下的某一层存在且确实是目录（没有就建）。
+fn ensure_subdir(dir: PathBuf) -> Result<PathBuf> {
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)?;
+    } else if !dir.is_dir() {
+        bail!("{} is not a directory", dir.display());
+    }
+    Ok(dir)
+}
+
+/// DPR（录制与渲染这条线）用的临时目录：临时目录根下的 `DPR`。
 ///
-/// 另起一层 `tools/` 而不是塞进 `output/`：这里的产物是谱面（`.pez`），
-/// 不是渲染出来的视频，混在一起不好找。
-pub fn video_tool_dir() -> Result<PathBuf> {
+/// 调用方把中间产物先写这里，成型后再搬进输出目录 —— 转换半路失败时输出目录里
+/// 不会留下半套文件，大文件的中间产物也能指到别的盘上。
+pub fn get_temp_dir() -> Result<PathBuf> {
+    ensure_subdir(temp_root()?.join("DPR"))
+}
+
+/// DPE（谱面编辑这条线）用的临时目录：临时目录根下的 `DPE`。
+///
+/// 主要用来缓存解包出来的谱面文件（谱面目录与 `.pez` 都要先摊成一堆文件才好改）。
+pub fn get_dpe_temp_dir() -> Result<PathBuf> {
+    ensure_subdir(temp_root()?.join("DPE"))
+}
+
+/// DPE（谱面编辑这条线）的输出根：**`<程序目录>/dpe`**。
+///
+/// 路径固定、不给用户改：每份产物按页面各占一层子目录（[`DPE_NOISE_DIR`] /
+/// [`DPE_MODIFY_DIR`]），与 DPR 的 `output/`（渲染成片）分开，找东西时按部分就能定位。
+pub const DPE_OUTPUT_DIR: &str = "dpe";
+
+/// 噪域播放器的产物目录：`<dpe>/noisePlayer`。
+pub const DPE_NOISE_DIR: &str = "noisePlayer";
+
+/// 谱面修改的产物目录：`<dpe>/modify`。
+pub const DPE_MODIFY_DIR: &str = "modify";
+
+/// DPE 的输出根（没有就建）。
+pub fn dpe_output_root() -> Result<PathBuf> {
     let exe_dir = exe_dir().ok_or_else(|| anyhow!("failed to locate exe dir"))?;
-    Ok(exe_dir.join("tools").join("blockAreaPlayer"))
+    ensure_subdir(exe_dir.join(DPE_OUTPUT_DIR))
+}
+
+/// DPE 某一页面的输出目录（没有就建）。
+pub fn dpe_output_dir(sub: &str) -> Result<PathBuf> {
+    ensure_subdir(dpe_output_root()?.join(sub))
+}
+
+/// 工具页「噪域播放器」的输出目录：**`<dpe>/noisePlayer`**。
+///
+/// 它是 DPE 的产物（谱面 `.pez`，不是渲染视频），所以放在 `<程序目录>/dpe` 之下。
+pub fn video_tool_dir() -> Result<PathBuf> {
+    dpe_output_dir(DPE_NOISE_DIR)
 }
 
 pub fn test_output_dir(dir: PathBuf) -> Result<()> {
@@ -524,9 +587,10 @@ pub async fn save_presets(presets: &HashMap<String, RenderConfig>) -> Result<()>
 pub struct AppConfig {
     pub rpe_dir: Option<PathBuf>,
     pub output_dir: Option<PathBuf>,
-    /// 临时（中间产物）目录，工具类功能用。留空就用系统临时目录下的 `DPRecorder`。
+    /// 临时目录的**根**（通用设置）：留空就用系统临时目录（`<程序目录>/tmp`）。
     ///
-    /// 中间产物（抽出来的音轨、封面、谱面草稿）先写这里，成型后再搬进输出目录：
+    /// 根下面按部分各开一层：DPR 的中间产物（抽出来的音轨、封面、谱面草稿）在 `DPR`，
+    /// DPE 缓存解包出来的谱面文件在 `DPE`。中间产物先写临时目录、成型后再搬进输出目录，
     /// 半路失败不会在输出目录里留下半成品，大文件的中间产物也能指到另一块盘上。
     pub temp_dir: Option<PathBuf>,
     pub encoder_avc: Option<String>,

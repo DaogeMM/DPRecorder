@@ -103,21 +103,35 @@ const MERGE_TAG = '谱面融合';
 const MERGE_DIFF_TEXT = `（${MERGE_TAG}）`;
 
 /**
+ * 难度文本本身已经是 `（内容）` 这种带括号的写法时，取出括号里的内容当作新的链首。
+ *
+ * 谱面融合出来的包、以及「谱面修改」自己生成的包，难度文本都是这个形状；再改一次时
+ * 应该接成 `（内容 → 按键替换）` 而不是套成 `（（内容） → 按键替换）`。内容里还带括号的
+ * 不算一条链（那是谱面作者自己写的说明），返回 `null`。
+ */
+export function chainLead(difficulty?: string | null): string | null {
+  const text = difficulty?.trim();
+  if (!text || !text.startsWith('（') || !text.endsWith('）')) return null;
+  const inner = text.slice(1, -1).trim();
+  return inner && !inner.includes('（') && !inner.includes('）') ? inner : null;
+}
+
+/**
  * 「谱面修改」把难度文本改成的那串标记：`（按键替换 → 复制音符）`；一个功能都没开时给 `null`。
  *
  * 谱面文件里的难度文本说的是原谱，开着修改出片后就名不副实了，所以渲染时整串换掉
  * （与谱面融合写 `（谱面融合）` 同一个口径）。多个功能按真实落地顺序用 ` → ` 连起来。
  *
- * `difficulty` 是这张谱自己现在的难度文本：谱面融合出来的包写的就是 `（谱面融合）`，
- * 这时把融合摆在最前面（`（谱面融合 → 按键替换）`），别让修改的标记把它顶掉。
- * 只开修改、没融合的谱面按 `difficulty` 无关的固定写法走。
+ * `difficulty` 是这张谱自己现在的难度文本：融合结果与已经改过的谱面写的就是 `（内容）`，
+ * 这时把内容摆在最前面（`（内容 → 按键替换）`），别让修改的标记把它顶掉。
+ * 原样的原谱难度（`IN Lv. 15` 这种）与 `difficulty` 无关，直接换掉。
  */
 export function chartModMarker(config: RenderConfig, t: (key: string) => string, difficulty?: string | null): string | null {
   const keys = chartModKeys(config);
   if (!keys.length) return null;
 
-  const merged = difficulty?.trim() === MERGE_DIFF_TEXT;
-  const labels = [...(merged ? [MERGE_TAG] : []), ...keys.map((key) => t(key))];
+  const lead = chainLead(difficulty) ?? (difficulty?.trim() === MERGE_DIFF_TEXT ? MERGE_TAG : null);
+  const labels = [...(lead ? [lead] : []), ...keys.map((key) => t(key))];
   return `（${labels.join(' → ')}）`;
 }
 

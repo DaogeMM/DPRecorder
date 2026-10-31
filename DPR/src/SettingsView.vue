@@ -29,6 +29,8 @@ import BilibiliIcon from './components/BilibiliIcon.vue';
 import { useStorage } from '@vueuse/core';
 import { finishPageLoad } from './pageLoad';
 
+/** 设置页只有这一份，页内分三组：通用 / DPR / DPE（条目不随左栏当前部分切换）。 */
+
 const form = ref<VForm>();
 
 const config = ref(DEFAULT_APP_CONFIG);
@@ -48,12 +50,15 @@ function asFFmpegDir(path: string) {
 function asAppRelative(path: string) {
   const dir = appDir.value.replace(/[\\/]+$/, '');
   if (!path || !dir) return path;
+  // 结尾的分隔符先去掉：Windows 的 `GetTempPath` 会把 `C:\...\tmp\` 的尾巴带回来，
+  // 不处理的话界面上会多一个 `\`（`C:\` 这种盘根保留原样）。
+  const clean = path.length > 3 ? path.replace(/[\\/]+$/, '') : path;
   const base = dir.toLowerCase();
-  const lower = path.toLowerCase();
+  const lower = clean.toLowerCase();
   if (!lower.startsWith(base + '\\') && !lower.startsWith(base + '/')) {
-    return path;
+    return clean;
   }
-  return '.\\' + path.slice(dir.length + 1).replace(/\//g, '\\');
+  return '.\\' + clean.slice(dir.length + 1).replace(/\//g, '\\');
 }
 
 /** 保存前的归一化：字符串字段里的空串写成 `null`（后端把 null 当「没设置」）；
@@ -138,6 +143,24 @@ async function updateRespackDir() {
 }
 updateRespackDir();
 
+/** DPE 的输出目录（`<程序目录>/dpe`）：路径固定、不给改，所以同样只读显示。
+ *  谱面修改的产物落在它下面的 `modify` 里（DPE 那边同理用 `noisePlayer` 等子目录）。 */
+const dpeOutputDir = ref('');
+async function updateDpeOutputDir() {
+  try {
+    dpeOutputDir.value = (await invoke('get_dpe_output_dir_path')) as string;
+  } catch (e) {
+    // 旧版本的二进制没有这条命令：留空，框里就退回相对写法 `.\dpe`
+    dpeOutputDir.value = '';
+  }
+}
+updateDpeOutputDir();
+
+/** 打开 DPE 的输出目录（不存在时后端会先建出来）。 */
+function openDpeOutputDir() {
+  invoke('open_dir', { path: dpeOutputDir.value }).catch(toastError);
+}
+
 /** 「附带资源包」文件夹（`<程序目录>/appendant`）的绝对路径 —— 同上，只读显示。
  *  皮肤包与 Minecraft 材质由用户自己下载后放进这里（程序不随安装包分发它们），
  *  缺包时渲染页那个弹窗的「打开资源包文件夹」按钮也是打开它。 */
@@ -178,7 +201,7 @@ async function updateOutputDirDefault() {
 }
 updateOutputDirDefault();
 
-/** 临时（中间产物）目录的默认值：后端认定的系统临时目录下 `DPRecorder` 那一层。
+/** 临时目录根的默认值：后端认定的系统临时目录（`<程序目录>/tmp`）。
  *  那格没设置时显示它 —— 跟输出目录一个做法，默认也让用户看到完整路径。 */
 const tempDirDefault = ref('');
 async function updateTempDirDefault() {
@@ -231,7 +254,7 @@ const outputDirShown = computed({
   get: () => asAppRelative(outputDirFull.value),
   set: (value: string) => { config.value.outputDir = value || null; },
 });
-/** 临时文件目录的**完整路径**：设置里没填就是后端给的那个系统临时目录下 `DPRecorder`。
+/** 临时目录的**完整路径**：设置里没填就是后端给的那个系统临时目录根。
  *  跟输出目录一样：完整路径挂 `:title`，框里写相对形态。 */
 const tempDirFull = computed(() => config.value.tempDir || tempDirDefault.value);
 const tempDirShown = computed({
@@ -244,6 +267,8 @@ const configDirFull = computed(() => presetsPath.value.replace(/[\\/][^\\/]+$/, 
 const configDirShown = computed(() => asAppRelative(configDirFull.value) || '.\\config');
 /** 资源包文件夹：同理，框里写 `.\respack`；后端没答上来（旧二进制）时也退回这个写法。 */
 const respackDirShown = computed(() => asAppRelative(respackDir.value) || '.\\respack');
+/** DPE 的输出目录：同样写相对形态 `.\\dpe`。 */
+const dpeOutputDirShown = computed(() => asAppRelative(dpeOutputDir.value) || '.\\dpe');
 /** 附带资源包文件夹：同样写 `.\appendant`。 */
 const appendantDirShown = computed(() => asAppRelative(appendantDir.value) || '.\\appendant');
 /** 日志文件夹：同样写 `.\logs`。 */
@@ -294,6 +319,7 @@ async function resetConfig() {
   // 滑杆还停在原来那格。所以一并填回各自的默认值（✅ / 15）。
   listExpand.value = LIST_EXPAND_DEFAULT;
   stripWidth.value = STRIP_WIDTH_DEFAULT;
+  chartStripWidth.value = CHART_STRIP_WIDTH_DEFAULT;
   nextTick(() => {
     form.value?.resetValidation();
   });
@@ -542,6 +568,14 @@ watch(listExpand, (val) => {
 const STRIP_WIDTH_DEFAULT = 15;
 const stripWidth = useStorage<number>('TaskStrip.width', STRIP_WIDTH_DEFAULT);
 
+/**
+ * 选曲弹窗（DPE 的 `DPE/ui/ChartStrip.vue`）宽度，百分比，15–100。
+ * 与那边 `useFloatingStrip` 的 `ChartStrip.width` 同一个键、同样的默认值，
+ * 改这里悬浮条立刻跟着变。
+ */
+const CHART_STRIP_WIDTH_DEFAULT = 20;
+const chartStripWidth = useStorage<number>('ChartStrip.width', CHART_STRIP_WIDTH_DEFAULT);
+
 // 主题只有一套（DeepDark），设置里没有主题切换项。
 
 /* ===================== 关于（第二部分） ===================== */
@@ -592,12 +626,53 @@ const forkedDeps = [
                条目名一律定宽（见样式），所以三栏里的输入框起点是对齐的。
                标题右边只有「重置」一枚图标按钮（保存那枚已经删掉 —— 改完自己就落盘了，
                见上面的 `autoSaveConfig`）。 -->
-          <PhiGroup id="grp-setting" :title="t('setting')" plain>
+                    <!-- 三组设置放在同一页：通用（整个程序都管）、DPR（渲染这条线）、
+               DPE（谱面编辑与预览）。条目按归属分组，不随左栏当前部分切换。 -->
+                    <!-- 三组设置放在同一页：通用（整个程序都管）、DPR（渲染这条线）、DPE（谱面编辑）。
+               条目按归属分组，不随左栏当前部分切换。 -->
+          <PhiGroup id="grp-setting-general" :title="t('settings-general')" plain>
             <template #actions>
               <div class="settings-actions">
                 <v-btn icon="mdi-backup-restore" variant="text" size="small" :title="t('reset')" @click="resetDialog = true"></v-btn>
               </div>
             </template>
+            <div class="cfg-grid">              <!-- 「日志」文件夹：运行日志按天写在这里（`<程序目录>/logs/dpr-YYYY-MM-DD.log`），
+                   程序目录不可写时退回数据目录下的那一份。目录跟着程序走、不给改，
+                   所以只读显示、点图标打开。 -->
+              <CfgField :label="t('log-path')" :tip="t('log-path-tip')">
+                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="logDirShown" :title="logDir" append-inner-icon="mdi-folder-open" @click:append-inner="openLogDir" @contextmenu="openLogDir"></v-text-field>
+              </CfgField>
+              <CfgField :label="t('lang')">
+                <v-autocomplete density="compact" hide-details="auto" :items="SUPPORTED_LOCALES_NAME" item-title="name" item-value="code" v-model="locale"></v-autocomplete>
+              </CfgField>
+
+              <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
+              <!-- 「资源包」文件夹：放资源包的地方就在程序旁边
+                   （`<程序目录>/respack`，和 output / config 一个待遇），所以框里写 `.\respack`、
+                   悬停提示给完整路径。这格不给改（目录固定），文字按常灰处理。 -->
+              <CfgField :label="t('respack-path')" :tip="t('folder-tip')">
+                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="respackDirShown" :title="respackDir" append-inner-icon="mdi-folder-open" @click:append-inner="openRespackDir" @contextmenu="openRespackDir"></v-text-field>
+              </CfgField>
+              <!-- 「附带资源包」文件夹：皮肤包与 Minecraft 材质由用户自己下载后放进这里，
+                   目录同样固定在程序旁边，所以只读显示、文字按常灰处理。 -->
+              <CfgField :label="t('appendant-path')" :tip="t('appendant-path-tip')">
+                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="appendantDirShown" :title="appendantDir" append-inner-icon="mdi-folder-open" @click:append-inner="openAppendantDir" @contextmenu="openAppendantDir"></v-text-field>
+              </CfgField>
+              <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
+              <!-- 「开启『游玩』按钮」：打开后「渲染」页那一排按钮里会多出「游玩」，用它直接进
+                    游戏里试谱（后端 `preview_play`）。归在「显示隐藏选项」里 —— 勾了它之后才出现。 -->
+              <!-- 临时目录的根：DPR 的中间产物写在 `DPR` 子目录，DPE 的谱面缓存在 `DPE` 子目录。 -->
+              <CfgField :label="t('temp-dir')" :tip="t('temp-dir-tip')">
+                <v-text-field :class="{ 'settings-path--default': !config.tempDir }" readonly density="compact" hide-details="auto" v-model="tempDirShown" :title="tempDirFull" @contextmenu="openTempDir">
+                  <template #append-inner>
+                    <v-icon :title="t('folder-tip')" :aria-label="t('folder-tip')" @click="selectTempDir">mdi-folder-open</v-icon>
+                  </template>
+                </v-text-field>
+              </CfgField>
+            </div>
+          </PhiGroup>
+
+          <PhiGroup id="grp-setting-dpr" :title="t('settings-dpr')" plain>
             <div class="cfg-grid">
               <!-- 「RPE 目录」这一项**暂时隐藏**：RPE 谱面列表那条路先不放出来，
                    代码原样留着，要恢复就把 v-if 去掉（下面 `selectRpeDir` 等也一起恢复使用）。 -->
@@ -632,30 +707,6 @@ const forkedDeps = [
               <!-- 「临时文件目录」：工具类功能（噪域播放器）先把中间产物写这里，成型了再搬进输出目录。
                    留空 = 系统临时目录下的 `DPRecorder`（框里的占位文字就是它的完整路径）。
                    改这里只影响之后的生成，已有的临时文件夹不会自动搬走。 -->
-              <CfgField :label="t('temp-dir')" :tip="t('temp-dir-tip')">
-                <v-text-field :class="{ 'settings-path--default': !config.tempDir }" readonly density="compact" hide-details="auto" v-model="tempDirShown" :title="tempDirFull" @contextmenu="openTempDir">
-                  <template #append-inner>
-                    <v-icon :title="t('folder-tip')" :aria-label="t('folder-tip')" @click="selectTempDir">mdi-folder-open</v-icon>
-                  </template>
-                </v-text-field>
-              </CfgField>
-              <!-- 「资源包」文件夹：放资源包的地方就在程序旁边
-                   （`<程序目录>/respack`，和 output / config 一个待遇），所以框里写 `.\respack`、
-                   悬停提示给完整路径。这格不给改（目录固定），文字按常灰处理。 -->
-              <CfgField :label="t('respack-path')" :tip="t('folder-tip')">
-                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="respackDirShown" :title="respackDir" append-inner-icon="mdi-folder-open" @click:append-inner="openRespackDir" @contextmenu="openRespackDir"></v-text-field>
-              </CfgField>
-              <!-- 「附带资源包」文件夹：皮肤包与 Minecraft 材质由用户自己下载后放进这里，
-                   目录同样固定在程序旁边，所以只读显示、文字按常灰处理。 -->
-              <CfgField :label="t('appendant-path')" :tip="t('appendant-path-tip')">
-                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="appendantDirShown" :title="appendantDir" append-inner-icon="mdi-folder-open" @click:append-inner="openAppendantDir" @contextmenu="openAppendantDir"></v-text-field>
-              </CfgField>
-              <!-- 「日志」文件夹：运行日志按天写在这里（`<程序目录>/logs/dpr-YYYY-MM-DD.log`），
-                   程序目录不可写时退回数据目录下的那一份。目录跟着程序走、不给改，
-                   所以只读显示、点图标打开。 -->
-              <CfgField :label="t('log-path')" :tip="t('log-path-tip')">
-                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="logDirShown" :title="logDir" append-inner-icon="mdi-folder-open" @click:append-inner="openLogDir" @contextmenu="openLogDir"></v-text-field>
-              </CfgField>
               <!-- 配置文件目录：显示与打开的**都是目录** `\config`（不是 `config/presets.toml`）。
                    文字**始终**灰色：这格只读、位置也不给改，显示的就是程序旁边那份 config 目录；
                    不能按「还没有自建预设时才灰」来做 —— 已经有预设时它会是白的。
@@ -671,20 +722,12 @@ const forkedDeps = [
               <CfgField :label="t('encoder-hevc')" :tip="t('encoder-tip')">
                 <v-text-field clearable density="compact" hide-details="auto" v-model="config.encoderHevc" :title="t('encoder-tip')" :append-inner-icon="getEncoderIcon" @click:append-inner="getEncoder(true)" @contextmenu="testEncoderHevc"></v-text-field>
               </CfgField>
-              <CfgField :label="t('lang')">
-                <v-autocomplete density="compact" hide-details="auto" :items="SUPPORTED_LOCALES_NAME" item-title="name" item-value="code" v-model="locale"></v-autocomplete>
-              </CfgField>
-
               <!-- 「输出日志到主终端」与「显示详细日志」两条**入口隐藏**：
                    开关本体、locale 里的两个键、以及后端读 `config.printStderr` /
                    `config.showDetailedLog` 全都原样留着 —— 旧配置里存过 true 也不会被改写，
                    想改直接编辑 `config.toml`。要恢复就把下面的 v-if="false" 去掉。 -->
               <CfgSwitch v-if="false" :label="t('print-stderr')" :tip="t('print-stderr-tip')" v-model="config.printStderr"></CfgSwitch>
               <CfgSwitch v-if="false" :label="t('show-detailed-log')" :tip="t('show-detailed-log-tip')" v-model="config.showDetailedLog"></CfgSwitch>
-              <!-- 「开启『游玩』按钮」：打开后「渲染」页那一排按钮里会多出「游玩」，用它直接进
-                    游戏里试谱（后端 `preview_play`）。归在「显示隐藏选项」里 —— 勾了它之后才出现。 -->
-              <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
-              <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
               <!-- 「显示隐藏选项」：这一条本身也要先被露出来 —— Ctrl+Shift+点击左栏的「设置」才出现，
                    之后按 localStorage 记着。勾上后「渲染」页末尾才会多出「谱面·调试」分区。 -->
               <CfgSwitch v-if="debugRevealed" :label="t('show-debug')" :tip="t('show-debug-tip')" v-model="debugEnabled"></CfgSwitch>
@@ -703,12 +746,18 @@ const forkedDeps = [
             </div>
           </PhiGroup>
 
-          <!-- ========== 二、关于 ========== -->
-          <!-- 「致谢 / 引用项目 / 开源许可 / 第三方素材」四条（连同文案与外链）在页脚之上；
-               条目名一律定宽（见样式），所以各条后面的正文都从同一个 x 开始。
-               「项目简介」整条没有（locale 里的 `about-intro` / `about-intro-label` 两个键先留着，
-               要放回来还有）。
-               版本号不显示，页脚整块居中、宽度按内容自适应。 -->
+          <!-- DPE 的设置暂时一项都没有：整组先收起来（有第一项时把 v-if 去掉）。 -->
+          <PhiGroup id="grp-setting-dpe" :title="t('settings-dpe')" plain>
+            <div class="cfg-grid">
+              <!-- DPE 的输出目录：位置固定在程序旁边，不给改，所以只读显示。 -->
+              <CfgField :label="t('dpe-output-dir')" :tip="t('dpe-output-dir-tip')">
+                <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="dpeOutputDirShown" :title="dpeOutputDir" append-inner-icon="mdi-folder-open" @click:append-inner="openDpeOutputDir" @contextmenu="openDpeOutputDir"></v-text-field>
+              </CfgField>
+              <!-- 选曲弹窗 = 谱面列表选了几首 + 最后那首的曲绘那条悬浮条 -->
+              <CfgSlider :label="t('chart-strip-width')" :tip="t('chart-strip-width-tip')" :min="15" :max="100" :step="1" v-model="chartStripWidth"></CfgSlider>
+            </div>
+          </PhiGroup>
+
           <PhiGroup id="grp-about" :title="t('about')" plain>
             <div class="cfg-grid">
               <CfgField :label="t('about-thanks-label')" full>
@@ -809,18 +858,30 @@ const forkedDeps = [
   width: 100%;
 }
 
-/* 条目名一律定宽，后面的具体文字从同一起点开始写、视觉更整齐。定宽之后「设置」组
+/* 条目名一律定宽，后面的具体文字从同一起点开始写、视觉更整齐。定宽之后三组设置
    三栏里的输入框起点也一致了；160px 是量着最长的两个名字定的
    （「输出日志到主终端」8 字 / 「指定 HEVC 编码器」）。 */
-.settings-view :deep(#grp-setting .cfg-item__label),
+.settings-view :deep(#grp-setting-general .cfg-item__label),
+.settings-view :deep(#grp-setting-dpr .cfg-item__label),
+.settings-view :deep(#grp-setting-dpe .cfg-item__label),
 .settings-view :deep(#grp-about .cfg-item__label) {
   flex: 0 0 160px;
   max-width: none;
 }
 
+/* DPE 这一组暂时没有条目时的那句占位文案。 */
+.settings-empty {
+  margin: 0;
+  padding: var(--phi-space-2) 0;
+  color: var(--phi-label-tertiary);
+  font-size: var(--phi-font-size-secondary);
+}
+
 /* 「设置」组的控件摊满剩下的宽度：一行三个之后每格只有 ~460px，
    再按默认的 40% 去算，路径 / 编码器这些字符串就太挤了 */
-.settings-view :deep(#grp-setting .cfg-item__control) {
+.settings-view :deep(#grp-setting-general .cfg-item__control),
+.settings-view :deep(#grp-setting-dpr .cfg-item__control),
+.settings-view :deep(#grp-setting-dpe .cfg-item__control) {
   flex: 1 1 auto;
 }
 

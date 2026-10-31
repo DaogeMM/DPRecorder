@@ -9,6 +9,7 @@
 | --- | --- |
 | `DPS/` | 引擎与播放器，5 个 crate：`dps`（核心库）、`dps-ui`、`dps-main`（瘦入口 exe）、`prpr-avc`（音视频编解码）、`prpr-pbc`（谱面转换 CLI） |
 | `DPR/` | Tauri 2 桌面端：`DPR/src/` 是 Vue 3 + Vuetify 界面，`DPR/src-tauri/` 是 Rust 后端（crate `dpr`，exe `dpr.exe`） |
+| `DPE/` | 同一窗口里的第二部分，谱面编辑：`DPE/ui/` 是它的界面（谱面列表、谱面修改、噪域播放器），`DPE/src/` 是独立的预览进程 `dpe.exe`（链 `dps` 直接起渲染窗口，能原地换谱面） |
 | `assets/` | 随仓库分发的运行资源（默认皮肤、字体、音效、图标）；附加的皮肤与材质已拆分出去，见下面「许可与出处」 |
 | `Cargo.toml` | 工作区根，6 个成员：`DPS/` 的 5 个 + `DPR/src-tauri` |
 
@@ -42,6 +43,7 @@ Phigros（Pigeon Games，闭源游戏）—— 谱面格式与素材被非官方
 cd <仓库根>
 
 pnpm --dir DPR install          # 前端依赖，只需一次
+cmd /c mklink /J node_modules DPR\node_modules   # 让 DPE\ui 也能按 DPR 的依赖解析（只需一次）
 .\run.bat                       # 开发模式启动（等价于在 DPR\ 里 cargo tauri dev）
 
 cd DPR
@@ -49,6 +51,7 @@ cargo tauri build               # 出安装包 → <仓库根>\target\release\bu
 ```
 
 - 只编 Rust 后端：`cargo build -p dpr` → `target\debug\dpr.exe`；无界面渲染：`target\debug\dpr.exe --render -i <谱面.pez|.json> -o <输出目录>`（另有 `--preview` / `--play` / `--tweakoffset`、`-c <配置.toml>`）。
+- 谱面编辑的预览进程：`cargo build -p dpe` → `target\debug\dpe.exe`，一般由界面里的「预览」拉起，也可以自己跑（`dpe.exe --input <谱面.pez|目录> --play`；加 `--config <引擎配置.json>` 就是界面那份配置）。
 - 只要引擎：`cargo build -p dps-main` → `target\debug\dps-main.exe`；谱面格式转换：`cargo run -p prpr-pbc -- <输入> <输出.pbc>`。
 - `cargo build -p dpr` 默认是 dev 形态（不把前端打进 exe，加载 `devUrl`，要配合 `pnpm dev`）；正式形态带 `--features custom-protocol`，`cargo tauri build` 就是。改过前端要先 `pnpm build` 才会进 exe。
 - `prpr-avc` 需要的 FFmpeg 静态库**不在仓库里**（`DPS/prpr-avc/static-lib/<TARGET>/` 被 `.gitignore` 排除），缺了编不过；目录可用 `PRPR_AVC_LIBS` 覆盖（见 `DPS/prpr-avc/build.rs`）。

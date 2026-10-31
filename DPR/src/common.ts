@@ -110,10 +110,8 @@ export function changeLocale(locale: string) {
 export function toast(message: string, kind?: 'success' | 'info' | 'warning' | 'error') {
   sonnerToast(message, {
     duration: 2000,
-    // 红字（error）从**左上角**弹：走这条路的错误多半是「配置里有错 / 保存失败」这类
-    // 后端原文，可能很长，放正中会正好盖住内容区中间几栏；其余提示仍在正中（`<v-sonner>`
-    // 的 `position="top-center"`）。
-    ...(kind === 'error' ? { position: 'top-left' as const } : {}),
+    // 一律留在正中（`<v-sonner>` 的 `position="top-center"`）：错误提示也不例外，
+    // 之前把红字单独挪到左上角，看着像「弹窗跑偏了」。
     cardProps: {
       color: kind,
       // @ts-ignore

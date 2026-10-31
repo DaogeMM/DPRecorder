@@ -20,17 +20,17 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import * as dialog from '@tauri-apps/plugin-dialog';
 import { useStorage } from '@vueuse/core';
 
-import CfgField from '../components/CfgField.vue';
-import CfgSlider from '../components/CfgSlider.vue';
-import CfgSwitch from '../components/CfgSwitch.vue';
-import PhiGroup from '../components/PhiGroup.vue';
-import PhiSection from '../components/PhiSection.vue';
-import { readChartConfig, withChartConfig } from '../chartConfig';
-import { toast, toastError } from '../common';
-import { chartModMarker, chartSideOf } from '../config/chartSide';
-import { DEFAULT_RENDER_CONFIG } from '../model';
-import type { ChartInfo, RenderConfig } from '../model';
-import { finishPageLoad } from '../pageLoad';
+import CfgField from '@/components/CfgField.vue';
+import CfgSlider from '@/components/CfgSlider.vue';
+import CfgSwitch from '@/components/CfgSwitch.vue';
+import PhiGroup from '@/components/PhiGroup.vue';
+import PhiSection from '@/components/PhiSection.vue';
+import { readChartConfig, withChartConfig } from '@/chartConfig';
+import { toast, toastError } from '@/common';
+import { chartModMarker, chartSideOf } from '@/config/chartSide';
+import { DEFAULT_RENDER_CONFIG } from '@/model';
+import type { ChartInfo, RenderConfig } from '@/model';
+import { finishPageLoad } from '@/pageLoad';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -563,18 +563,6 @@ onUnmounted(() => {
                 <v-text-field density="compact" hide-details="auto" v-model="params.name"></v-text-field>
               </CfgField>
               <CfgSwitch :label="t('vn-keep-audio')" v-model="params.keepAudio"></CfgSwitch>
-              <CfgField :label="t('vn-dir')" :tip="outputDir">
-                <v-text-field
-                  :class="{ 'vn-path--default': !params.outputDir }"
-                  :model-value="outputShown"
-                  readonly
-                  density="compact"
-                  hide-details="auto"
-                  :title="outputDir"
-                  append-inner-icon="mdi-folder-open"
-                  @click:append-inner="pickOutputDir"
-                ></v-text-field>
-              </CfgField>
             </div>
           </PhiSection>
         </PhiGroup>

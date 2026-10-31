@@ -47,9 +47,10 @@ import { toast, openExternal, changeLocale } from './common';
 import { applyPhiTheme } from './design/theme';
 import { sectionGateState } from './config/sectionGate';
 import TaskStrip from './components/TaskStrip.vue';
+import ChartStrip from '@dpe/ChartStrip.vue';
 import { useTasks } from './tasks';
-import { toolProjects } from './tools/projects';
 import { pageReady } from './pageLoad';
+import { PARTS, usePart, type PartId } from './parts';
 const appWindow = getCurrentWindow();
 const theme = useTheme();
 
@@ -101,30 +102,58 @@ function routerPush(name: string) {
 }
 
 /**
+ * 窗口当前显示哪一部分（DPR / DPE / 将来的 DPS）。
+ * 切换器在标题栏左边、`DPRecorder` 名字右边：换部分只换左栏导航与首页路由，窗口本身不重建
+ * （渲染任务、批量列表这些状态在页面组件里，切走再切回来仍然在）。
+ */
+const part = usePart();
+const currentPart = computed(() => PARTS.find((it) => it.id === part.value) ?? PARTS[0]!);
+
+function switchPart(id: PartId) {
+  const target = PARTS.find((it) => it.id === id);
+  if (!target || target.id === part.value) return;
+  part.value = target.id;
+  router.push({ name: target.home });
+}
+
+/**
+ * 路由可以被直接打开（刷新、外部跳转），也可能被页面自己跳走；
+ * 这里按路由把切换器对回来，免得出现「左栏是 DPR 的、内容是 DPE 的」。
+ * 两个部分共用的路由（设置页）只要当前部分也认就不动，否则会从 DPE 被弹回 DPR。
+ */
+watch(
+  () => route.name,
+  (name) => {
+    const key = String(name ?? '');
+    const current = PARTS.find((it) => it.id === part.value);
+    if (current?.routes.includes(key)) return;
+    const owner = PARTS.find((it) => it.routes.includes(key));
+    if (owner) part.value = owner.id;
+  },
+  { immediate: true },
+);
+
+/**
  * 外壳导航。
  * primaryNav = 一级区域（对应路由）；renderHero / renderGroups = 渲染页左栏的两级子项。
  * 子项的 id 就是渲染页里锚点元素的 DOM id（<PhiGroup> 是 grp-xxx、<PhiSection> 是 sec-xxx），
  * 找不到锚点就退化为回到顶部，不会报错。
  */
-const primaryNav = [
-  { name: 'render', icon: 'mdi-auto-fix' },
-  { name: 'batch', icon: 'mdi-filmstrip-box-multiple' },
-  { name: 'tasks', icon: 'mdi-server' },
-  // 「工具」放在一级导航最下面：工具页里的项目**只能**用左栏切换（见 tools/projects.ts）
-  { name: 'tools', icon: 'mdi-tools' },
-];
+const primaryNav = computed(() => currentPart.value.nav);
 
 /**
- * 一级导航的选中态。工具页下挂着一堆项目路由（`tool-video-noise` …），
- * 走到任何一个项目页时「工具」这一项都该亮着。
+ * 一级导航的选中态。左栏每一项都对应一条自己的路由，所以直接比路由名。
  */
 function navActive(name: string) {
-  if (route.name === name) return true;
-  return name === 'tools' && toolProjects.some((project) => project.name === route.name);
+  return route.name === name;
 }
 
-// 「设置」固定在左栏最下面（和上面几个一级区域分开，中间用弹性空白撑开）
-const settingsNav = [{ name: 'settings', icon: 'mdi-cog' }];
+/**
+ * 「设置」固定在左栏最下面（和上面几个一级区域分开，中间用弹性空白撑开）。
+ * 设置页两个部分共用一份，只有标题写着是谁的设置（`settings-dpr` / `settings-dpe`）——
+ * 标签与设置页里那一组的标题取同一个键，免得两处各写一份、以后改漏一处。
+ */
+const settingsNav = computed(() => [{ name: 'settings', icon: 'mdi-cog', label: t('settings') }]);
 
 /**
  * 设置页里「显示隐藏选项」那一条的入口开关：默认藏着，只有 **Ctrl+Shift+点击左栏的「设置」** 才切换。
@@ -191,8 +220,9 @@ const renderGroups: RenderGroup[] = [
       { id: 'sec-chart-line', label: 'title.judge-line', icon: 'mdi-minus' },
       // 噪域排在按键下面：顺序 = 页面顺序，必须与 ConfigView 模板一致
       { id: 'sec-block-area', label: 'title.block-area', icon: 'mdi-blur' },
-      // 谱面修改（纯配置谱面 / 定轨谱面 / 七个按键功能）紧跟在噪域之后，顺序 = 页面顺序
-      { id: 'sec-chart-mod', label: 'title.chart-mod', icon: 'mdi-wrench-outline' },
+      // 「谱面修改」这一页和 DPE 的谱面修改页是同一段控件（`../components/ConfigView.vue` 与
+      // `../../DPE/ui/ChartModView.vue`），两边都能改，落盘的是同一份工作配置
+      { id: 'sec-chart-mod', label: 'title.chart-mod', icon: 'mdi-pencil-ruler' },
       // 「判定」与「谱面进水」都在本组末尾的「更多」分区里，不单列
       { id: 'sec-more-chart', label: 'more', icon: 'mdi-dots-horizontal' },
       // 本组最后的「谱面·调试」不列进左栏：它默认整块关着（纯界面总开关），只在页面上留一行标题。
@@ -316,8 +346,6 @@ theme.global.name.value = 'DeepDark';
 // 同步设计令牌层：tokens.css 按 body[data-phi-theme] 切换
 applyPhiTheme();
 
-
-
 // FFmpeg
 const platform = os.family();
 const isWindows = String(platform) === 'windows';
@@ -432,18 +460,32 @@ onUnmounted(() => {
   <v-app id="dpr">
     <v-sonner position="top-center" />
 
-    <!-- 标题栏：整条可拖拽；右侧三个窗口按钮（DSH 式方形图标按钮） -->
+    <!-- 标题栏：整条可拖拽。左边是 DPR / DPE 切换器（挨着 DPRecorder 名字），右边是窗口按钮 -->
     <header class="phi-titlebar" data-tauri-drag-region>
       <div class="phi-titlebar__brand" data-tauri-drag-region>
         <img src="./assets/favicon.png" alt="icon" class="phi-titlebar__logo" />
         <span class="phi-titlebar__name">DPRecorder</span>
       </div>
+      <div class="phi-parts" role="tablist">
+        <button
+          v-for="item in PARTS"
+          :key="item.id"
+          class="phi-parts__item"
+          :class="{ 'phi-parts__item--active': item.id === part }"
+          type="button"
+          role="tab"
+          :aria-selected="item.id === part"
+          @click="switchPart(item.id)"
+        >
+          {{ item.label }}
+        </button>
+      </div>
       <div class="phi-titlebar__spacer" data-tauri-drag-region></div>
       <div class="phi-titlebar__controls">
-        <button class="phi-winbtn" type="button" :title="t('close')" @click="appMinimize">
+        <button class="phi-winbtn" type="button" :title="t('minimize')" @click="appMinimize">
           <i class="mdi mdi-window-minimize"></i>
         </button>
-        <button class="phi-winbtn" type="button" @click="appMaximize">
+        <button class="phi-winbtn" type="button" :title="t('maximize')" @click="appMaximize">
           <i class="mdi mdi-window-maximize"></i>
         </button>
         <button class="phi-winbtn phi-winbtn--close" type="button" :title="t('close')" @click="appClose()">
@@ -522,24 +564,8 @@ onUnmounted(() => {
             </template>
           </nav>
         </template>
-        <template v-else-if="route.name !== 'render' && toolProjects.some((project) => project.name === route.name) && !railCollapsed">
-          <!-- 工具页的项目：**只**在这里切换（工具页内不放选项卡/下拉框） -->
-          <nav class="phi-nav__section phi-nav__section--sub">
-            <button
-              v-for="project in toolProjects"
-              :key="project.name"
-              class="phi-nav__item phi-nav__item--sub"
-              :class="{ 'phi-nav__item--active': route.name === project.name }"
-              type="button"
-              :title="t(project.label)"
-              @click="routerPush(project.name)"
-            >
-              <i class="mdi" :class="project.icon"></i>
-              <span class="phi-nav__label">{{ t(project.label) }}</span>
-            </button>
-          </nav>
-        </template>
         <div class="phi-nav__spacer"></div>
+        <!-- 「设置」只有一页（页内分通用 / DPR / DPE 三组），左栏一项 -->
         <nav class="phi-nav__section phi-nav__section--bottom">
           <button
             v-for="item in settingsNav"
@@ -547,11 +573,11 @@ onUnmounted(() => {
             class="phi-nav__item"
             :class="{ 'phi-nav__item--active': route.name === item.name }"
             type="button"
-            :title="t(item.name)"
+            :title="item.label"
             @click="onSettingsClick(item.name, $event)"
           >
             <i class="mdi" :class="item.icon"></i>
-            <span class="phi-nav__label">{{ t(item.name) }}</span>
+            <span class="phi-nav__label">{{ item.label }}</span>
           </button>
         </nav>
       </aside>
@@ -587,8 +613,11 @@ onUnmounted(() => {
           </div>
         </Transition>
       </main>
-        <!-- 渲染弹窗：当前正在渲染的谱面（全局，见 components/TaskStrip.vue） -->
-        <TaskStrip />
+        <!-- 悬浮条按当前部分二选一：
+             渲染进度条（DPR，当前正在渲染的谱面，见 components/TaskStrip.vue）；
+             已选谱面（DPE，选了几首 + 最后选的那首的曲绘，见 DPE/ui/ChartStrip.vue）。 -->
+        <TaskStrip v-if="part === 'dpr'" />
+        <ChartStrip v-else />
     </div>
     <v-dialog v-model="ffmpegDialog" width="auto" min-width="400px" class="log-card-bg">
       <v-card class="log-card-window">
@@ -703,7 +732,7 @@ html {
   cursor: pointer;
   background: transparent;
   border: none;
-  border-radius: var(--phi-radius-sm);
+  border-radius: 0;
   transition:
     background-color var(--phi-duration) var(--phi-ease),
     color var(--phi-duration) var(--phi-ease);
@@ -717,6 +746,44 @@ html {
 .phi-winbtn--close:hover {
   color: #fff;
   background: var(--phi-danger);
+}
+
+/* ---------- 部分切换器：DPR / DPE ----------
+   挨着左边的 `DPRecorder` 名字；靠 1px 容器底色做出分隔线。直角、无圆角，与外壳的取法一致。 */
+.phi-parts {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  margin-left: var(--phi-space-3);
+  overflow: hidden;
+  background: var(--phi-border-l2);
+  border-radius: 0;
+}
+
+.phi-parts__item {
+  height: 24px;
+  padding: 0 var(--phi-space-3);
+  font-size: var(--phi-font-size-caption);
+  color: var(--phi-label-tertiary);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  background: var(--phi-bg-base);
+  border: none;
+  border-radius: 0;
+  transition:
+    background-color var(--phi-duration) var(--phi-ease),
+    color var(--phi-duration) var(--phi-ease);
+}
+
+.phi-parts__item:hover {
+  color: var(--phi-label-primary);
+  background: var(--phi-nav-item-hover);
+}
+
+.phi-parts__item--active,
+.phi-parts__item--active:hover {
+  color: var(--phi-accent);
+  background: var(--phi-nav-item-active);
 }
 
 /* ---------- 框架：侧栏 + 内容区 ---------- */

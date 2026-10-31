@@ -861,7 +861,8 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
 export interface AppConfig {
   rpeDir: string | null;
   outputDir: string | null;
-  /** 临时（中间产物）目录，工具类功能用；留空 = 系统临时目录下的 `DPRecorder`。 */
+  /** 临时目录的根；留空 = 系统临时目录（`<程序目录>/tmp`）。
+   *  根下按部分各开一层：DPR 的中间产物在 `DPR`，DPE 的谱面缓存在 `DPE`。 */
   tempDir: string | null;
   encoderAvc: string | null;
   encoderHevc: string | null;

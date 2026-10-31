@@ -112,6 +112,17 @@
   flex: 1 1 auto;
 }
 
+/* 『简介』与『Tip』的输入框按固定宽度，不随窗口拉伸；
+   Tip 取简介宽度的 85%（960 × 0.85 = 816）。窗口更窄时退让到 100%。 */
+/* 这两格比普通控件长，但右边缘要和别的输入框对齐，所以仍走基类那条 `margin-left: auto`
+   （控件整体靠右），只改宽度：Tip 比简介窄一档。 */
+/* 两格一样长（960px），右边缘靠基类那条 `margin-left: auto` 和别的输入框对齐。 */
+.cfg-item--intro .cfg-item__control,
+.cfg-item--tip .cfg-item__control {
+  flex: 0 0 960px;
+  max-width: 100%;
+}
+
 .cfg-item__label {
   flex: 0 1 auto;
   max-width: 52%;

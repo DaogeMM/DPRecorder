@@ -48,7 +48,21 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const { t } = useI18n();
 
-const charts = useStorage<RenderChart[]>('BatchView.ChartList', []);
+/**
+ * `listOnly` 去掉底部的批量操作条（筛选 / 排序 / 融合 / 渲染…），只留谱面列表 ——
+ * DPE 的「谱面列表」用这份页面挑要编辑的谱面，不渲染，那条栏在那儿没有用。
+ * `scope` 分开两边的存储（见下面的 `storageKey`）。
+ */
+const props = defineProps<{ listOnly?: boolean; scope?: string }>();
+
+/**
+ * 存储键前缀：DPR 的「批量」与 DPE 的「谱面列表」各存各的，互不影响。
+ * 默认 `'dpr'` 继续用原来的键（老数据不用迁移），DPE 传 `'dpe'`。
+ */
+const scope = props.scope ?? 'dpr';
+const storageKey = (name: string) => (scope === 'dpr' ? name : `${name}@${scope}`);
+
+const charts = useStorage<RenderChart[]>(storageKey('BatchView.ChartList'), []);
 
 /** 新的谱面 id：列表 key 与「这一张的谱面信息表单」都靠它，必须唯一。 */
 function nextChartId(): number {
@@ -97,7 +111,7 @@ async function getPresets() {
   return result;
 }
 const presets = ref([DEFAULT_PRESET]);
-const preset = useStorage<Preset>('BatchView.Preset', DEFAULT_PRESET);
+const preset = useStorage<Preset>(storageKey('BatchView.Preset'), DEFAULT_PRESET);
 async function updatePresets() {
   presets.value = await getPresets();
   if (preset.value.key !== 'temp') {
@@ -122,9 +136,9 @@ function measurePresetDialogWidth() {
   const base = content?.clientWidth || window.innerWidth;
   presetDialogWidth.value = Math.max(480, base);
 }
-const disSelectStartRender = useStorage<boolean>('BatchView.disSelectStartRender', true);
-const removeStartRender = useStorage<boolean>('BatchView.removeStartRender', false);
-const removeAfterRender = useStorage<boolean>('BatchView.removeAfterRender', false);
+const disSelectStartRender = useStorage<boolean>(storageKey('BatchView.disSelectStartRender'), true);
+const removeStartRender = useStorage<boolean>(storageKey('BatchView.removeStartRender'), false);
+const removeAfterRender = useStorage<boolean>(storageKey('BatchView.removeAfterRender'), false);
 
 async function loadCharts(files: string[]) {
   loadingParsingChart.value = true;
@@ -149,7 +163,7 @@ async function loadCharts(files: string[]) {
 }
 
 /** 关键词筛选：空格分隔多个关键词，全部命中才留下。 */
-const chartFilter = useStorage<string | null>('BatchView.Filter', '');
+const chartFilter = useStorage<string | null>(storageKey('BatchView.Filter'), '');
 
 const filterTerms = computed(() =>
   (chartFilter.value ?? '')
@@ -317,6 +331,22 @@ async function checkInfo(chart: RenderChart) {
   return true;
 }
 
+// 悬浮条（DPE 的 `ChartStrip.vue`）显示「最后选中的那首」的曲绘，所以每次勾选变动
+// 就把这次新勾上的那张路径记进 `DPE.LastSelected`（多张一起勾选时取最后一张）。
+let selectedPaths = new Set<string>();
+
+watch(
+  charts,
+  (list) => {
+    const selected = new Set(list.filter((chart) => chart.isSelect).map((chart) => chart.path));
+    const added = [...selected].filter((path) => !selectedPaths.has(path));
+    const last = added[added.length - 1];
+    if (last) localStorage.setItem('DPE.LastSelected', last);
+    selectedPaths = selected;
+  },
+  { deep: true },
+);
+
 function selectAll() {
   filteredCharts.value.forEach(chart => {
     chart.isSelect = true
@@ -333,7 +363,7 @@ const configView = ref<typeof ConfigView>();
 const presetDialog = ref(false);
 /** 这份临时配置是从哪个预设改出来的（`*` 后面跟的就是它的名字）。
  *  单独存一份是为了别叠成 `**(已编辑)`：临时配置自己的名字每次都由它重算。 */
-const presetBaseName = useStorage<string>('BatchView.PresetBaseName', '');
+const presetBaseName = useStorage<string>(storageKey('BatchView.PresetBaseName'), '');
 
 /** 把界面上的配置收成「工作中的临时配置」：自动保存，而且**不写进任何命名预设** */
 function setWorkingPreset(config: RenderConfig) {
@@ -358,8 +388,8 @@ async function editPreset() {
 /** 列表只按这两种排：曲名、定数（`ChartInfo.lvl`，解析不出来时从难度文本里抠数字） */
 type SortKey = 'name' | 'level';
 
-const sortKey = useStorage<SortKey>('BatchView.Sort', 'name');
-const sortAsc = useStorage<boolean>('BatchView.SortAsc', true);
+const sortKey = useStorage<SortKey>(storageKey('BatchView.Sort'), 'name');
+const sortAsc = useStorage<boolean>(storageKey('BatchView.SortAsc'), true);
 
 // 旧版本存的是「按难度文本」那个值：认不出来就退回曲名，免得下拉框里一片空白
 if (sortKey.value !== 'name' && sortKey.value !== 'level') sortKey.value = 'name';
@@ -572,6 +602,13 @@ onUnmounted(() => {
                   <span v-if="diffLvl(item.chartInfo)" class="batch-row__diff-lvl">Lv.{{ diffLvl(item.chartInfo) }}</span>
                 </span>
               </div>
+              <!-- 谱面地址：靠右贴住展开箭头。地址往往比行内其它内容长得多，所以让它自己收缩并
+                   省略结尾，完整路径挂在 title 与右键「在文件夹中显示」上。 -->
+              <span
+                class="batch-row__path"
+                :title="item.path"
+                @contextmenu="showInFolder(item.path)"
+              >{{ item.path }}</span>
               <v-icon class="batch-row__chevron" icon="mdi-chevron-down" size="20"></v-icon>
             </div>
 
@@ -592,11 +629,23 @@ onUnmounted(() => {
       </template>
     </div>
 
+    <!-- DPE 的谱面列表：只留四个勾选类按钮（全选 / 反选 / 移除 / 取消）——
+         筛选、排序、融合、渲染都属于 DPR 的批量页。 -->
+    <div v-if="listOnly" class="batch-view__actions batch-view__actions--list">
+      <div class="batch-view__bar batch-view__bar--foot">
+        <v-spacer />
+        <v-btn variant="text" size="small" :disabled="filteredCharts.length === 0" @click="selectAll">{{ t('select-all') }}</v-btn>
+        <v-btn variant="text" size="small" :disabled="filteredCharts.length === 0" @click="selectInvert">{{ t('select-invert') }}</v-btn>
+        <v-btn variant="text" size="small" :disabled="!hasSelection" @click="removeSelectChart">{{ t('remove-select') }}</v-btn>
+        <v-btn variant="text" size="small" :disabled="!hasSelection" @click="cancelSelectTask">{{ t('cancel-select') }}</v-btn>
+      </div>
+    </div>
+
     <!-- 底部固定操作条：和渲染页同一条（`border-top` + 左右内边距），分两排：
            上排 = 筛选 · 排序 · 移除全部任务 ……… 三个开关
            下排 = 预设配置（最左）………… 全选 反选 移除 取消 渲染（右下角）
          高度：`--v-input-control-height` 从 Vuetify compact 的 40px 压到 28px（见样式）。 -->
-    <div class="batch-view__actions">
+    <div v-if="!listOnly" class="batch-view__actions">
       <div class="batch-view__bar batch-view__bar--head">
         <div class="batch-view__pickers batch-view__pickers--filter config-root">
           <span class="batch-view__picker-label">{{ t('filter') }}</span>
@@ -871,6 +920,20 @@ onUnmounted(() => {
 .batch-row__diff-lvl {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
+}
+
+/* 谱面地址：占行尾剩余宽度、贴住箭头；比整行还长时省略结尾，完整路径看 title */
+.batch-row__path {
+  flex: 0 1 auto;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 50%;
+  margin-left: auto;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--phi-label-caption);
 }
 
 .batch-row__chevron {

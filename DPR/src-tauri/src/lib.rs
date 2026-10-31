@@ -310,6 +310,10 @@ pub fn run() -> Result<()> {
                 get_output_dir_path,
                 get_temp_dir_path,
             get_video_tool_dir_path,
+            get_dpe_output_dir_path,
+            get_dpe_modify_dir_path,
+            dpe_preview,
+            dpe_generate_modified,
                 get_app_dir,
                 get_respack_dir_path,
                 get_appendant_dir_path,
@@ -416,13 +420,25 @@ pub fn run() -> Result<()> {
     let asset_dir = resolve_asset_dir(&exe_dir);
     ASSET_PATH.set(asset_dir.clone()).ok();
 
+    let config = common::read_config()?;
+    let is_gui = std::env::args().len() == 1;
+
     // tempfile（视频落盘、音频混流、封面）以及 ffmpeg 等子进程全都走 std::env::temp_dir()。
-    // 便携起见**优先用 `<exe 目录>/tmp`**（和 config/respack/output 一样挨着 exe，用户看得见、
-    // 好清理，也不会把几 GB 视频临时文件塞进系统盘），只有那里写不进去时才保留系统临时目录；
-    // 两者都不可写才警告（一失败就是满屏 `拒绝访问。 (os error 5) at path "...\Temp\.tmpXXXXXX"`，
-    // 视频加载和渲染会直接挂掉）。
+    // 根目录：设置里填了临时目录就用它（和 `common::temp_root` 同一处判断），否则用
+    // `<exe 目录>/tmp`（和 config/respack/output 一样挨着 exe，用户看得见、好清理，也不会把
+    // 几 GB 视频临时文件塞进系统盘）。DPR 这条线的中间产物放根下的 `DPR` 子目录、DPE 用 `DPE`
+    // （见 `common::get_temp_dir` / `get_dpe_temp_dir`），所以这里把 `TEMP` 指到 `<根>/DPR`。
+    // 写不进去时保留系统临时目录；两者都不可写才警告（一失败就是满屏
+    // `拒绝访问。 (os error 5) at path "...\Temp\.tmpXXXXXX"`，视频加载和渲染会直接挂掉）。
     {
-        let dir = exe_dir.join("tmp");
+        let root = config
+            .temp_dir
+            .clone()
+            .unwrap_or_else(|| exe_dir.join("tmp"));
+        // 子进程（渲染进程、以后的预览进程）拿到的 `TMP` 是 `<根>/DPR`，DPE 要的是
+        // `<根>/DPE`，所以把根单独交代出去。
+        std::env::set_var("DPRECORDER_TEMP_DIR", &root);
+        let dir = root.join("DPR");
         let system = std::env::temp_dir();
         if std::fs::create_dir_all(&dir).is_ok() && common::is_dir_writable(&dir) {
             if system != dir {
@@ -438,9 +454,6 @@ pub fn run() -> Result<()> {
             );
         }
     }
-
-    let config = common::read_config()?;
-    let is_gui = std::env::args().len() == 1;
 
     // GUI 进程始终开订阅：它得把日志写进文件。「显示详细日志」只决定渲染子进程往 stderr
     // 打多细 —— 「输出」面板里看到的就是子进程 stderr。
@@ -992,6 +1005,43 @@ async fn read_chart_asset(path: String, name: String) -> Result<tauri::ipc::Resp
     .await
 }
 
+/// 用 `dpe.exe` 起一个预览窗口看生成的谱面（DPE 的输出列表上「预览」按这个走）。
+///
+/// 不走渲染页：那里会重解析一遍谱面、还要人再点一次预览。这里直接把谱面包交给预览进程。
+/// `--standalone` 让它别读 stdin —— 这里的 stdin 给的是 null，预览进程一读就是 EOF，
+/// 会当成「父进程没了」立刻退出。
+#[tauri::command]
+async fn dpe_preview(path: String, config: render::RenderConfig) -> Result<(), InvokeError> {
+    wrap_async(async move {
+        let exe = std::env::current_exe()?.with_file_name(if cfg!(windows) { "dpe.exe" } else { "dpe" });
+        if !exe.is_file() {
+            bail!("找不到预览程序 {}", exe.display());
+        }
+        // 把界面上的那份渲染配置整份交给预览进程：DPR 自己的预览也是这么给的
+        // （`preview_chart` 把 RenderParams 写进子进程 stdin），这样两边的画面一模一样。
+        let mut prpr_config = config.to_config();
+        prpr_config.res_pack_path = common::resolve_respack_path(config.res_pack_path.clone());
+        prpr_config.volume_bgm = prpr_config.volume_music;
+        prpr_config.interactive = false;
+        let config_path = common::get_dpe_temp_dir()?.join("preview-config.json");
+        std::fs::write(&config_path, serde_json::to_vec(&prpr_config)?)?;
+
+        let mut cmd = cmd_hidden(exe);
+        cmd.arg("--input").arg(&path).arg("--play").arg("--standalone");
+        cmd.arg("--config").arg(&config_path);
+        // 与 DPR 自己的预览同一条设置：全屏谱面预览开着就全屏起窗
+        if common::read_config().map(|it| it.preview_fullscreen).unwrap_or(true) {
+            cmd.arg("--fullscreen");
+        }
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 async fn preview_chart(params: RenderParams) -> Result<(), InvokeError> {
     wrap_async(async move {
@@ -1426,22 +1476,281 @@ fn get_output_dir_path() -> Result<String, InvokeError> {
         .map_err(InvokeError::from_anyhow)
 }
 
-/// 临时（中间产物）目录的有效路径：设置里没填就是系统临时目录下的 `DPRecorder`。
+/// 临时目录根的有效路径：设置里没填就是系统临时目录（`<程序目录>/tmp`）。
 /// 设置页那格空着时拿它当占位提示 —— 默认值也看得见、也能一键打开。
 #[tauri::command]
 fn get_temp_dir_path() -> Result<String, InvokeError> {
-    common::get_temp_dir()
+    common::temp_root()
         .map(|path| path.to_string_lossy().to_string())
         .map_err(InvokeError::from_anyhow)
 }
 
-/// 工具页「噪域播放器」的默认输出目录：`<程序目录>/tools/blockAreaPlayer`。
+/// 工具页「噪域播放器」的输出目录：`<程序目录>/dpe/noisePlayer`（DPE 的产物目录）。
 /// 工具页那格空着时拿它当占位提示 —— 默认值看得见、也能一键打开。
 #[tauri::command]
 fn get_video_tool_dir_path() -> Result<String, InvokeError> {
     common::video_tool_dir()
         .map(|path| path.to_string_lossy().to_string())
         .map_err(InvokeError::from_anyhow)
+}
+
+/// DPE 的输出根：`<程序目录>/dpe`。路径固定，设置页只显示不给改。
+#[tauri::command]
+fn get_dpe_output_dir_path() -> Result<String, InvokeError> {
+    common::dpe_output_root()
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// 谱面修改的输出目录：`<程序目录>/dpe/modify`。
+#[tauri::command]
+fn get_dpe_modify_dir_path() -> Result<String, InvokeError> {
+    common::dpe_output_dir(common::DPE_MODIFY_DIR)
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// DPE「生成谱面」：复制源 `.pez`，把谱面修改写进它的 `config.toml`，落到
+/// `<程序目录>/dpe/modify/<原名>.(<修改1>→<修改2>).pez`，返回新文件的绝对路径。
+///
+/// 修改以 `config.toml` 的形式跟着谱面走：渲染页导入这张谱面时会把它们合并进工作
+/// 配置（`chart_config::read`），所以不必改动谱面本体，也就不受「引擎没有谱面写出
+/// 能力」的限制。源包里原有的 `config.toml` 先经白名单过滤再与新修改合并，
+/// 用户自己写的东西不会丢。
+///
+/// `labels` 是生效的修改名（按落地顺序，纯配置谱面时就是「纯配置谱面」）：文件名与难度
+/// 都由它拼，口径同渲染页的 `chartModMarker`。
+#[tauri::command]
+async fn dpe_generate_modified(
+    source: String,
+    labels: Vec<String>,
+    entries: serde_json::Map<String, serde_json::Value>,
+) -> Result<String, InvokeError> {
+    async fn inner(
+        source: String,
+        labels: Vec<String>,
+        entries: serde_json::Map<String, serde_json::Value>,
+    ) -> anyhow::Result<String> {
+        let source = std::path::PathBuf::from(source);
+        if !source.is_file() {
+            anyhow::bail!("谱面包不存在：{}", source.display());
+        }
+        let stem = source
+            .file_stem()
+            .map(|it| it.to_string_lossy().to_string())
+            .filter(|it| !it.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("谱面包没有文件名：{}", source.display()))?;
+
+        let labels = labels
+            .into_iter()
+            .map(|it| it.trim().to_owned())
+            .filter(|it| !it.is_empty())
+            .collect::<Vec<_>>();
+
+        // 源谱面若已经是「（内容）」式的修改链（这个命令自己生成过的、或融合结果），把内容
+        // 当成链首接在后面，而不是再套一层括号。读不出谱面信息也照常生成，只是难度不改。
+        let (info, lead) = if labels.is_empty() {
+            (None, None)
+        } else {
+            match fs::fs_from_file(&source) {
+                Ok(mut pack) => match fs::load_info(pack.deref_mut()).await {
+                    Ok(info) => {
+                        let lead = chain_lead(&info);
+                        (Some(modified_info(info, lead.as_deref(), &labels)), lead)
+                    }
+                    Err(_) => (None, None),
+                },
+                Err(_) => (None, None),
+            }
+        };
+
+        // 文件名里不允许出现的字符一律抹掉；一个名字都没剩下时用兜底的名字。
+        let names = lead
+            .iter()
+            .map(String::as_str)
+            .chain(labels.iter().map(String::as_str))
+            .map(|it| {
+                it.chars()
+                    .filter(|it| !matches!(it, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+                    .collect::<String>()
+                    // 链首是难度文本，里面的 ` → ` 带空格；文件名里统一成不带空格的 `→`。
+                    .replace(" → ", "→")
+            })
+            .map(|it| it.trim().to_owned())
+            .filter(|it| !it.is_empty())
+            .collect::<Vec<_>>();
+        // 源文件名若已经带着上一次生成的「(修改链)」尾巴，先裁掉再拼新链；否则会出现
+        // `X.SP(陈列按键).(陈列按键→随机位置→长条填充).pez` 这种旧标识叠着的名字。
+        let stem = strip_old_marker(&stem, &names);
+
+        let suffix = if names.is_empty() {
+            "修改".to_owned()
+        } else {
+            format!("({})", names.join("→"))
+        };
+
+        let dir = common::dpe_output_dir(common::DPE_MODIFY_DIR)?;
+        let dest = dir.join(format!("{stem}.{suffix}.pez"));
+
+        let mut merged = match crate::chart_config::read(&source).await {
+            Ok(Some(config)) => config,
+            // 谱面自带配置坏了不该挡住生成：丢掉它，从空表开始。
+            Ok(None) | Err(_) => serde_json::Map::new(),
+        };
+        for (key, value) in entries {
+            merged.insert(key, value);
+        }
+        crate::chart_config::write_generated(&source, &dest, &merged, info.as_ref())?;
+        Ok(dest.to_string_lossy().to_string())
+    }
+
+    inner(source, labels, entries)
+        .await
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// 源谱面的难度文本若已经是 `（内容）` 这样的修改链，取出括号里的内容当作链首。
+///
+/// 三处（`diff` / `level` / `difficulty`）都可能是它，取第一个命中的；内容里还带括号的
+/// 不算一条链（那是谱面作者自己写的括号说明），不接。
+fn chain_lead(info: &ChartInfo) -> Option<String> {
+    [info.diff.trim(), info.level.trim(), info.difficulty.trim()]
+        .into_iter()
+        .find_map(|it| {
+            let inner = it.strip_prefix('（')?.strip_suffix('）')?.trim();
+            (!inner.is_empty() && !inner.contains('（') && !inner.contains('）'))
+                .then(|| inner.to_owned())
+        })
+}
+
+/// 把源文件名末尾上一次生成的「(修改链)」裁掉。
+///
+/// 生成过的谱面包名形如 `曲名.谱师.0.SP.(陈列按键→随机位置)`。在它上面再生成一次时若直接
+/// 往后接，同一个标识就会出现两遍：`X.SP.(陈列按键).(陈列按键→随机位置→长条填充)`。
+/// 因此只要末尾括号里的内容确实是这次新链的开头（链首或前几段，见 `names`），就把它连同
+/// 前面的分隔符一起裁掉；谱面自带的括号说明（`Song (Live).pez` 这类）不动。
+fn strip_old_marker(stem: &str, names: &[String]) -> String {
+    if names.is_empty() {
+        return stem.to_owned();
+    }
+    let chain = names
+        .iter()
+        .flat_map(|it| it.split('→'))
+        .map(str::trim)
+        .filter(|it| !it.is_empty())
+        .collect::<Vec<_>>();
+
+    let mut current = stem.to_owned();
+    // 旧名字可能叠过几层，只要还对得上就继续往前裁。
+    while let Some(open) = current.rfind(|it| it == '(' || it == '（') {
+        let tail = &current[open..];
+        let inner = tail
+            .strip_prefix('(')
+            .and_then(|it| it.strip_suffix(')'))
+            .or_else(|| tail.strip_prefix('（').and_then(|it| it.strip_suffix('）')))
+            .map(str::trim);
+        let Some(inner) = inner else { break };
+        let segs = inner
+            .split('→')
+            .map(str::trim)
+            .filter(|it| !it.is_empty())
+            .collect::<Vec<_>>();
+        let shared = segs.len().min(chain.len());
+        if shared == 0 || segs[..shared] != chain[..shared] {
+            break;
+        }
+        let head = current[..open]
+            .trim_end_matches(|it: char| it == '.' || it == '_' || it == '-' || it.is_whitespace())
+            .trim_end()
+            .to_owned();
+        if head.is_empty() {
+            break;
+        }
+        current = head;
+    }
+    current
+}
+
+/// 生成包的谱面信息：难度标识与难度文本都写成修改链 `（A → B）`，定数照旧。
+///
+/// `info.yml` 的约定是 `level` 放难度文本、`difficulty` 放定数，`load_info` 拿前者盖后者，
+/// 而界面上的难度标识取自 `diff` —— 三处写同一份才不会留下旧难度。`lead` 是源谱面已有的
+/// 那一环（见 [`chain_lead`]），摆在链首，与 `chartSide.ts::chartModMarker` 同一口径。
+fn modified_info(mut info: ChartInfo, lead: Option<&str>, labels: &[String]) -> ChartInfo {
+    let mut parts: Vec<&str> = Vec::with_capacity(labels.len() + 1);
+    parts.extend(lead);
+    parts.extend(labels.iter().map(String::as_str));
+    if parts.is_empty() {
+        return info;
+    }
+    let text = format!("（{}）", parts.join(" → "));
+    info.diff = text.clone();
+    info.level = text.clone();
+    info.difficulty = text;
+    info
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info_with(diff: &str, level: &str, difficulty: &str) -> ChartInfo {
+        ChartInfo {
+            diff: diff.to_owned(),
+            level: level.to_owned(),
+            difficulty: difficulty.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn labels(items: &[&str]) -> Vec<String> {
+        items.iter().map(|it| it.to_string()).collect()
+    }
+
+    #[test]
+    fn chain_lead_takes_one_parenthesis_layer() {
+        // 已经改过一次的谱面：把括号里的整条链接上去，别套两层括号。
+        let info = info_with("（随机流速 → 随机按键）", "（随机流速 → 随机按键）", "（随机流速 → 随机按键）");
+        assert_eq!(chain_lead(&info).as_deref(), Some("随机流速 → 随机按键"));
+
+        // 融合结果单独占一环。
+        let merged = info_with("（谱面融合）", "（谱面融合）", "（谱面融合）");
+        assert_eq!(chain_lead(&merged).as_deref(), Some("谱面融合"));
+
+        // 原谱难度、空括号、括号里还嵌括号的，都不算一条链。
+        assert_eq!(chain_lead(&info_with("IN", "IN Lv.15", "15")), None);
+        assert_eq!(chain_lead(&info_with("（）", "", "")), None);
+        assert_eq!(chain_lead(&info_with("（自制（改））", "", "")), None);
+    }
+
+    #[test]
+    fn modified_info_appends_to_existing_chain() {
+        let info = modified_info(
+            info_with("（随机流速 → 随机按键）", "（随机流速 → 随机按键）", "（随机流速 → 随机按键）"),
+            Some("随机流速 → 随机按键"),
+            &labels(&["随机位置"]),
+        );
+        assert_eq!(info.diff, "（随机流速 → 随机按键 → 随机位置）");
+        assert_eq!(info.level, "（随机流速 → 随机按键 → 随机位置）");
+        assert_eq!(info.difficulty, "（随机流速 → 随机按键 → 随机位置）");
+
+        // 原谱难度被整串换掉，链首为空时只剩这次开的修改。
+        let plain = modified_info(info_with("IN", "IN Lv.15", "15"), None, &labels(&["随机流速", "随机按键"]));
+        assert_eq!(plain.diff, "（随机流速 → 随机按键）");
+    }
+
+    #[test]
+    fn strip_old_marker_drops_previous_chain() {
+        let mods = labels(&["陈列按键", "随机位置", "长条填充"]);
+
+        // 上一次生成的结局：括号紧贴难度标识，或前面带一个点。
+        assert_eq!(strip_old_marker("Message.くるぶっこちゃん.0.SP(陈列按键)", &mods), "Message.くるぶっこちゃん.0.SP");
+        assert_eq!(strip_old_marker("Message.(陈列按键→随机位置)", &mods), "Message");
+
+        // 谱面自带的括号说明（内容对不上修改链）不裁。
+        assert_eq!(strip_old_marker("Song (Live)", &mods), "Song (Live)");
+        assert_eq!(strip_old_marker("Song", &mods), "Song");
+    }
 }
 
 /// 程序（exe）所在文件夹的绝对路径 —— 设置页把「自定义输出目录 / 预设配置文件路径」显示成

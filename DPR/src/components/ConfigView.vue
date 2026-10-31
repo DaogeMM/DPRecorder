@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, toRefs, watch, type Ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, toRefs, watch } from 'vue';
 import { useStorage } from '@vueuse/core';
 
 import { useI18n } from 'vue-i18n';
@@ -30,6 +30,7 @@ import { RULES, toast, anyFilter, toastError } from '../common';
 import { isOptionalAppendant } from '../appendant';
 import { DEFAULT_RENDER_CONFIG, type Preset, type RenderConfig } from '../model';
 import { useRenderConfig } from '../config/useRenderConfig';
+import { useChartModOrder } from '../config/chartModOrder';
 import { jumpToFirstError } from '../formError';
 import type { WorkingState } from '../config/types';
 
@@ -270,85 +271,26 @@ watch(
 );
 
 /* ---------- 「谱面修改」六类互斥 + 按键那一类按勾选先后落地 ----------
- * 六类互斥：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 按键那一类（按键替换、随机、随机位置、
- * 长条填充、长条延长、复制音符）—— 同一时刻只有一类生效，勾上哪一类就把另外几类整个关掉
- * （见下面的 `closeOtherChartMods`）。
- * 按键那一类内部可以同时开多个：dps 按界面上勾选的先后逐个落地（配置里记在 `chartModOrder`），
- * 齿轮左边那个序号就是这个次序。所以这里只维护那张顺序表：
- *   - 勾上 → 追加到末尾；取消 → 从表里删掉（后面的序号自然往前挪）；
- *   - 载入预设 / 切页回来 / 手改的 config.toml 里可能带着「开着却没记进表」的项，按界面行序补到末尾
- *     （dps 那边也是同样的兜底规则，两边的次序才对得上）。
- * 序号 = 表里的下标 + 1；`chartModIndex()` 取不到就不传 badge，界面上没有序号。
- * 只有按键那一类有序号：另外几类各自都是单独一步。固定流速也在「测试」分区里（`sec-chart-test`），
- * 它把整张谱面的下落节奏换掉，和别的功能叠在一起没有意义，所以不进顺序表。
- * 「游玩分屏」不是改谱面的功能，不受影响，它的开关同样在那条隐藏的「测试」分区里。 */
-const chartModGroups: { key: string; flag: Ref<boolean> | undefined }[] = [
-  { key: 'pure', flag: pureConfigChart },
-  { key: 'lane', flag: fixedLaneChart },
-  { key: 'hide', flag: chartModHide },
-  { key: 'arrange', flag: chartModArrange },
-  { key: 'fixed_speed', flag: chartModFixedSpeed },
-];
-const chartMods: { key: string; flag: Ref<boolean> | undefined }[] = [
-  { key: 'replace', flag: chartModReplace },
-  { key: 'random', flag: chartModRandom },
-  { key: 'random_speed', flag: chartModRandomSpeed },
-  { key: 'random_pos', flag: chartModRandomPos },
-  { key: 'spread', flag: chartModSpreadHold },
-  { key: 'extend', flag: chartModExtendHold },
-  { key: 'copy', flag: chartModCopy },
-];
-/** 勾上某一类时，把另外四类整个关掉（`opened` 是这一次被勾上的那个开关）。 */
-function closeOtherChartMods(opened: Ref<boolean> | undefined) {
-  const inMods = chartMods.some((it) => it.flag === opened);
-  for (const group of chartModGroups) {
-    if (!inMods && group.flag === opened) continue;
-    if (group.flag?.value) group.flag.value = false;
-  }
-  if (inMods) return;
-  for (const mod of chartMods) if (mod.flag?.value) mod.flag.value = false;
-}
-function chartModOrderList(): string[] {
-  // `toRefs(ui)` 的索引签名让这个名字在类型上可能是 undefined；这里只读，
-  // 写回统一走下面的 watch / syncChartModOrder（模板里每帧都会问一遍序号，不能在这里改状态）
-  return chartModOrder?.value ?? [];
-}
-/** 这一项在顺序表里的位置（1 起）；没开 / 不在表里就是 undefined。 */
-function chartModIndex(key: string): number | undefined {
-  const index = chartModOrderList().indexOf(key);
-  return index < 0 ? undefined : index + 1;
-}
-/** 让顺序表只留下「开着的项」、并按界面行序补齐漏记的那些（预设与手改配置里可能没有这张表）。 */
-function syncChartModOrder() {
-  if (!chartModOrder) return;
-  const list = chartModOrderList();
-  const enabled = chartMods.filter((it) => it.flag?.value).map((it) => it.key);
-  const next = list.filter((it) => enabled.includes(it));
-  for (const key of enabled) if (!next.includes(key)) next.push(key);
-  if (next.length !== list.length || next.some((it, i) => it !== list[i])) chartModOrder.value = next;
-}
-for (const group of chartModGroups) {
-  if (!group.flag) continue;
-  watch(group.flag, (value) => {
-    if (value) closeOtherChartMods(group.flag);
-  });
-}
-for (const mod of chartMods) {
-  if (!mod.flag) continue;
-  watch(mod.flag, (value) => {
-    if (value) closeOtherChartMods(mod.flag);
-    if (!chartModOrder) return;
-    if (!chartModOrder.value) chartModOrder.value = [];
-    const list = chartModOrder.value;
-    const index = list.indexOf(mod.key);
-    if (value) {
-      if (index < 0) list.push(mod.key);
-    } else if (index >= 0) {
-      list.splice(index, 1);
-    }
-  });
-}
-syncChartModOrder();
+ * 规则（哪几类互斥、次序表怎么维护）搬到了 `../config/chartModOrder`，这里只把那一套 watch 挂上。
+ * 渲染页与 DPE 的谱面修改页（`../ChartModView.vue`）共用同一份实现 —— 两边读写的是同一张
+ * `chartModOrder`，规则只能有一处。
+ * 这一页的模板里不再有「谱面修改」那一块（它的控件搬去 DPE 了），但字段本身仍属于渲染配置：
+ * 换页再存盘时这些值要原样写回，所以 ref 与顺序表的同步都不能删。 */
+const { chartModIndex, syncChartModOrder } = useChartModOrder({
+  chartModOrder,
+  pureConfigChart,
+  fixedLaneChart,
+  chartModHide,
+  chartModArrange,
+  chartModFixedSpeed,
+  chartModReplace,
+  chartModRandom,
+  chartModRandomSpeed,
+  chartModRandomPos,
+  chartModSpreadHold,
+  chartModExtendHold,
+  chartModCopy,
+});
 
 /* ---------- 「宽 : 高」是配置里的一个比值 ----------
  * 配置（`aspectRatio`）里只存一个数，界面上是并排的两个框，所以这里另存两个**本地** ref
@@ -830,8 +772,8 @@ defineExpose({
                进 config.toml，也出现在批量页的预设弹窗里。 -->
           <CfgSwitch :label="t('info.force-aspect-ratio')" v-model="forceAspectRatio" :tip="t('info.force-aspect-ratio-tip')"></CfgSwitch>
           <CfgSwitch :label="t('info.fold-animation')" v-model="foldAnimation" :tip="t('info.fold-animation-tip')"></CfgSwitch>
-          <!-- 「谱面修改」那九个功能都收在谱面组的「谱面修改」（`sec-chart-mod`）里：每个功能一行，
-               开关就是行首那个 ✅/❌，参数在齿轮弹窗里。 -->
+          <!-- 「谱面修改」那一整块控件已经搬到 DPE 的谱面修改页（`../ChartModView.vue`）：
+               它改的是同一份渲染配置，所以这里的字段与顺序表同步都还留着。 -->
           <!-- ===== 文本框在后 ===== -->
           <!-- 「偏移」与「总分」不在本分区：「渲染参数」的空状态（未导入谱面）里也能改。 -->
           <CfgField :label="t('resolution')" :tip="t('resolution-tip')">
@@ -1044,19 +986,28 @@ defineExpose({
           <CfgField :label="t('block-area-edge-noise')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-edge-noise-tip')" v-model="blockAreaEdgeNoise" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
         </div>
       </PhiSection>
+
+      <!-- ===== 更多（谱面组的尾巴）=====
+           本二级分区收着：
+           - 「谱面进水」三级菜单行：✅/❌ 就是 `waterScreen`（配置值，与预设一起存），
+             11 个参数（`WaterScreenSettings`）收进齿轮弹窗。这一行只占**一格**（一行三个里的第一个）；
+           - 判定范围三级菜单行 / 判定模式 / 判定偏移；
+           - 从「噪域」搬来的两项：岩浆噪域（`blockAreaLava`）与
+             强制定位（`blockAreaForcePosition` 三级菜单行），排在「判定模式」之前。
+           本分区按全项目惯例排：勾选框与三级菜单行在前，文本框（判定模式 / 判定偏移 /
+           速度 / 上隐）在后。 -->
       <!-- ===== 谱面修改 =====
            这些功能同属一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏
            走的是同一份转换，dps 里的入口只有一个（`Chart::apply_chart_mods`）。
-           **五类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 按键那一类，同一时刻只有一类
-           生效 —— 勾上哪一类，另外四类整个关掉（见上面 `closeOtherChartMods`）。这五类各自都是把整张
-           谱面重排一遍（或整体改可见性），叠在一起只会互相覆盖，所以不给选。
+           **六类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 按键那一类，同一时刻
+           只有一类生效 —— 勾上哪一类，另外几类整个关掉（见 `config/chartModOrder`）。这几类各自都是把
+           整张谱面重排一遍（或整体改可见性），叠在一起只会互相覆盖，所以不给选。
            按键那一类（按键替换、随机、随机位置、长条填充、长条延长、复制音符）内部**可以同时开**，
            落地顺序就是界面上勾选的先后：勾上的那一项追加到顺序表末尾，齿轮左边那个数字就是它在这一次
-           转换里的次序（见上面 `chartMods` 的 watch 与 `chartModIndex`）。配置里记着这张表
-           （`chartModOrder`），dps 按同一个次序逐个落地 —— 先开哪个，后面的功能就在它改完的谱面上再
-           改一遍。载入预设 / 手改 config.toml 里没这张表时按下面这个行序补齐。
-           只有按键那一类有齿轮序号；纯配置谱面、隐藏按键、陈列按键与（隐藏的「测试」分区里的）定轨
-           谱面都是单独一步。每一行左边 ✅/❌ 是这一项的开关、齿轮里是它的参数。 -->
+           转换里的次序。配置里记着这张表（`chartModOrder`），dps 按同一个次序逐个落地 —— 先开哪个，
+           后面的功能就在它改完的谱面上再改一遍。载入预设 / 手改 config.toml 里没这张表时按下面这个行序补齐。
+           只有按键那一类有齿轮序号；纯配置谱面、隐藏按键、陈列按键都是单独一步。每一行左边 ✅/❌ 是
+           这一项的开关、齿轮里是它的参数。 -->
       <PhiSection id="sec-chart-mod" :title="t('title.chart-mod')">
         <div class="cfg-grid">
           <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
@@ -1134,15 +1085,6 @@ defineExpose({
         </div>
       </PhiSection>
 
-      <!-- ===== 更多（谱面组的尾巴）=====
-           本二级分区收着：
-           - 「谱面进水」三级菜单行：✅/❌ 就是 `waterScreen`（配置值，与预设一起存），
-             11 个参数（`WaterScreenSettings`）收进齿轮弹窗。这一行只占**一格**（一行三个里的第一个）；
-           - 判定范围三级菜单行 / 判定模式 / 判定偏移；
-           - 从「噪域」搬来的两项：岩浆噪域（`blockAreaLava`）与
-             强制定位（`blockAreaForcePosition` 三级菜单行），排在「判定模式」之前。
-           本分区按全项目惯例排：勾选框与三级菜单行在前，文本框（判定模式 / 判定偏移 /
-           速度 / 上隐）在后。 -->
       <PhiSection id="sec-more-chart" :title="t('more')">
         <div class="cfg-grid">
           <!-- 透明度染色：普通条目（不是三级菜单行），与下面的「谱面进水」同处一个网格。 -->

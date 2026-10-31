@@ -742,10 +742,10 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
                Tip 排在简介正下方。
                这个网格里全是 `full` 条目，`design/config.css:55-60` 的 `:has()` 规则会给它去掉栏间竖线。 -->
           <div class="cfg-grid">
-            <CfgField :label="t('info.intro')" full>
+            <CfgField :label="t('info.intro')" class="cfg-item--intro" full>
               <v-text-field type="text" density="compact" hide-details="auto" v-model="chartInfo.intro"></v-text-field>
             </CfgField>
-            <CfgField :label="t('info.tip')" full>
+            <CfgField :label="t('info.tip')" class="cfg-item--tip" full>
               <v-textarea rows="1" auto-grow density="compact" hide-details="auto" :placeholder="t('info.tip-placeholder')" v-model="chartTip"></v-textarea>
             </CfgField>
           </div>
