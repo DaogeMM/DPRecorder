@@ -57,6 +57,15 @@ const {
   fixedLaneChart, chartModFixedSpeed,
 } = uiRefs;
 
+/**
+ * 「谱面融合」：把勾中的同一首歌的几个难度拼成一张谱面。
+ *
+ * 它不是渲染配置里的一项（dps 没有对应的开关，融合发生在生成这一步），所以开关只是本页的
+ * 局部状态、不随预设走；但互斥关系照样生效，规则与另外几类一样交给 `config/chartModOrder`。
+ * 定义在 `useChartModOrder` 之前：互斥表要在建表时就拿到这个 ref。
+ */
+const chartModMerge = ref(false);
+
 const { chartModIndex, syncChartModOrder } = useChartModOrder({
   chartModOrder,
   pureConfigChart,
@@ -64,6 +73,7 @@ const { chartModIndex, syncChartModOrder } = useChartModOrder({
   chartModHide,
   chartModArrange,
   chartModFixedSpeed,
+  chartModMerge,
   chartModReplace,
   chartModRandom,
   chartModRandomSpeed,
@@ -248,6 +258,7 @@ const isPureConfig = computed(() => slot('pureConfigChart') === true);
 /** 生效的修改名，按落地顺序 —— 文件名后缀与包里的难度文本都照它拼 */
 const modLabels = computed<string[]>(() => {
   if (isPureConfig.value) return [t('pure-config-chart')];
+  if (chartModMerge.value) return [t('chart-mod-merge')];
   return activeKeys.value.map((key) => t(MOD_LABELS[key] ?? key));
 });
 
@@ -266,14 +277,56 @@ const generateSuffix = computed(() => {
 });
 
 const canGenerate = computed(
-  () => selectedPaths.value.length > 0 && (isPureConfig.value || activeKeys.value.length > 0),
+  () =>
+    selectedPaths.value.length > 0 &&
+    (isPureConfig.value || chartModMerge.value || activeKeys.value.length > 0),
 );
 
 const generating = ref(false);
 
+/**
+ * 「谱面融合」：判据与批量页的融合一致 —— 至少两张、曲名与音乐文件都对得上。
+ *
+ * 这几句先在前端判一遍只为能说清是哪两张对不上（后端 `dpe_merge_charts` 还会再判一次）。
+ */
+async function generateMerged() {
+  const picked = chartList.value.filter((chart) => chart.isSelect);
+  if (picked.length < 2) {
+    toastError(t('merge-need-two'));
+    return;
+  }
+  const base = picked[0];
+  if (!base) return;
+  const sameSong = (chart: RenderChart) =>
+    (chart.chartInfo.name ?? '').trim() === (base.chartInfo.name ?? '').trim() &&
+    (chart.chartInfo.music ?? '').trim() === (base.chartInfo.music ?? '').trim();
+  if (!picked.every(sameSong)) {
+    toastError(t('merge-not-same-song'));
+    return;
+  }
+
+  generating.value = true;
+  try {
+    const made = (await invoke('dpe_merge_charts', {
+      paths: picked.map((chart) => chart.path),
+    })) as string;
+    await refreshOutputs();
+    toast(t('generate-done', { name: made.split(/[\\/]/).pop() ?? '' }), 'success');
+  } catch (error) {
+    toastError(error);
+  } finally {
+    generating.value = false;
+  }
+}
+
 async function generate() {
   if (!canGenerate.value) {
     toast(t('generate-need'), 'warning');
+    return;
+  }
+  // 谱面融合是另一条路：先把勾中的谱面拼成一张，再写进本页的输出目录（不走逐张改的那条）
+  if (chartModMerge.value) {
+    await generateMerged();
     return;
   }
   const entries: Record<string, unknown> = {};
@@ -346,9 +399,9 @@ onMounted(async () => {
       <!-- ===== 谱面修改 =====
            这些功能同属一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏
            走的是同一份转换，dps 里的入口只有一个（`Chart::apply_chart_mods`）。
-           **六类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 按键那一类，同一时刻
-           只有一类生效 —— 勾上哪一类，另外几类整个关掉（见 `config/chartModOrder`）。这几类各自都是把
-           整张谱面重排一遍（或整体改可见性），叠在一起只会互相覆盖，所以不给选。
+           **七类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 谱面融合 / 按键那一类，
+           同一时刻只有一类生效 —— 勾上哪一类，另外几类整个关掉（见 `config/chartModOrder`）。这几类各自
+           都是把整张谱面重排一遍（或整体改可见性），叠在一起只会互相覆盖，所以不给选。
            按键那一类（按键替换、随机、随机位置、长条填充、长条延长、复制音符）内部**可以同时开**，
            落地顺序就是界面上勾选的先后：勾上的那一项追加到顺序表末尾，齿轮左边那个数字就是它在这一次
            转换里的次序。配置里记着这张表（`chartModOrder`），dps 按同一个次序逐个落地 —— 先开哪个，
@@ -391,6 +444,11 @@ onMounted(async () => {
               <CfgField :label="t('chart-mod-arrange-speed')" :tip="t('chart-mod-arrange-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
             </div>
           </PhiSubMenu>
+          <!-- 「谱面融合」：把勾中的同一首歌的几个难度拼成一张谱面（判据与批量页的融合一致：
+               至少两张、曲名与音乐文件都对得上、格式相同），产出照样落在本页的输出表里。
+               整张拼一张，所以它和上面几类、下面按键那一类互斥；它不改 dps 的配置，
+               没有齿轮、没有序号，也不进 `chartModOrder`。 -->
+          <CfgSwitch :label="t('chart-mod-merge')" :tip="t('chart-mod-merge-tip')" v-model="chartModMerge" />
           <!-- 「按键替换」是四组映射：每种源键型各一个下拉框，选成它自己就等于不动。 -->
           <PhiSubMenu id="sec3-chart-mod-replace" :label="t('chart-mod-replace')" :tip="t('chart-mod-replace-tip')" :badge="chartModIndex('replace')" v-model="chartModReplace">
             <div class="cfg-grid">

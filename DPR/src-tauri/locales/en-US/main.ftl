@@ -4,8 +4,9 @@ tray-show = Show window
 tray-tasks = Tasks
 tray-quit = Quit
 
-read-chart-failed = Failed to read chart
-load-info-failed = Failed to load chart info
+read-chart-failed = Failed to read chart: { $path }
+load-info-failed = Failed to load chart info: { $path }
+read-asset-failed = Failed to read a file inside the chart: { $path }
 
 preset-exists = Preset with the same name already exists
 preset-not-found = Specified preset not found

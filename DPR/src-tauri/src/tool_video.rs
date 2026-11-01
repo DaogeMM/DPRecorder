@@ -165,7 +165,7 @@ pub struct ChartReport {
 
 async fn wrap<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<T, InvokeError> {
     future.await.map_err(|e| {
-        tracing::error!("{e:?}");
+        tracing::error!("[命令] 执行失败：{}", crate::common::error_chain(&e));
         InvokeError::from_anyhow(e)
     })
 }

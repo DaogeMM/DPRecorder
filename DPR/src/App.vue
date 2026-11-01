@@ -43,7 +43,8 @@ import type { Release, Assets, Task } from './model';
 import { open } from '@tauri-apps/plugin-shell';
 import { useTheme } from 'vuetify';
 import { getCurrentWindow, ProgressBarStatus } from '@tauri-apps/api/window';
-import { toast, openExternal, changeLocale } from './common';
+import { getVersion } from '@tauri-apps/api/app';
+import { toast, openExternal } from './common';
 import { applyPhiTheme } from './design/theme';
 import { sectionGateState } from './config/sectionGate';
 import TaskStrip from './components/TaskStrip.vue';
@@ -52,6 +53,8 @@ import { useTasks } from './tasks';
 import { pageReady } from './pageLoad';
 import { PARTS, usePart, type PartId } from './parts';
 const appWindow = getCurrentWindow();
+/** 标题栏上显示的版本号：取自 `src-tauri/Cargo.toml` 的 `version`（`tauri.conf.json` 里没有版本号） */
+const appVersion = ref('');
 const theme = useTheme();
 
 // 批量页的谱面列表、所选预设，连同弹窗里改过的谱面信息都要作为界面记忆留下来
@@ -412,13 +415,14 @@ async function checkFFmpegFilter() {
     }
 }
 
-/** 界面语言：`main.ts` 建 i18n 时已按存储设过一次；这里挂载时再对齐一次 —— HMR 与模块
- *  重载可能让 vue-i18n 停在旧语言上（设置页显示简体中文、界面却还是英文）。 */
-const locale = useStorage<string>('locale', 'zh-CN');
-
 onMounted(async () => {
-  changeLocale(locale.value);
   checkFFmpegFilter();
+  try {
+    appVersion.value = await getVersion();
+  } catch (error) {
+    // 拿不到就当没有版本号，标题栏少一段字，不影响别的功能
+    console.error('Error reading app version:', error);
+  }
 
   document.addEventListener('scroll', onAnyScroll, true);
 });
@@ -458,13 +462,14 @@ onUnmounted(() => {
 
 <template>
   <v-app id="dpr">
-    <v-sonner position="top-center" />
+    <v-sonner position="bottom-right" />
 
     <!-- 标题栏：整条可拖拽。左边是 DPR / DPE 切换器（挨着 DPRecorder 名字），右边是窗口按钮 -->
     <header class="phi-titlebar" data-tauri-drag-region>
       <div class="phi-titlebar__brand" data-tauri-drag-region>
         <img src="./assets/favicon.png" alt="icon" class="phi-titlebar__logo" />
         <span class="phi-titlebar__name">DPRecorder</span>
+        <span v-if="appVersion" class="phi-titlebar__version">v{{ appVersion }}</span>
       </div>
       <div class="phi-parts" role="tablist">
         <button
@@ -705,6 +710,14 @@ html {
   font-size: var(--phi-font-size-secondary);
   font-weight: 600;
   color: var(--phi-label-primary);
+  letter-spacing: 0.02em;
+}
+
+/* 版本号挨着名字，比名字小一号、颜色更淡，不抢名字的注意力 */
+.phi-titlebar__version {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--phi-label-caption);
   letter-spacing: 0.02em;
 }
 
@@ -1208,5 +1221,22 @@ html::-webkit-scrollbar {
 
 .shake-distort {
   animation: shake-distort 1s ease-in-out infinite;
+}
+
+/* ---------- 提示弹窗（`<v-sonner>`） ----------
+   库默认把右下角的提示从下方顶上来；这里改成从右边滑进来，并整体抬高 10% 视口高度，
+   免得贴着窗口底边、也避开 DPE 右下角那条「已选谱面」悬浮条。
+   sonner 的样式是运行时注入的，所以选择器多带一层 `#dpr` 才压得住，不用 `!important`。 */
+#dpr [data-sonner-toaster][data-y-position='bottom'] {
+  bottom: calc(var(--offset, 32px) + 5vh);
+}
+
+#dpr [data-sonner-toast][data-mounted='false'] {
+  transform: translateX(120%);
+}
+
+/* 收起时也往右退（只改正要消失的那一张，后面排队的不受影响） */
+#dpr [data-sonner-toast][data-removed='true'][data-front='true'] {
+  --y: translateX(120%);
 }
 </style>

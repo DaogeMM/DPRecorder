@@ -30,7 +30,7 @@ fn main() {
     let args = match cmd::Args::parse(std::env::args().skip(1)) {
         Ok(args) => args,
         Err(err) => {
-            eprintln!("[dpe] {err}\n\n{}", cmd::USAGE);
+            eprintln!("[命令行] {err}\n\n{}", cmd::USAGE);
             exit(2);
         }
     };
@@ -41,7 +41,7 @@ fn main() {
     let conf = preview::window_conf(&args);
     macroquad::Window::from_config(conf, async move {
         if let Err(err) = preview::run(args).await {
-            eprintln!("[dpe] 预览失败：{err:?}");
+            eprintln!("[预览] 失败：{err:#}");
             exit(1);
         }
     });

@@ -138,7 +138,7 @@ pub async fn run(args: Args) -> Result<()> {
                         Ok(()) => playback.pending = true,
                         Err(err) => {
                             // 改谱面写到一半时解析失败是常事，报一下继续跑，别把预览关掉
-                            eprintln!("[dpe] 热重载失败：{err:?}");
+                            eprintln!("[预览] 热重载失败：{err:#}");
                             protocol::emit(serde_json::json!({
                                 "ev": "error",
                                 "what": "reload",
@@ -243,7 +243,7 @@ async fn reload(
     if let Some(old) = format {
         // 换了格式的话旋律线长度这类按格式算出来的东西要重启预览才会跟着变
         if std::mem::discriminant(old) != std::mem::discriminant(&new_format) {
-            eprintln!("[dpe] 谱面格式变了，旋律线长度等设置要重启预览才会生效");
+            eprintln!("[预览] 谱面格式变了，旋律线长度等设置要重启预览才会生效");
         }
     }
     *format = Some(new_format);

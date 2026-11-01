@@ -5,7 +5,10 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
 };
 use tracing::{field::Visit, Level, Subscriber};
 use tracing_subscriber::{prelude::*, EnvFilter, Layer};
@@ -23,6 +26,36 @@ static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// 第一次设的那个生效，之后再调用不会换文件（同一个进程只有一份日志）。
 pub fn set_log_file_path(path: PathBuf) {
     let _ = LOG_PATH.set(path);
+}
+
+static CONSOLE_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// 设置「输出日志到控制台」：`false` 时只拦终端那一路，日志文件与「输出」面板照旧。
+///
+/// 关掉后**信息与调试**不打终端，**警告与错误仍然打** —— 这个开关是为了清掉进度那类刷屏，
+/// 不是让人看不见出错。
+pub fn set_console_enabled(enabled: bool) {
+    CONSOLE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// 终端那一路现在开着没有（见 `set_console_enabled`）。
+pub fn console_enabled() -> bool {
+    CONSOLE_ENABLED.load(Ordering::Relaxed)
+}
+
+static CONSOLE_DEBUG: AtomicBool = AtomicBool::new(false);
+
+/// 设置终端是否显示 DEBUG / TRACE：默认不显示，只写进日志文件。
+///
+/// 解复用、字体缓存这类第三方库会按帧打调试行，全打到控制台会把真正的进度与错误冲掉。
+/// 设了 `RUST_LOG` 的进程按「详细」处理 —— 愿意自己配过滤规则的人本来就想要细节。
+pub fn set_console_debug(enabled: bool) {
+    CONSOLE_DEBUG.store(enabled, Ordering::Relaxed);
+}
+
+/// 终端现在显示不显示 DEBUG / TRACE（见 `set_console_debug`）。
+pub fn console_debug() -> bool {
+    CONSOLE_DEBUG.load(Ordering::Relaxed)
 }
 
 /// 往日志文件里追加一行；没设路径就只打终端。
@@ -113,6 +146,25 @@ where
         }
         write_log_file(&plain);
 
+        // 终端那一路按开关拦掉信息与调试（警告与错误照旧）；文件已经写完了。
+        if !console_enabled() && *meta.level() != Level::WARN && *meta.level() != Level::ERROR {
+            return;
+        }
+
+        // 控制台默认只留本程序自己的 INFO 及以上：解复用器、字体缓存这些第三方库的调试行
+        // 会把真正的进度与错误冲掉。它们照旧写进日志文件，配了 `RUST_LOG` 就全放出来。
+        if !console_debug() {
+            if matches!(*meta.level(), Level::TRACE | Level::DEBUG) {
+                return;
+            }
+            let target = meta.target();
+            let ours =
+                target.starts_with("dpr") || target.starts_with("dpe") || target.starts_with("dps");
+            if !ours && *meta.level() != Level::WARN && *meta.level() != Level::ERROR {
+                return;
+            }
+        }
+
         #[cfg(not(target_os = "android"))]
         let mut msg = format!("{} ", timestamp.bright_black())
             + &match *meta.level() {
@@ -150,6 +202,8 @@ where
 }
 
 pub fn register() {
+    // 没配 `RUST_LOG` 的控制台只到 INFO：调试行照旧写进日志文件
+    set_console_debug(std::env::var("RUST_LOG").is_ok());
     let filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else {
@@ -160,6 +214,7 @@ pub fn register() {
 
 pub fn register_with_colorize(override_colorize: bool) {
     colored::control::set_override(override_colorize);
+    set_console_debug(std::env::var("RUST_LOG").is_ok());
     let filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else {

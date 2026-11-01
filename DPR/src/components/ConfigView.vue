@@ -67,7 +67,7 @@ const NOTE_DEBUG_FIELDS = ['line', 'time', 'height', 'base', 'angle', 'speed', '
 //    （三级菜单的齿轮弹窗里是**两栏**，那段覆盖写在 PhiSubMenu.vue 的 scoped 样式里。）
 //    控件的 :disabled 要写**整条上级链**（例 `!renderBg || !renderBgDim` —— 上级被禁用后
 //    它自己的值仍然留着），并登记到下面那段「功能之间的先后关系」注释里。
-// 4. i18n：src/locales/zh-CN/config.json 与 src/locales/en/config.json **都要**加标签键。
+// 4. i18n：界面只有简体中文，标签键加在 src/locales/zh-CN/config.json。
 // 5. 改完跑 `node node_modules/vue-tsc/bin/vue-tsc.js --noEmit -p tsconfig.app.json --composite false`
 //    （本仓库没有测试套件；模板也会一起被检查，所以改完 .vue 必须跑这个）。
 

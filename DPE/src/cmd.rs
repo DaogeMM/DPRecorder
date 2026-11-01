@@ -149,7 +149,7 @@ fn resolve_respack(path: Option<String>) -> Option<String> {
         if complete(Path::new(path)) {
             return Some(path.clone());
         }
-        eprintln!("[dpe] 皮肤包 {path} 不完整，改用 appendant 里的默认皮肤");
+        eprintln!("[资源包] 皮肤包 {path} 不完整，改用 appendant 里的默认皮肤");
     }
     appendant::pack(appendant::OFFICIAL)
         .filter(|pack| complete(pack))

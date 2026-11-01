@@ -6,11 +6,11 @@ import { useStorage } from '@vueuse/core';
  * DPRecorder 只有一个窗口：标题栏里 `DPRecorder` 名字右边的切换器决定窗口里放哪一部分，
  * 左栏一级导航、切换时落到的首页路由都按当前部分走（见 `App.vue` 的 `currentPart` / `switchPart`）。
  *
- * - DPR：录制器（渲染 / 任务）。
- * - DPE：谱面编辑器（批量页 / 谱面修改 / 噪域播放器），改谱面时另开 `dpe.exe` 预览进程看效果
- *   （见 `DPE/README.md`）。
- *
- * 移动端的 DPS 是第三部分，但它的界面要另做一套，不进这个窗口的切换器。
+ * 三个部分的全称（界面上只写缩写，全称留在这里）：
+ * - DPR = DPRender：录制器（渲染 / 任务）。
+ * - DPE = DPEdit：谱面编辑器（批量页 / 谱面修改 / 噪域播放器），改谱面时另开 `dpe.exe` 预览
+ *   进程看效果（见 `DPE/README.md`）。
+ * - DPS = DPSimulator：移动端的第三部分，但它的界面要另做一套，不进这个窗口的切换器。
  */
 export type PartId = 'dpr' | 'dpe';
 

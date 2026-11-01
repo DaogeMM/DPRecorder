@@ -92,7 +92,7 @@ pub fn build_conf(headless: bool) -> macroquad::window::Conf {
 #[inline]
 async fn wrap_async<R>(f: impl Future<Output = Result<R>>) -> Result<R, InvokeError> {
     f.await.map_err(|e| {
-        error!("{e:?}");
+        error!("[命令] 执行失败：{}", common::error_chain(&e));
         InvokeError::from_anyhow(e)
     })
 }
@@ -100,7 +100,7 @@ async fn wrap_async<R>(f: impl Future<Output = Result<R>>) -> Result<R, InvokeEr
 fn run_wrapped(f: impl Future<Output = Result<()>> + 'static, headless: bool) {
     macroquad::Window::from_config(build_conf(headless), async {
         if let Err(err) = f.await {
-            error!("{err:?}");
+            error!("[进程] 执行失败：{}", common::error_chain(&err));
             exit_program(1);
         }
     });
@@ -126,50 +126,40 @@ fn hide_cmd() {
 /// Tauri 在**建窗口前**会把 WebView2 的用户数据目录强制设成 `app_local_data_dir()`
 /// （Windows 上就是 `%LOCALAPPDATA%\com.daogemm.dpr`），并且**无条件 `create_dir_all` 它**
 /// （`tauri-2.12.2/src/manager/webview.rs:562-577`）——那个目录建不出来就 `?` 直接 panic：
-/// `Failed to setup app: 拒绝访问。 (os error 5)`。受限环境（沙箱、受控文件夹、只读配置）里
-/// 写不进 `%LOCALAPPDATA%`，所以这里提前做两件事：
-///   ① 尽力把标准目录先建出来（建成功了 Tauri 那步就是空操作）；
-///   ② 标准目录不可用时，用 `WEBVIEW2_USER_DATA_FOLDER` 把 WebView2 引到 exe 同级的 `webview2/`
-///      （便携：拷走整个文件夹连界面状态一起走，且一定写得进去）。
+/// `Failed to setup app: 拒绝访问。 (os error 5)`。
+///
+/// 所以这里在 Builder 之前就用 `WEBVIEW2_USER_DATA_FOLDER` 把 WebView2 引到 **exe 同级的
+/// `webview2/`**：程序整目录拷到别处连界面状态（语言、谱面列表、面板位置）一起走，也不依赖
+/// `%LOCALAPPDATA%` 的写权限。exe 所在目录写不进去（装进 Program Files 之类）才退回标准目录。
 #[cfg(target_os = "windows")]
 fn ensure_webview_data_dir(exe_dir: &Path) {
     // 这个函数整个都在日志器注册**之前**跑（tauri-plugin-log 在 Builder::build() 里才装上），
     // 所以诊断信息一律直接走 stderr，跟 resolve_user_dir 一个道理。
-    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
-        let standard = local.join("com.daogemm.dpr");
-        if !standard.exists() {
-            match std::fs::create_dir_all(&standard) {
-                Ok(()) => eprintln!("已预建 WebView2 标准数据目录 {}", standard.display()),
-                Err(e) => eprintln!(
-                    "警告: WebView2 标准数据目录 {} 建不出来（{e}），改用 exe 同级目录",
-                    standard.display()
-                ),
-            }
-        }
-    }
     if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
         return;
     }
-    let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) else {
-        return;
-    };
-    let standard = local.join("com.daogemm.dpr");
-    if common::is_dir_writable(&standard) {
+    let portable = exe_dir.join("webview2");
+    if std::fs::create_dir_all(&portable).is_ok() && common::is_dir_writable(&portable) {
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &portable);
         return;
     }
-    let fallback = exe_dir.join("webview2");
-    if common::is_dir_writable(&fallback) {
-        let _ = std::fs::create_dir_all(&fallback);
-        eprintln!(
-            "警告: WebView2 默认数据目录不可写，改用 {}",
-            fallback.display()
-        );
-        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &fallback);
-    } else {
-        eprintln!(
-            "警告: WebView2 默认数据目录与 {} 都不可写，界面可能无法显示",
-            fallback.display()
-        );
+    // 退路：标准目录。它也建不出来的话 Tauri 那一步会 panic，所以这里先试一次并说明原因。
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        let standard = local.join("com.daogemm.dpr");
+        match std::fs::create_dir_all(&standard) {
+            Ok(()) => crate::console!(
+                warn,
+                "[WebView2] {} 不可写，改用 {}",
+                portable.display(),
+                standard.display()
+            ),
+            Err(e) => crate::console!(
+                error,
+                "[WebView2] {} 与 {} 都不可用（{e}），界面可能无法显示",
+                portable.display(),
+                standard.display()
+            ),
+        }
     }
 }
 
@@ -191,15 +181,17 @@ fn resolve_user_dir(preferred: PathBuf, fallback: PathBuf, migrate: bool) -> Pat
     }
     if std::fs::create_dir_all(&fallback).is_ok() && common::is_dir_writable(&fallback) {
         // 这条要在日志器注册**之前**就出来，所以直接走 stderr（正常的目录选择是静默的）
-        eprintln!(
-            "警告: {} 不可写，改用 {}",
+        crate::console!(
+            warn,
+            "[目录] {} 不可写，改用 {}",
             preferred.display(),
             fallback.display()
         );
         return fallback;
     }
-    eprintln!(
-        "警告: {} 与 {} 都不可写，设置与输出可能失败",
+    crate::console!(
+        error,
+        "[目录] {} 与 {} 都不可写，设置与输出可能失败",
         preferred.display(),
         fallback.display()
     );
@@ -248,6 +240,13 @@ fn copy_dir_if_absent(from: &Path, to: &Path) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() -> Result<()> {
+    common::init_console();
+
+    // 文案只有简体中文：不让 `sys_locale` 挑（英文系统上会挑到 en-US，提示就成英文了）。
+    // 放在最前面 —— 下面任何 `mtl!` / `tl!` 都比这里晚。
+    let zh_cn: dps::l10n::LanguageIdentifier = "zh-CN".parse()?;
+    dps::l10n::set_prefered_locale(Some(zh_cn));
+
     // 必须在 tauri::Builder::build() 之前设置
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -345,6 +344,7 @@ pub fn run() -> Result<()> {
                 tool_video::tool_video_reveal,
         tool_video::tool_video_outputs,
                 merge::merge_charts,
+                merge::dpe_merge_charts,
             ])
             .on_window_event(|_, event| match event {
                 //WindowEvent::CloseRequested { api, .. } => {
@@ -423,6 +423,21 @@ pub fn run() -> Result<()> {
     let config = common::read_config()?;
     let is_gui = std::env::args().len() == 1;
 
+    // 上次的队列等配置目录登记好之后再读回：`TaskQueue::new()` 比这里早，那时还没有
+    // `CONFIG_DIR`，读不到 tasks.json。只有 GUI 进程管这个队列 —— CLI 的渲染 / 预览进程
+    // 不该去读它，更不该把别人的任务标成中断。
+    if is_gui {
+        app.state::<TaskQueue>().start_restore();
+    }
+
+    // 「输出日志到控制台」：渲染子进程的 stderr 是「输出」面板的来源，它必须照打；其余进程
+    // （GUI 主进程、预览 / 试玩 / 校准偏移子进程）按设置里的开关来。
+    let render_role = matches!(
+        std::env::args().nth(1).as_deref(),
+        Some("render") | Some("--render") | Some("-r")
+    );
+    common::set_console_log(render_role || config.print_stderr);
+
     // tempfile（视频落盘、音频混流、封面）以及 ffmpeg 等子进程全都走 std::env::temp_dir()。
     // 根目录：设置里填了临时目录就用它（和 `common::temp_root` 同一处判断），否则用
     // `<exe 目录>/tmp`（和 config/respack/output 一样挨着 exe，用户看得见、好清理，也不会把
@@ -444,11 +459,12 @@ pub fn run() -> Result<()> {
             if system != dir {
                 std::env::set_var("TMP", &dir);
                 std::env::set_var("TEMP", &dir);
-                info!("临时目录改用 {}", dir.display());
+                info!("[临时目录] 改用 {}", dir.display());
             }
         } else if !common::is_dir_writable(&system) {
-            eprintln!(
-                "警告: 临时目录 {} 与 {} 都不可写，后续临时文件写入会失败",
+            crate::console!(
+                error,
+                "[临时目录] {} 与 {} 都不可写，后续临时文件写入会失败",
                 dir.display(),
                 system.display()
             );
@@ -458,28 +474,58 @@ pub fn run() -> Result<()> {
     // GUI 进程始终开订阅：它得把日志写进文件。「显示详细日志」只决定渲染子进程往 stderr
     // 打多细 —— 「输出」面板里看到的就是子进程 stderr。
     if is_gui || config.show_detailed_log {
-        log::register_with_colorize(true);
+        // GUI 自己与「输出」面板里的子进程都强制带颜色码：前者常被 .bat 或重定向接走，后者
+        // 的 stderr 是管道，按 tty 判断会漏掉颜色（父进程起它时塞了 `DPR_CONSOLE_ANSI`）。
+        // CLI 直接跑时交给日志层判断：接终端才上色，重定向到文件就干净。
+        if is_gui || std::env::var_os("DPR_CONSOLE_ANSI").is_some() {
+            log::register_with_colorize(true);
+        } else {
+            log::register();
+        }
     }
 
     // 只有 GUI 这个进程写日志文件：渲染子进程与 CLI 渲染只打 stderr，它们的 stderr
     // 由父进程收进「输出」面板，再逐行转写进同一份日志 —— 免得两个进程各写一遍。
     if is_gui {
         match common::init_log_file() {
-            Ok(path) => info!("日志文件 {}", path.display()),
-            Err(err) => warn!("日志文件不可用，只输出到终端: {err:?}"),
+            Ok(path) => info!("[日志] 日志文件 {}", path.display()),
+            Err(err) => warn!("[日志] 日志文件不可用，只输出到终端：{}", common::error_chain(&err)),
         }
+
+        // 启动横幅：一行说清版本和三个别人会去翻的目录。从 .bat 起的时候，控制台里至少能
+        // 看出跑的是哪一份程序、配置与输出落在哪儿。它不受「输出日志到控制台」开关管 ——
+        // 那个开关默认关着，否则启动时控制台一行都没有，看着像没起来。
+        eprintln!(
+            "dpr {} · 配置 {} · 输出 {} · 日志 {}",
+            env!("CARGO_PKG_VERSION"),
+            CONFIG_DIR
+                .get()
+                .map(|dir| dir.display().to_string())
+                .unwrap_or_default(),
+            common::default_output_dir()
+                .map(|dir| dir.display().to_string())
+                .unwrap_or_default(),
+            common::logs_dir()
+                .map(|dir| dir.display().to_string())
+                .unwrap_or_default(),
+        );
     }
 
     if std::env::args().len() > 1 {
         match std::env::args().nth(1).as_deref().unwrap_or_default() {
             "help" | "--help" | "-help" | "/help" | "-h" | "?" | "--?" | "-?" | "/?" => {
-                println!("Usage: dpr --render --input <input file> [options]");
-                println!("Usage: dpr --preview --input <input file> [options]");
-                println!("Options:");
-                println!("  --input   -i    <file/path>    Chart file");
-                println!("  --output  -o    <file/path>    Output file");
-                println!("  --config  -c    <file/json>    Config");
-                println!("  --info    -ci   </json>        Chart Info");
+                println!("用法: dpr --render --input <谱面文件> [选项]");
+                println!("      dpr --preview --input <谱面文件> [选项]");
+                println!("选项:");
+                println!("  --input   -i    <文件/路径>   谱面文件");
+                println!("  --output  -o    <文件/路径>   输出文件");
+                println!("  --config  -c    <文件/JSON>   配置");
+                println!("  --info    -ci   <JSON>        谱面信息");
+                println!("  --version -V                  版本号");
+                exit_program(0);
+            }
+            "version" | "--version" | "-V" | "-v" => {
+                println!("dpr {}", env!("CARGO_PKG_VERSION"));
                 exit_program(0);
             }
             "render" => {
@@ -507,11 +553,11 @@ pub fn run() -> Result<()> {
                 run_wrapped(preview::main(true, true, true), false);
             }
             cmd => {
-                info!("Command: {cmd:?}");
+                info!("[预览] 命令：{cmd:?}");
                 let args = std::env::args().nth(1).unwrap_or_default();
                 let path = Path::new(&args);
                 if path.is_file() || path.is_dir() {
-                    info!("Find a valid path, start preview");
+                    info!("[预览] 找到可用路径，开始预览");
                     run_wrapped(preview::main(true, false, true), false);
                     exit_program(0);
                 } else {
@@ -674,7 +720,7 @@ fn start_folder_via_cmd(path: &Path) -> anyhow::Result<String> {
 fn open_dir(path: String) -> Result<(), InvokeError> {
     (|| {
         let path = PathBuf::from(path);
-        info!("Opening folder: {}", path.display());
+        info!("[目录] 打开文件夹 {}", path.display());
         open_folder(&path)
     })()
     .map_err(InvokeError::from_anyhow)
@@ -728,7 +774,7 @@ fn reveal_path(path: &Path) -> Result<()> {
 fn reveal_in_dir(path: String) -> Result<(), InvokeError> {
     (|| {
         let path = PathBuf::from(path);
-        info!("Revealing in folder: {}", path.display());
+        info!("[目录] 在文件夹中定位 {}", path.display());
         reveal_path(&path)
     })()
     .map_err(InvokeError::from_anyhow)
@@ -741,7 +787,7 @@ fn open_output_folder() -> Result<(), InvokeError> {
         // 目录可能还没建出来（配置里指了个还没建的目录，或者程序目录下的 output/ 从来没写过东西）：
         // 先按「输出目录」的规矩建出来，explorer 打不开不存在的目录。
         common::test_output_dir(path.clone())?;
-        info!("Opening output folder: {}", path.display());
+        info!("[输出] 打开输出文件夹 {}", path.display());
         open_folder(&path)?;
         Ok(())
     })()
@@ -784,7 +830,7 @@ fn open_external(url: String) -> Result<(), InvokeError> {
             open_log(&format!("refused url={url}"));
             bail!("refused to open url: {}", url);
         }
-        info!("Opening external url: {}", url);
+        info!("[目录] 打开外部链接 {}", url);
         open_log(&format!("--- open_external url={url}"));
 
         let mut fails: Vec<String> = Vec::new();
@@ -945,11 +991,11 @@ fn open_log(line: &str) {
 #[tauri::command]
 async fn parse_chart(path: &Path) -> Result<ChartInfo, InvokeError> {
     wrap_async(async move {
-        let mut fs: Box<dyn FileSystem + Send + Sync + 'static> =
-            fs::fs_from_file(path).with_context(|| mtl!("read-chart-failed"))?;
+        let mut fs: Box<dyn FileSystem + Send + Sync + 'static> = fs::fs_from_file(path)
+            .with_context(|| mtl!("read-chart-failed", "path" => path.display().to_string()))?;
         let info = fs::load_info(fs.deref_mut())
             .await
-            .with_context(|| mtl!("load-info-failed"))?;
+            .with_context(|| mtl!("load-info-failed", "path" => path.display().to_string()))?;
         //let info_display = format!("{}\n", serde_json::to_string(&info)?);
         //info_display!("{:?}", info);
         Ok(info)
@@ -998,8 +1044,12 @@ async fn read_chart_asset(path: String, name: String) -> Result<tauri::ipc::Resp
             return Ok(tauri::ipc::Response::new(Vec::<u8>::new()));
         }
         let mut fs: Box<dyn FileSystem + Send + Sync + 'static> =
-            fs::fs_from_file(Path::new(&path)).with_context(|| mtl!("read-chart-failed"))?;
-        let bytes = fs.load_file(&name).await?;
+            fs::fs_from_file(Path::new(&path))
+                .with_context(|| mtl!("read-chart-failed", "path" => path.clone()))?;
+        let bytes = fs
+            .load_file(&name)
+            .await
+            .with_context(|| mtl!("read-asset-failed", "path" => format!("{path} / {name}")))?;
         Ok(tauri::ipc::Response::new(bytes))
     })
     .await
@@ -1024,7 +1074,8 @@ async fn dpe_preview(path: String, config: render::RenderConfig) -> Result<(), I
         prpr_config.volume_bgm = prpr_config.volume_music;
         prpr_config.interactive = false;
         let config_path = common::get_dpe_temp_dir()?.join("preview-config.json");
-        std::fs::write(&config_path, serde_json::to_vec(&prpr_config)?)?;
+        std::fs::write(&config_path, serde_json::to_vec(&prpr_config)?)
+            .with_context(|| format!("写入预览配置失败：{}", config_path.display()))?;
 
         let mut cmd = cmd_hidden(exe);
         cmd.arg("--input").arg(&path).arg("--play").arg("--standalone");
@@ -1054,7 +1105,7 @@ async fn preview_chart(params: RenderParams) -> Result<(), InvokeError> {
 
         let mut stdin = child.stdin.take().unwrap();
         let info = format!("{}\n", serde_json::to_string(&params)?);
-        info!("preview: {}", info);
+        info!("[预览] 参数：{}", info);
         stdin.write_all(info.as_bytes()).await?;
 
         Ok(())
@@ -1074,7 +1125,7 @@ async fn preview_tweakoffset(params: RenderParams) -> Result<Option<f32>, Invoke
 
         let mut stdin = child.stdin.take().unwrap();
         let info = format!("{}\n", serde_json::to_string(&params)?);
-        info!("preview tweakoffset: {}", info);
+        info!("[预览] 校准偏移参数：{}", info);
         stdin.write_all(info.as_bytes()).await?;
 
         // Read and process stdout to get the offset value
@@ -1094,7 +1145,7 @@ async fn preview_tweakoffset(params: RenderParams) -> Result<Option<f32>, Invoke
 
         let status = child.wait().await?;
         if !status.success() {
-            error!("Child process exited with {}", status);
+            error!("[预览] 子进程退出：{}", status);
         }
 
         Ok(offset)
@@ -1171,7 +1222,7 @@ async fn spawn_play_child(params: &RenderParams, split: Option<(&str, u16)>) -> 
 
     let mut stdin = child.stdin.take().unwrap();
     let info = format!("{}\n", serde_json::to_string(params)?);
-    info!("preview play: {}", info);
+    info!("[预览] 播放参数：{}", info);
     stdin.write_all(info.as_bytes()).await?;
     Ok(())
 }
@@ -1383,7 +1434,7 @@ fn get_appendants() -> Result<AppendantStatus, InvokeError> {
 fn open_respack_folder() -> Result<(), InvokeError> {
     (|| {
         let path = respack_dir()?;
-        info!("Opening respack folder: {}", path.display());
+        info!("[目录] 打开资源包文件夹 {}", path.display());
         // 从来没放过资源包时这个目录可能还不存在，先建出来再打开
         std::fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
@@ -1397,7 +1448,7 @@ fn open_respack_folder() -> Result<(), InvokeError> {
 fn open_appendant_folder() -> Result<(), InvokeError> {
     (|| {
         let path = appendant_dir()?;
-        info!("Opening appendant folder: {}", path.display());
+        info!("[目录] 打开附加包文件夹 {}", path.display());
         // 缺包检查 / 设置页都可能先于任何下载来开这个目录：不存在就先建出来
         std::fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
@@ -1803,7 +1854,7 @@ fn export_log(output_path: String, content: String) -> Result<(), InvokeError> {
             }
         }
         std::fs::write(path, common::strip_ansi(&content))?;
-        info!("导出日志: {}", path.display());
+        info!("[日志] 导出日志 {}", path.display());
         Ok(())
     })()
     .map_err(InvokeError::from_anyhow)
@@ -1936,7 +1987,7 @@ fn get_rpe_charts() -> Result<Option<Vec<RPEChartInfo>>, InvokeError> {
             }
             for folder in folders {
                 info!(
-                    "Found chart folder: {}",
+                    "[谱面] 发现谱面文件夹 {}",
                     folder.file_name().unwrap_or_default().to_string_lossy()
                 );
                 if !folder.join("info.txt").exists() {
@@ -1945,7 +1996,7 @@ fn get_rpe_charts() -> Result<Option<Vec<RPEChartInfo>>, InvokeError> {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
-                    warn!("Not found info.txt: {}", folder_name);
+                    warn!("[谱面] {} 里没有 info.txt", folder_name);
                     results.push(RPEChartInfo {
                         name: folder_name,
                         id: "Empty folder".to_string(),
@@ -1994,7 +2045,7 @@ fn open_app_folder() -> Result<(), InvokeError> {
     (|| {
         let exe_path = std::env::current_exe()?;
         let path = exe_path.parent().unwrap();
-        info!("Opening current exe folder: {}", path.display());
+        info!("[目录] 打开程序所在文件夹 {}", path.display());
         open_folder(path)?;
         Ok(())
     })()
@@ -2026,7 +2077,7 @@ async fn check_ffmpeg_filter(ffmpeg: Option<String>) -> bool {
         return false;
     };
 
-    info!("ffmpeg: {}", ffmpeg.display());
+    info!("[编码器] ffmpeg 路径：{}", ffmpeg.display());
 
     if !render::test_ffmpeg(&ffmpeg) {
         return false;
@@ -2040,7 +2091,7 @@ async fn check_ffmpeg_filter(ffmpeg: Option<String>) -> bool {
 
     let stderr = String::from_utf8(output.stderr).unwrap_or_default();
     if !stderr.contains("ffmpeg") {
-        error!("Missing ffmpeg");
+        error!("[编码器] 找不到 ffmpeg：把 ffmpeg.exe 放到程序目录，或在设置里填它所在的目录");
         return false;
     }
 
@@ -2049,7 +2100,7 @@ async fn check_ffmpeg_filter(ffmpeg: Option<String>) -> bool {
     let mut complete = true;
     for i in filter_required {
         if !stdout.contains(i) {
-            error!("Missing lib: {}, Please check FFmpeg availability", i);
+            error!("[编码器] 这份 ffmpeg 缺滤镜 {i}：换一份完整版（full build，带 libmp3lame / libx264 的那类）");
             complete = false;
         }
     }
@@ -2060,7 +2111,7 @@ async fn check_ffmpeg_filter(ffmpeg: Option<String>) -> bool {
 async fn get_encoder(hevc: bool) -> Result<Option<String>, InvokeError> {
     (|| {
         let Some(ffmpeg) = render::find_ffmpeg()? else {
-            bail!("FFmpeg not found")
+            bail!("找不到 FFmpeg：把 ffmpeg.exe 放到程序目录下，或在设置里指定它所在的目录")
         };
         let config = RenderConfig {
             hevc,
@@ -2080,7 +2131,7 @@ async fn get_encoder(hevc: bool) -> Result<Option<String>, InvokeError> {
 async fn test_encoder(encoder: &str) -> Result<bool, InvokeError> {
     (|| {
         let Some(ffmpeg) = render::find_ffmpeg()? else {
-            bail!("FFmpeg not found")
+            bail!("找不到 FFmpeg：把 ffmpeg.exe 放到程序目录下，或在设置里指定它所在的目录")
         };
         Ok(render::test_encoder(&ffmpeg, encoder))
     })()
@@ -2094,7 +2145,7 @@ async fn export_pez(
     minify: bool,
 ) -> Result<(), InvokeError> {
     wrap_async(async move {
-        info!("Exporting PEZ: {} -> {}", chart_path, output_path);
+        info!("[谱面] 导出谱面包：{} -> {}", chart_path, output_path);
         let chart_path = PathBuf::from(chart_path);
         let output_path = PathBuf::from(output_path);
 
@@ -2105,10 +2156,11 @@ async fn export_pez(
         let mut files = collect_chart_files(chart_path.clone(), chart_path.clone())?;
         if minify {
             let mut fs: Box<dyn FileSystem + Send + Sync + 'static> =
-                fs::fs_from_file(&chart_path).with_context(|| mtl!("read-chart-failed"))?;
+                fs::fs_from_file(&chart_path)
+                    .with_context(|| mtl!("read-chart-failed", "path" => chart_path.display().to_string()))?;
             let info = fs::load_info(fs.deref_mut())
                 .await
-                .with_context(|| mtl!("load-info-failed"))?;
+                .with_context(|| mtl!("load-info-failed", "path" => chart_path.display().to_string()))?;
             let chart_data = tokio::fs::read_to_string(chart_path.join(&info.chart)).await?;
             let chart_json: dps::parse::RPEChart = serde_json::from_str(&chart_data)?;
             let chart_minified = serde_json::to_string(&chart_json)?;
@@ -2148,7 +2200,7 @@ async fn export_pez(
                 }
             }
         }
-        info!("files: {:?}", files);
+        info!("[输出] 文件：{files:?}");
 
         create_zip(output_path, files).await?;
         Ok(())
@@ -2161,7 +2213,7 @@ async fn delete_path(path: String) -> Result<(), InvokeError> {
     wrap_async(async move {
         let path = PathBuf::from(path);
         if path.exists() && path.is_dir() {
-            info!("delete: {}", path.display());
+            info!("[输出] 删除 {}", path.display());
             tokio::fs::remove_dir_all(path).await?;
         } else {
             bail!("Not a directory");
@@ -2180,7 +2232,7 @@ async fn delete_file(path: String) -> Result<(), InvokeError> {
     wrap_async(async move {
         let path = PathBuf::from(path);
         if path.is_file() {
-            info!("delete: {}", path.display());
+            info!("[输出] 删除 {}", path.display());
             remove_file_retry(&path).await?;
         }
         Ok(())
@@ -2199,7 +2251,7 @@ async fn delete_autosave(path: String) -> Result<(), InvokeError> {
                 let file_path = entry.path();
                 if let Some(file_name) = file_path.file_name().and_then(|s| s.to_str()) {
                     if file_name.starts_with("AutoSave_") {
-                        info!("delete: {}", file_path.display());
+                        info!("[输出] 删除 {}", file_path.display());
                         tokio::fs::remove_file(file_path).await?;
                     }
                 }
@@ -2216,7 +2268,7 @@ async fn delete_autosave(path: String) -> Result<(), InvokeError> {
 async fn save_info(path: String, info: ChartInfo) -> Result<(), InvokeError> {
     wrap_async(async move {
         let file = PathBuf::from(path);
-        info!("save: {}", file.display());
+        info!("[配置] 保存 {}", file.display());
         let string = serde_yaml::to_string(&info)?;
         std::fs::write(file, string)?;
         Ok(())
@@ -2228,7 +2280,7 @@ async fn save_info(path: String, info: ChartInfo) -> Result<(), InvokeError> {
 async fn read_info(path: String) -> Result<ChartInfo, InvokeError> {
     wrap_async(async move {
         let file = PathBuf::from(path);
-        info!("read: {}", file.display());
+        info!("[配置] 读取 {}", file.display());
         let info = serde_yaml::from_reader(BufReader::new(std::fs::File::open(file)?))?;
         Ok(info)
     })

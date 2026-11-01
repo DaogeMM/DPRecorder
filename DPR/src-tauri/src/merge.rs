@@ -30,6 +30,10 @@ pub(crate) const DIFF_TEXT: &str = "（谱面融合）";
 /// 融合包的文件名后缀。路径会显示在渲染页底部，用 ASCII 免得全角括号看着别扭。
 const FILE_TAG: &str = "JOIN";
 
+/// 写进 DPE 输出目录的融合包名后缀：跟谱面修改的写法接上（`原名.(谱面融合).pez`），
+/// 再拿这个包改一次时，`dpe_generate_modified` 的 `strip_old_marker` 会把它当旧标识裁掉。
+const MERGE_FILE_TAG: &str = "(谱面融合)";
+
 /// 融合所选谱面，返回融合结果（一个临时 `.pez`）的绝对路径。
 ///
 /// 「是不是同一首歌」「格式对不对」前端已经先判过一遍（那里的提示能说清是哪两张对不上），
@@ -44,9 +48,40 @@ pub async fn merge_charts(paths: Vec<String>) -> Result<String, InvokeError> {
     .await
 }
 
+/// 融合所选谱面，把结果写进 DPE「谱面修改」的输出目录，返回写出的路径。
+///
+/// 判据与 [`merge_charts`] 完全相同（至少两张、同一首歌、同一格式），区别只在落点与文件名：
+/// 批量页要的是能立刻渲染的临时包，谱面修改页要的是留在「输出」表里、可以反复预览的包。
+#[tauri::command]
+pub async fn dpe_merge_charts(paths: Vec<String>) -> Result<String, InvokeError> {
+    crate::wrap_async(async move {
+        let paths = paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+        let dir = crate::common::dpe_output_dir(crate::common::DPE_MODIFY_DIR)?;
+        let (stem, bytes) = build_merged(&paths, &dir).await?;
+        let out = dir.join(format!("{stem}.{MERGE_FILE_TAG}.pez"));
+        std::fs::write(&out, bytes).with_context(|| format!("无法写入 {}", out.display()))?;
+        info!("[谱面] 已融合谱面 {}", out.display());
+        Ok(out.display().to_string())
+    })
+    .await
+}
+
 async fn merge(paths: &[PathBuf]) -> Result<PathBuf> {
+    let dir = reset_merge_dir()?;
+    let (stem, bytes) = build_merged(paths, &dir).await?;
+    let out = dir.join(format!("{stem}.{FILE_TAG}.pez"));
+    std::fs::write(&out, bytes).with_context(|| format!("cannot write {}", out.display()))?;
+    info!("[谱面] 已合并谱面 {}", out.display());
+    Ok(out)
+}
+
+/// 融合的核心：判据 + 拼出来的包内容。
+///
+/// 两个落点（批量页的临时目录、谱面修改页的输出目录）共用这一段；`scratch` 只在基谱是文件夹
+/// 时用来打临时 zip，两种落点各传自己的目录，互不清对方的产物。
+async fn build_merged(paths: &[PathBuf], scratch: &Path) -> Result<(String, Vec<u8>)> {
     if paths.len() < 2 {
-        bail!("merge needs at least two charts");
+        bail!("融合至少需要两张谱面");
     }
 
     let mut sources = Vec::with_capacity(paths.len());
@@ -57,30 +92,24 @@ async fn merge(paths: &[PathBuf]) -> Result<PathBuf> {
     let base = &sources[0];
     for source in &sources[1..] {
         if source.format != base.format {
-            bail!("charts must be the same format");
+            bail!("要融合的谱面格式不一致");
         }
         if !same_song(&base.info, &source.info) {
-            bail!("charts must be the same song");
+            bail!("要融合的谱面不是同一首歌");
         }
     }
 
-    let dir = reset_merge_dir()?;
     let merged = merge_json(&sources)?;
     let info = merged_info(&sources);
 
-    let bytes = base_zip_bytes(&base.path, &dir).await?;
+    let bytes = base_zip_bytes(&base.path, scratch).await?;
     let mut zip = open_zip(bytes).context("base chart is not a zip archive")?;
     let mut patches = HashMap::new();
     // 谱面文件名沿用基谱的，`info.chart` 与包里其它文件的相对位置就不用动；info 一律写成
     // `info.yml`，它排在 `info.txt` 前面，基谱原来是 txt 的也能盖掉。
     patches.insert(base.info.chart.clone(), serde_json::to_vec(&merged)?);
     patches.insert("info.yml".to_string(), serde_yaml::to_string(&info)?.into_bytes());
-    let patched = update_zip(&mut zip, patches)?;
-
-    let out = dir.join(format!("{}.{}.pez", file_stem(&base.info.name), FILE_TAG));
-    std::fs::write(&out, patched).with_context(|| format!("cannot write {}", out.display()))?;
-    info!("merged chart: {}", out.display());
-    Ok(out)
+    Ok((file_stem(&base.info.name), update_zip(&mut zip, patches)?))
 }
 
 /// 一个待融合的谱面：谱面信息、谱面文本（原样，融合时直接搬 JSON 条目）、格式。
@@ -94,15 +123,17 @@ struct Source {
 impl Source {
     async fn load(path: &Path) -> Result<Self> {
         let mut fs = fs::fs_from_file(path)
-            .with_context(|| format!("cannot open {}", path.display()))?;
+            .with_context(|| format!("读取谱面失败：{}", path.display()))?;
         let info = fs::load_info(fs.deref_mut())
             .await
-            .with_context(|| format!("cannot read info of {}", path.display()))?;
+            .with_context(|| format!("读取谱面信息失败：{}", path.display()))?;
         let bytes = fs
             .load_file(&info.chart)
             .await
-            .with_context(|| format!("cannot read {} in {}", info.chart, path.display()))?;
-        let text = String::from_utf8(bytes).context("chart is not utf-8")?;
+            .with_context(|| format!("读取谱面里的 {} 失败：{}", info.chart, path.display()))?;
+        let text = String::from_utf8(bytes).with_context(|| {
+            format!("谱面 {} 里的 {} 不是 UTF-8", path.display(), info.chart)
+        })?;
         let format = detect_format(&info, &text)?;
         Ok(Self {
             path: path.to_path_buf(),

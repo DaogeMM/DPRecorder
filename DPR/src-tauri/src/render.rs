@@ -1207,7 +1207,7 @@ static READBACK_FLIP: AtomicBool = AtomicBool::new(false);
 fn mark_readback_flip(enabled: bool) {
     READBACK_FLIP.store(enabled, AtomicOrdering::Relaxed);
     if enabled {
-        eprintln!("[高性能模式] 帧读回交由 GPU 翻转，省掉 ffmpeg 的 -vf vflip");
+        crate::console!("[高性能模式] 帧读回交由 GPU 翻转，省掉 ffmpeg 的 -vf vflip");
     }
 }
 
@@ -1388,7 +1388,7 @@ fn nvenc_native_rgba(encoder: &str) -> bool {
 /// 用户可以在设置里手填任意编码器（`customEncoder`），而不同 ffmpeg 构建的 NVENC 支持的
 /// 输入格式并不一致；这里失败只是**退回** `-pix_fmt yuv420p`（也就是老行为），不会让渲染挂掉。
 fn encoder_accepts_rgba_input(ffmpeg: &String, encoder: &str) -> bool {
-    eprintln!("[高性能模式] 探测 {} 是否直接吃 RGBA…", encoder);
+    crate::console!("[高性能模式] 探测编码器 {} 能否直接吃 RGBA…", encoder);
     let output = Command::new(ffmpeg)
         .args([
             "-f",
@@ -1564,7 +1564,7 @@ pub fn get_encoder(
         if test_encoder(ffmpeg, encoder) {
             return Some(encoder.to_string());
         } else {
-            warn!("Encoder {} not supported", encoder);
+            warn!("[编码器] {} 不可用", encoder);
         }
     }
 
@@ -1572,7 +1572,7 @@ pub fn get_encoder(
 }
 
 pub fn test_encoder(ffmpeg: &String, encoder: &str) -> bool {
-    eprintln!("Testing encoder: {}", encoder);
+    crate::console!("[编码器] 测试 {}", encoder);
     let output = Command::new(ffmpeg)
         .args([
             "-f",
@@ -1756,26 +1756,36 @@ pub async fn generate_resource(
         let (args_input, args_output, args_config, args_info) =
             parse_args(std::env::args().collect());
 
+        // 配置文件也按 exe 位置找；错误里带上路径，否则「没有 config.toml」看不出找的是哪
+        let read_config_toml = || -> Result<RenderConfig> {
+            let path = std::env::current_exe()?
+                .parent()
+                .unwrap()
+                .join("config.toml");
+            crate::console!("[配置] 读取 {}", path.display());
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("读取配置失败：{}", path.display()))?;
+            toml::from_str(&text)
+                .with_context(|| format!("配置文件不是合法 TOML：{}", path.display()))
+        };
+
         let mut config: RenderConfig = if let Some(config) = &args_config {
             match serde_json::from_str(config) {
                 Ok(config_json) => {
-                    eprintln!("Using config from json");
+                    crate::console!("[配置] 使用传入的 JSON 配置");
                     config_json
                 }
                 Err(error) => {
-                    eprintln!("{}", error);
-                    eprintln!("Failed to parse json. Using config from toml file");
-                    toml::from_str(&std::fs::read_to_string(config)?)?
+                    crate::console!(warn, "[配置] 传入的 JSON 配置解析失败：{error}");
+                    crate::console!(warn, "[配置] 改用 {} 里的配置", config);
+                    let text = std::fs::read_to_string(config)
+                        .with_context(|| format!("读取配置失败：{config}"))?;
+                    toml::from_str(&text)
+                        .with_context(|| format!("配置文件不是合法 TOML：{config}"))?
                 }
             }
         } else {
-            eprintln!("Using config from config.toml");
-            toml::from_str(&std::fs::read_to_string(
-                std::env::current_exe()?
-                    .parent()
-                    .unwrap()
-                    .join("config.toml"),
-            )?)?
+            read_config_toml()?
         };
 
         let path = args_input.unwrap();
@@ -1793,7 +1803,8 @@ pub async fn generate_resource(
             apply_rr_chart(&mut config);
         }
 
-        let mut fs = fs::fs_from_file(path.as_ref())?;
+        let mut fs = fs::fs_from_file(path.as_ref())
+            .with_context(|| tl!("load-chart-failed", "path" => path.clone()))?;
 
         let mut info: ChartInfo = if let Some(info) = args_info {
             serde_json::from_str(&info)?
@@ -1817,7 +1828,7 @@ pub async fn generate_resource(
             } else {
                 get_output_dir()?.join(file_name)
             };
-            eprintln!("output file: {:?}", output_path);
+            crate::console!("[输出] {}", output_path.display());
             output_path
         } else {
             PathBuf::new()
@@ -1840,7 +1851,8 @@ pub async fn generate_resource(
             PathBuf::new()
         };
 
-        let fs = fs::fs_from_file(&path)?;
+        let fs = fs::fs_from_file(&path)
+            .with_context(|| tl!("load-chart-failed", "path" => path.display().to_string()))?;
 
         let mut config = params.config;
         config.xuejiang_sp = is_xuejiang_sp_chart(&path);
@@ -1877,7 +1889,7 @@ fn resample_to(clip: &AudioClip, target_rate: u32, name: &str) -> AudioClip {
         return AudioClip::from_raw(Vec::new(), target_rate);
     }
     warn!(
-        "`{}` 的采样率为 {}Hz，已重采样到 {}Hz",
+        "[音频] `{}` 的采样率 {}Hz，已重采样到 {}Hz",
         name, rate, target_rate
     );
     let out_frames =
@@ -1948,14 +1960,14 @@ pub async fn main(cmd: bool) -> Result<()> {
 
     let (mut chart, format) = GameScene::load_chart(fs.deref_mut(), &info, &prpr_config)
         .await
-        .with_context(|| tl!("load-chart-failed"))?;
+        .with_context(|| tl!("load-chart-failed", "path" => info.chart.clone()))?;
     let res_pack = ResourcePack::from_path(prpr_config.res_pack_path.as_ref())
         .await
         .context("Failed to load resource pack")?;
     let sample_rate = 48000;
     let sample_rate_f64 = sample_rate as f64;
     let music: Result<_> = async { AudioClip::new(fs.load_file(&info.music).await?) }.await;
-    let music = music.with_context(|| tl!("load-music-failed"))?;
+    let music = music.with_context(|| tl!("load-music-failed", "path" => info.music.clone()))?;
     // 采样率不是 48kHz 的音频统一重采样到渲染管线用的 48kHz（见 `resample_to`）。
     let music = resample_to(&music, sample_rate, "music");
     let music_length = music.length();
@@ -2052,7 +2064,7 @@ pub async fn main(cmd: bool) -> Result<()> {
             bail!(tl!("no-hwacc"))
         };
 
-    eprintln!("Encoder: {}", ffmpeg_encoder);
+    crate::console!("[编码器] 选用 {}", ffmpeg_encoder);
 
     // 高性能模式：把上下翻转挪进 GPU 的帧读回（见 `mark_readback_flip` 上的注释）。
     // 只有硬件编码器才这么做 —— 软件编码器的滤镜链在 CPU 上，改读回方向不改 `-vf` 会颠倒。
@@ -2060,8 +2072,10 @@ pub async fn main(cmd: bool) -> Result<()> {
         mark_readback_flip(true);
     }
 
-    eprintln!("Loading Time: {:.2?}", loading_time.elapsed());
-    eprintln!("video length: {:.2}s frame: {}", video_length, video_frames);
+    // 各阶段耗时先攒着，收尾时合成一行打出来 —— 逐行打会把控制台刷满，中间还夹着别的日志。
+    let mut stages: Vec<(&'static str, Duration)> = Vec::new();
+    stages.push(("加载", loading_time.elapsed()));
+    crate::console!("[谱面] 时长 {:.2}s，共 {} 帧", video_length, video_frames);
 
     let render_start_time = Instant::now();
 
@@ -2110,7 +2124,7 @@ pub async fn main(cmd: bool) -> Result<()> {
         let clip = music.slice(s![position_read..position_read + len]);
         let mut slice = output_music.slice_mut(s![position_wrtie..position_wrtie + len]);
         slice += &clip;
-        eprintln!("Process Music Time: {:.2?}", music_time.elapsed());
+        stages.push(("混音", music_time.elapsed()));
     }
 
     type HitSoundMap = FxHashMap<String, Array1<f32>>;
@@ -2219,7 +2233,13 @@ pub async fn main(cmd: bool) -> Result<()> {
             }
 
             let elapsed = sfx_time.elapsed();
-            eprintln!("Process Hit Effects Time: {:.2?} Equivalent Speed: {:.2} notes/sec Speed: {:.2} notes/sec", elapsed, len as f32 / elapsed.as_secs_f32(), num as f32 / elapsed.as_secs_f32())
+            stages.push(("打击音效", elapsed));
+            crate::console!(
+                "[谱面] 打击音效 {} 个（等效 {:.2} 个/秒，实际 {:.2} 个/秒）",
+                len,
+                len as f32 / elapsed.as_secs_f32(),
+                num as f32 / elapsed.as_secs_f32()
+            )
         } else {
             chart
                 .lines
@@ -2251,9 +2271,10 @@ pub async fn main(cmd: bool) -> Result<()> {
             }
 
             let elapsed = sfx_time.elapsed();
-            eprintln!(
-                "Process Hit Effects Time: {:.2?} Speed: {:.2} notes/sec",
-                elapsed,
+            stages.push(("打击音效", elapsed));
+            crate::console!(
+                "[谱面] 打击音效 {} 个（{:.2} 个/秒）",
+                num,
                 num as f32 / elapsed.as_secs_f32()
             )
         }
@@ -2269,7 +2290,7 @@ pub async fn main(cmd: bool) -> Result<()> {
             slice += &clip;
             position_wrtie += len;
         }
-        eprintln!("Process Ending Music Time: {:.2?}", ending_time.elapsed());
+        stages.push(("结尾", ending_time.elapsed()));
     }
 
     if ipc {
@@ -2326,7 +2347,7 @@ pub async fn main(cmd: bool) -> Result<()> {
             output_ending_music,
         )?;
 
-        eprintln!("Output Audio Time: {:.2?}", output_audio_time.elapsed());
+        stages.push(("写音频", output_audio_time.elapsed()));
     }
 
     if ipc {
@@ -2369,7 +2390,8 @@ pub async fn main(cmd: bool) -> Result<()> {
             );
             let status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             if status != GL_FRAMEBUFFER_COMPLETE {
-                eprintln!(
+                crate::console!(
+                    warn,
                     "[高性能模式] 翻转用的离屏 FBO 不完整（status=0x{status:x}），这一遍仍走 ffmpeg 的 vflip"
                 );
                 glDeleteFramebuffers(1, &flip_fbo);
@@ -2427,7 +2449,10 @@ pub async fn main(cmd: bool) -> Result<()> {
             match LoadingScene::load_background(&mut fs, &prpr_config, &info.illustration).await {
                 Ok((ill, bg)) => Some((ill, bg)),
                 Err(err) => {
-                    warn!("failed to load background: {err:?}");
+                    warn!(
+                        "[渲染] 背景图加载失败：{}",
+                        crate::common::error_chain(&err)
+                    );
                     None
                 }
             };
@@ -2601,7 +2626,7 @@ pub async fn main(cmd: bool) -> Result<()> {
         && nvenc_native_rgba(&ffmpeg_encoder)
         && encoder_accepts_rgba_input(&ffmpeg, &ffmpeg_encoder);
     if gpu_color_convert {
-        eprintln!("[高性能模式] RGBA→YUV 交给 NVENC 在显卡上做，省掉 ffmpeg 的 swscale");
+        crate::console!("[高性能模式] RGBA→YUV 交给 NVENC 在显卡上做，省掉 ffmpeg 的 swscale");
     }
     let pixel_format = if gpu_color_convert { "rgba" } else { "yuv420p" };
 
@@ -2625,13 +2650,10 @@ pub async fn main(cmd: bool) -> Result<()> {
         args2.insert_str(0, "-thread_queue_size 1024 ");
     }
 
-    eprintln!(
-        "Preparing Render Time: {:.2?}",
-        preparing_render_time.elapsed()
-    );
+    stages.push(("准备", preparing_render_time.elapsed()));
 
-    eprintln!(
-        "Command: {} {} {} {} {} {} {} {} {} {}",
+    crate::console!(
+        "[渲染] ffmpeg 命令：{} {} {} {} {} {} {} {} {} {}",
         &ffmpeg,
         args,
         "-i",
@@ -2675,7 +2697,7 @@ pub async fn main(cmd: bool) -> Result<()> {
                 ..Default::default()
             },
         )
-        .map_err(|e| anyhow::anyhow!("load yuv pack material failed: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("load yuv pack material failed: {e}"))?;
         material.set_uniform("screenSize", vec2(vw as f32, vh as f32));
         Some((target, material))
     } else {
@@ -2707,8 +2729,6 @@ pub async fn main(cmd: bool) -> Result<()> {
     let fps = fps as f64;
     let frames_per_10 = (video_frames / 10).max(1);
     let frames = video_frames;
-    let mut step_time = Instant::now();
-    let mut last_print = Instant::now();
     let mut pause_duration = Duration::ZERO;
 
     // 进水音效（受伤/死亡）是实时播放的，渲染器只能靠引擎记的事件日志事后补进音轨；
@@ -2717,7 +2737,7 @@ pub async fn main(cmd: bool) -> Result<()> {
 
     for frame in 0..frames {
         if !cmd && pause_requested.load(AtomicOrdering::SeqCst) {
-            eprintln!("Render paused");
+            crate::console!("[渲染] 已暂停");
             if ipc {
                 send(IPCEvent::Paused);
             }
@@ -2726,8 +2746,7 @@ pub async fn main(cmd: bool) -> Result<()> {
                 std::thread::park();
             }
             pause_duration += pause_begin.elapsed();
-            step_time = Instant::now();
-            eprintln!("Render resumed");
+            crate::console!("[渲染] 继续渲染");
             if ipc {
                 send(IPCEvent::Resumed);
             }
@@ -2748,26 +2767,27 @@ pub async fn main(cmd: bool) -> Result<()> {
         }
 
 
+        // 命令行直接渲染（`dpr --render`）时人就在终端前面：一行原地刷新，写清百分比、
+        // 帧数与已用/预计剩余时间。父进程渲染（`cmd`）这一路不打 —— 它的 stderr 是管道，
+        // 往里面塞 `\r` 只会把「输出」面板的文本搞乱，进度由父进程自己按 IPC 打。
         if !cmd && frame % frames_per_10 == 0 {
-            let progress = round_to_step((frame as f64 / video_frames as f64 * 100.).ceil(), 10.0);
-            eprintln!(
-                "Render progress: {:.0}% {}/{} Time elapsed: {:.2}s",
-                progress,
-                frame,
-                video_frames,
-                std::mem::replace(&mut step_time, Instant::now())
-                    .elapsed()
-                    .as_secs_f32()
-            );
-        }
-
-        if cmd && last_print.elapsed() >= Duration::from_secs(1) {
-            let progress = (frame as f64 / video_frames as f64 * 100.).round();
-            last_print = Instant::now();
-            eprint!(
-                "\rprogress={:.0}% frame={}/{}",
-                progress, frame, video_frames
-            );
+            let ratio = frame as f64 / video_frames as f64;
+            let used = render_time
+                .elapsed()
+                .saturating_sub(pause_duration)
+                .as_secs_f64();
+            let progress = round_to_step((ratio * 100.).ceil(), 10.0);
+            let estimate = if ratio > 0.01 {
+                let total = used / ratio;
+                format!("剩余约 {:.0}s", (total - used).max(0.))
+            } else {
+                "剩余约 --s".to_owned()
+            };
+            crate::common::console_progress(&format!(
+                "[渲染] {:.0}%（{}/{} 帧，已用 {:.1}s，{}）",
+                progress, frame, video_frames, used, estimate
+            ));
+            crate::common::set_console_title(&format!("DPRecorder — 渲染 {:.0}%", progress));
         }
 
         // 本帧的「显存 → 内存」：GPU 打包时先跑一趟 YUV 着色器，再从打包贴图读回；
@@ -2896,7 +2916,7 @@ pub async fn main(cmd: bool) -> Result<()> {
             removed += 1;
         }
         if removed > 0 {
-            eprintln!("[water] 已从打击音轨里去掉 {removed} 个溺水按键的音效");
+            crate::console!("[进水] 已从打击音轨里去掉 {removed} 个溺水按键的音效");
         }
         let wav = TempPath::new("sfx");
         write_audio_wav(
@@ -2908,12 +2928,14 @@ pub async fn main(cmd: bool) -> Result<()> {
         sfx_wav = Some(wav);
     }
     if cmd {
-        eprintln!("\rprogress=100% frame={}/{}", video_frames, video_frames);
+        crate::console!("[渲染] 完成 {}/{} 帧", video_frames, video_frames);
     }
+    crate::common::console_progress_done();
+    crate::common::set_console_title("DPRecorder");
     let actual_render_time = render_time.elapsed().saturating_sub(pause_duration);
-    eprintln!("Render Time: {:.2?}", actual_render_time);
-    eprintln!(
-        "Average FPS: {:.2}",
+    stages.push(("渲染", actual_render_time));
+    crate::console!(
+        "[渲染] 平均 {:.2} 帧/秒",
         frames as f64 / actual_render_time.as_secs_f64()
     );
     proc.wait()?;
@@ -2934,14 +2956,18 @@ pub async fn main(cmd: bool) -> Result<()> {
             config.force_limit,
             config.limit_threshold,
         ) {
-            Ok(()) => eprintln!(
-                "Water Sfx Time: {:.2?}",
-                water_time.elapsed()
-            ),
-            Err(err) => eprintln!("[water] 进水音效混入视频失败（视频本身正常）：{err:?}"),
+            Ok(()) => stages.push(("进水", water_time.elapsed())),
+            Err(err) => crate::console!(warn, "[进水] 混入进水音效失败（视频本身正常）：{err}"),
         }
     }
-    eprintln!("Total Time: {:.2?}", loading_time.elapsed());
+    // 各阶段耗时一行到底：逐行打太占地方，真正要对比的时候又不好一眼看完。
+    let total = loading_time.elapsed();
+    let detail = stages
+        .iter()
+        .map(|(name, time)| format!("{name} {:.1}s", time.as_secs_f64()))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    crate::console!("[耗时] {detail} · 总 {:.1}s", total.as_secs_f64());
     if ipc {
         send(IPCEvent::Done(render_start_time.elapsed().as_secs_f64()));
     }
@@ -3218,8 +3244,8 @@ fn mix_water_sfx(
             mixed_path.display()
         )
     })?;
-    eprintln!(
-        "[water] 已把 {} 个进水音效混入视频音轨 {}",
+    crate::console!(
+        "[进水] 已把 {} 个进水音效混入视频音轨：{}",
         played,
         output_path.display()
     );

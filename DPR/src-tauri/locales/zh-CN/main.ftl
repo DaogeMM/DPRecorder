@@ -4,8 +4,9 @@ tray-show = 显示窗口
 tray-tasks = 任务列表
 tray-quit = 退出
 
-read-chart-failed = 读取谱面失败
-load-info-failed = 加载谱面信息失败
+read-chart-failed = 读取谱面失败：{ $path }
+load-info-failed = 加载谱面信息失败：{ $path }
+read-asset-failed = 读取谱面里的文件失败：{ $path }
 
 preset-exists = 同名配置已存在
 preset-not-found = 指定的配置不存在

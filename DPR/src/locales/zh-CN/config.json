@@ -433,6 +433,8 @@
   "chart-mod-arrange-line-y-tip": "基准线高度：0 底边、1 顶边、0.5 正中",
   "chart-mod-arrange-speed": "按键流速",
   "chart-mod-arrange-speed-tip": "基准线上按键下落速度的倍数，越大落得越快",
+  "chart-mod-merge": "谱面融合",
+  "chart-mod-merge-tip": "把勾中的同一首歌的几个难度拼成一张谱面，至少选两张，判据与批量页的融合一致",
   "render-extra-tips": "是否加载谱面自带 extra.json 里的着色器与视频",
   "render-block-area": "噪域",
   "render-block-area-tips": "Phigros 4.0 的 blockAreaList 噪域演出",

@@ -35,7 +35,7 @@ tempfile = "3.16.0"
 chrono = "0.4.28"
 open = "5.3.2"
 fs4 = { version = "0.6.6", features = ["tokio-async"] }
-winapi = { version = "0.3", features = ["wincon", "winuser", "shellapi", "winreg"] }
+winapi = { version = "0.3", features = ["wincon", "consoleapi", "processenv", "winuser", "shellapi", "winreg"] }
 tauri-plugin-shell = "2.3.3"
 # 关掉 cookies 特性：它在 plugin setup 阶段就要往 app_cache_dir() 写 .cookies，
 # 一旦该目录不可写（受限/沙箱环境）整个 app 会在 tauri::Builder::build() 阶段直接 panic。

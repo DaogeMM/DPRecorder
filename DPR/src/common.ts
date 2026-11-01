@@ -1,12 +1,7 @@
 import { toast as sonnerToast } from 'vuetify-sonner';
 import { invoke } from '@tauri-apps/api/core';
 
-import { SUPPORTED_LOCALES, i18n } from './main';
-
-import moment from 'moment';
-
-import 'moment/dist/locale/zh-cn';
-import 'moment/dist/locale/zh-hk';
+import { i18n } from './main';
 
 export function anyFilter() {
   return {
@@ -93,25 +88,12 @@ export function setTitle(title: string) {
   document.title = title.length ? title + ' - Phi' : 'Phi';
 }
 
-export function changeLocale(locale: string) {
-  if (locale.startsWith('en')) locale = 'en';
-  if (!SUPPORTED_LOCALES.includes(locale)) locale = 'zh-CN';
-  i18n.global.locale.value = (locale === 'zh-TW' ? 'zh-CN' : locale) as typeof i18n.global.locale.value;
-  localStorage.setItem('locale', locale);
-  const momentLocale =
-    {
-      'zh-CN': 'zh-cn',
-      'zh-TW': 'zh-hk',
-      en: 'en-us',
-    }[locale] ?? 'en-us';
-  moment.locale(momentLocale);
-}
 
 export function toast(message: string, kind?: 'success' | 'info' | 'warning' | 'error') {
   sonnerToast(message, {
     duration: 2000,
-    // 一律留在正中（`<v-sonner>` 的 `position="top-center"`）：错误提示也不例外，
-    // 之前把红字单独挪到左上角，看着像「弹窗跑偏了」。
+    // 提示一律走同一个位置（`<v-sonner>` 的 `position="bottom-right"`）：右下角贴着窗口边，
+    // 不挡上方的标题栏与谱面列表，错误提示也不例外。
     cardProps: {
       color: kind,
       // @ts-ignore

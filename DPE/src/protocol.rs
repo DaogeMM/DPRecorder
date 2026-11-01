@@ -46,7 +46,7 @@ pub fn spawn_stdin_reader(queue: Queue) {
             }
             match serde_json::from_str::<Command>(line) {
                 Ok(command) => queue.lock().unwrap().push_back(command),
-                Err(err) => eprintln!("[dpe] 命令解析失败 {line:?}：{err}"),
+                Err(err) => eprintln!("[预览] 命令解析失败 {line:?}：{err}"),
             }
         }
         queue.lock().unwrap().push_back(Command::Quit);

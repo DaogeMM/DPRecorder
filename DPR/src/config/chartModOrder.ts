@@ -6,10 +6,13 @@ import { watch, type Ref } from 'vue';
  * 这些功能同属一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏
  * 走的是同一份转换，dps 里的入口只有一个（`core::chart_mod` + `Chart::apply_chart_mods`）。
  *
- * **六类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 按键那一类
+ * **七类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 谱面融合 / 按键那一类
  * （按键替换、随机按键、随机流速、随机位置、长条填充、长条延长、复制音符）—— 同一时刻只有一类
  * 生效，勾上哪一类就把另外几类整个关掉。这几类各自都是把整张谱面重排一遍（或整体改可见性），
  * 叠在一起只会互相覆盖，所以不给选。
+ *
+ * 「谱面融合」只出现在 DPE 的谱面修改页：它把勾中的几个难度拼成一张谱面，产出也写成一份包，
+ * 与别的修改叠在一起没有意义。它不改 dps 的配置，所以既没有齿轮序号、也不进下面的顺序表。
  *
  * 按键那一类内部**可以同时开**，落地顺序就是界面上勾选的先后：勾上的那一项追加到顺序表末尾，
  * 齿轮左边那个数字就是它在这一次转换里的次序。配置里记着这张表（`chartModOrder`），dps 按同一个
@@ -39,6 +42,8 @@ export interface ChartModSlots {
   chartModHide: Ref<boolean | undefined> | undefined;
   chartModArrange: Ref<boolean | undefined> | undefined;
   chartModFixedSpeed: Ref<boolean | undefined> | undefined;
+  /** 「谱面融合」：只有 DPE 的谱面修改页有这个开关，渲染页传 undefined 就跳过互斥判断 */
+  chartModMerge?: Ref<boolean | undefined> | undefined;
   chartModReplace: Ref<boolean | undefined> | undefined;
   chartModRandom: Ref<boolean | undefined> | undefined;
   chartModRandomSpeed: Ref<boolean | undefined> | undefined;
@@ -55,6 +60,7 @@ export function useChartModOrder(slots: ChartModSlots) {
     { key: 'hide', flag: slots.chartModHide },
     { key: 'arrange', flag: slots.chartModArrange },
     { key: 'fixed_speed', flag: slots.chartModFixedSpeed },
+    { key: 'merge', flag: slots.chartModMerge },
   ];
   const chartMods: ChartModEntry[] = [
     { key: 'replace', flag: slots.chartModReplace },

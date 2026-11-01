@@ -139,7 +139,8 @@ const ALLOWED: &[(&str, Kind)] = &[
 ///   写错键名的谱面看起来「配置没生效」，用户查不出原因；
 /// - 单个键不认识或类型不对：跳过它并记一条警告，其它键照常生效。
 pub async fn read(path: &Path) -> Result<Option<Map<String, Value>>> {
-    let mut fs = dps::fs::fs_from_file(path)?;
+    let mut fs = dps::fs::fs_from_file(path)
+        .with_context(|| format!("读取谱面失败：{}", path.display()))?;
     let bytes = match fs.load_file(CONFIG_FILE).await {
         Ok(bytes) => bytes,
         Err(_) => return Ok(None),
@@ -152,7 +153,7 @@ pub async fn read(path: &Path) -> Result<Option<Map<String, Value>>> {
     let mut out = Map::new();
     for (key, value) in table {
         let Some((_, kind)) = ALLOWED.iter().find(|(name, _)| *name == key) else {
-            warn!("{CONFIG_FILE}: 不支持键 {key}，已忽略");
+            warn!("[配置] {CONFIG_FILE}：不支持键 {key}，已忽略");
             continue;
         };
         let converted = match (kind, value) {
@@ -179,7 +180,7 @@ pub async fn read(path: &Path) -> Result<Option<Map<String, Value>>> {
                     .collect(),
             ),
             (_, value) => {
-                warn!("{CONFIG_FILE}: 键 {key} 的类型不对（{}），已忽略", value.type_str());
+                warn!("[配置] {CONFIG_FILE}：键 {key} 的类型不对（{}），已忽略", value.type_str());
                 continue;
             }
         };

@@ -17,9 +17,8 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { DEFAULT_APP_CONFIG, type AppConfig } from './model';
 import * as dialog from '@tauri-apps/plugin-dialog';
-import { toast, toastError, changeLocale, openExternal } from './common';
+import { toast, toastError, openExternal } from './common';
 import type { VForm } from 'vuetify/components';
-import { SUPPORTED_LOCALES_NAME } from './main';
 
 import CfgField from './components/CfgField.vue';
 import CfgSlider from './components/CfgSlider.vue';
@@ -531,12 +530,6 @@ async function testEncoderAvc() {
 }
 
 
-const locale = useStorage<string>('locale', 'zh-CN');
-watch(locale, (val) => {
-  if (!val) return;
-  changeLocale(val);
-}, { immediate: true });
-
 /**
  * 调试项的入口与开关（都是纯界面偏好，存 localStorage）：
  * - `debugRevealed`：设置页里「显示隐藏选项」这一条本身露不露面，由 **Ctrl+Shift+点击左栏的「设置」** 切换
@@ -636,17 +629,24 @@ const forkedDeps = [
                 <v-btn icon="mdi-backup-restore" variant="text" size="small" :title="t('reset')" @click="resetDialog = true"></v-btn>
               </div>
             </template>
-            <div class="cfg-grid">              <!-- 「日志」文件夹：运行日志按天写在这里（`<程序目录>/logs/dpr-YYYY-MM-DD.log`），
+            <div class="cfg-grid">
+              <!-- 一行三项顺着排，所以开关都排在前面、路径类字段跟在后面 —— 两类控件混着排
+                   会让同一个开关夹在两个文本框中间，看不出哪些是勾选项。 -->
+              <!-- 「输出日志到控制台」开关：关掉只影响人看的那个终端（信息与调试不打，警告与错误
+                   照打），日志文件与渲染页的「输出」面板都还是全的。切换后立刻生效、不用重启。 -->
+              <CfgSwitch :label="t('print-stderr')" :tip="t('print-stderr-tip')" v-model="config.printStderr"></CfgSwitch>
+              <!-- 「输出预览性能到控制台」：预览窗口里每秒一行的帧率（AVG / NOW / MIN）。
+                   跟上面那条分开：这是量性能用的诊断输出，默认关着。改完下次开预览时生效。 -->
+              <CfgSwitch :label="t('print-preview-stats')" :tip="t('print-preview-stats-tip')" v-model="config.printPreviewStats"></CfgSwitch>
+
+              <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
+              <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
+              <!-- 「日志」文件夹：运行日志按天写在这里（`<程序目录>/logs/dpr-YYYY-MM-DD.log`），
                    程序目录不可写时退回数据目录下的那一份。目录跟着程序走、不给改，
                    所以只读显示、点图标打开。 -->
               <CfgField :label="t('log-path')" :tip="t('log-path-tip')">
                 <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="logDirShown" :title="logDir" append-inner-icon="mdi-folder-open" @click:append-inner="openLogDir" @contextmenu="openLogDir"></v-text-field>
               </CfgField>
-              <CfgField :label="t('lang')">
-                <v-autocomplete density="compact" hide-details="auto" :items="SUPPORTED_LOCALES_NAME" item-title="name" item-value="code" v-model="locale"></v-autocomplete>
-              </CfgField>
-
-              <CfgSwitch :label="t('list-expand')" :tip="t('list-expand-tip')" v-model="listExpand"></CfgSwitch>
               <!-- 「资源包」文件夹：放资源包的地方就在程序旁边
                    （`<程序目录>/respack`，和 output / config 一个待遇），所以框里写 `.\respack`、
                    悬停提示给完整路径。这格不给改（目录固定），文字按常灰处理。 -->
@@ -658,9 +658,6 @@ const forkedDeps = [
               <CfgField :label="t('appendant-path')" :tip="t('appendant-path-tip')">
                 <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="appendantDirShown" :title="appendantDir" append-inner-icon="mdi-folder-open" @click:append-inner="openAppendantDir" @contextmenu="openAppendantDir"></v-text-field>
               </CfgField>
-              <CfgSwitch :label="t('preview-fullscreen')" :tip="t('preview-fullscreen-tip')" v-model="config.previewFullscreen"></CfgSwitch>
-              <!-- 「开启『游玩』按钮」：打开后「渲染」页那一排按钮里会多出「游玩」，用它直接进
-                    游戏里试谱（后端 `preview_play`）。归在「显示隐藏选项」里 —— 勾了它之后才出现。 -->
               <!-- 临时目录的根：DPR 的中间产物写在 `DPR` 子目录，DPE 的谱面缓存在 `DPE` 子目录。 -->
               <CfgField :label="t('temp-dir')" :tip="t('temp-dir-tip')">
                 <v-text-field :class="{ 'settings-path--default': !config.tempDir }" readonly density="compact" hide-details="auto" v-model="tempDirShown" :title="tempDirFull" @contextmenu="openTempDir">
@@ -722,11 +719,9 @@ const forkedDeps = [
               <CfgField :label="t('encoder-hevc')" :tip="t('encoder-tip')">
                 <v-text-field clearable density="compact" hide-details="auto" v-model="config.encoderHevc" :title="t('encoder-tip')" :append-inner-icon="getEncoderIcon" @click:append-inner="getEncoder(true)" @contextmenu="testEncoderHevc"></v-text-field>
               </CfgField>
-              <!-- 「输出日志到主终端」与「显示详细日志」两条**入口隐藏**：
-                   开关本体、locale 里的两个键、以及后端读 `config.printStderr` /
-                   `config.showDetailedLog` 全都原样留着 —— 旧配置里存过 true 也不会被改写，
+              <!-- 「显示详细日志」这条**入口隐藏**：开关本体、locale 里的两个键、以及后端读
+                   `config.showDetailedLog` 全都原样留着 —— 旧配置里存过 false 也不会被改写，
                    想改直接编辑 `config.toml`。要恢复就把下面的 v-if="false" 去掉。 -->
-              <CfgSwitch v-if="false" :label="t('print-stderr')" :tip="t('print-stderr-tip')" v-model="config.printStderr"></CfgSwitch>
               <CfgSwitch v-if="false" :label="t('show-detailed-log')" :tip="t('show-detailed-log-tip')" v-model="config.showDetailedLog"></CfgSwitch>
               <!-- 「显示隐藏选项」：这一条本身也要先被露出来 —— Ctrl+Shift+点击左栏的「设置」才出现，
                    之后按 localStorage 记着。勾上后「渲染」页末尾才会多出「谱面·调试」分区。 -->

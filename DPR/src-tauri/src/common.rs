@@ -3,9 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufWriter, Read, Write},
+    io::{BufWriter, IsTerminal, Read, Write},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
 };
 use tracing::info;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
@@ -14,6 +17,168 @@ use crate::render::RenderConfig;
 
 pub static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 pub static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 是否往控制台打日志（「输出日志到控制台」开关，落在 `AppConfig::print_stderr`）。
+///
+/// 它管的是**人看的那个终端**：信息与调试不打，警告与错误照打（见 `dps::log`）。
+/// 日志文件与「输出」面板不受影响 —— 那两路由渲染子进程的 stderr 另走一份。
+static CONSOLE_LOG: AtomicBool = AtomicBool::new(false);
+
+/// 设置「输出日志到控制台」，同时把日志层的终端那一路一起切过去。
+pub fn set_console_log(enabled: bool) {
+    CONSOLE_LOG.store(enabled, Ordering::Relaxed);
+    dps::log::set_console_enabled(enabled);
+}
+
+/// 控制台日志现在开着没有。
+pub fn console_log() -> bool {
+    CONSOLE_LOG.load(Ordering::Relaxed)
+}
+
+/// 打印一行到控制台，受「输出日志到控制台」开关控制。
+///
+/// 日志宏（`info!` 等）在 `dps::log` 里已经按同一个开关拦掉了；这个宏给那些不走日志层的
+/// 提示（启动早期的诊断、子进程 stderr 的转发）用，免得控制台一半有一半没有。
+/// `warn,` / `error,` 这两种语气带颜色，且开关关着也照打。
+#[macro_export]
+macro_rules! console {
+    (warn, $($arg:tt)*) => {
+        $crate::common::console_line($crate::common::Tone::Warn, format_args!($($arg)*))
+    };
+    (error, $($arg:tt)*) => {
+        $crate::common::console_line($crate::common::Tone::Error, format_args!($($arg)*))
+    };
+    ($($arg:tt)*) => {
+        $crate::common::console_line($crate::common::Tone::Info, format_args!($($arg)*))
+    };
+}
+
+/// 把 anyhow 的错误链压成一行：`外层：内层：最底层原因`。
+///
+/// 控制台与日志里 `{e:?}` 会展开成多行 `Caused by:`，一条报错撑成四五行；
+/// 这里改用「：」把各层连起来，报错行自己就把原因说完。
+pub fn error_chain(err: &anyhow::Error) -> String {
+    let mut out = String::new();
+    for (i, cause) in err.chain().enumerate() {
+        if i > 0 {
+            out.push('：');
+        }
+        out.push_str(&cause.to_string());
+    }
+    out
+}
+
+/// 控制台一行的语气：决定颜色，也决定开关关掉之后还打不打。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// 普通进度与提示 —— 受「输出日志到控制台」控制。
+    Info,
+    /// 警告（黄）：环境不对、配置退回默认之类，但程序还能跑 —— 开关关着也打。
+    Warn,
+    /// 错误（红）：这一步失败了 —— 开关关着也打。
+    Error,
+}
+
+/// 控制台认不认 ANSI 转义序列（`init_console` 里探一次）。
+static CONSOLE_VT: AtomicBool = AtomicBool::new(false);
+
+/// 启动时准备控制台：切到 UTF-8 代码页、打开 ANSI 转义处理。
+///
+/// 代码页不设成 65001 的话，中文在 936（GBK）的 cmd 窗口里是乱码；ANSI 转义在旧版
+/// Windows 控制台里不认，所以先试着打开，打不开就整场不打颜色码。
+pub fn init_console() {
+    #[cfg(windows)]
+    {
+        use winapi::um::consoleapi::{GetConsoleMode, SetConsoleMode};
+        use winapi::um::processenv::GetStdHandle;
+        use winapi::um::wincon::{SetConsoleOutputCP, ENABLE_VIRTUAL_TERMINAL_PROCESSING};
+
+        // 控制台的标准句柄号（winbase.h 里的常量）。
+        const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+        const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+
+        // 只影响输出；输入代码页留给控制台自己管。
+        unsafe { SetConsoleOutputCP(65001) };
+        let mut vt = true;
+        for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            unsafe {
+                let handle = GetStdHandle(which);
+                let mut mode = 0;
+                if handle.is_null()
+                    || GetConsoleMode(handle, &mut mode) == 0
+                    || SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) == 0
+                {
+                    vt = false;
+                }
+            }
+        }
+        CONSOLE_VT.store(vt, Ordering::Relaxed);
+    }
+}
+
+/// 这一行要不要带颜色码：接在终端上就带；渲染子进程的 stderr 被父进程收进「输出」面板，
+/// 面板按 ANSI 上色，所以父进程起子进程时会塞一个 `DPR_CONSOLE_ANSI` 让它也带上。
+fn wants_color() -> bool {
+    std::env::var_os("DPR_CONSOLE_ANSI").is_some()
+        || (CONSOLE_VT.load(Ordering::Relaxed) && std::io::stderr().is_terminal())
+}
+
+/// 打一行到控制台；`Tone::Info` 受开关控制，警告与错误不论开关都打。
+pub fn console_line(tone: Tone, args: std::fmt::Arguments) {
+    if tone == Tone::Info && !console_log() {
+        return;
+    }
+    let text = args.to_string();
+    let code = match tone {
+        Tone::Info => "",
+        Tone::Warn => "\x1b[33m",
+        Tone::Error => "\x1b[31m",
+    };
+    if code.is_empty() || !wants_color() {
+        eprintln!("{text}");
+    } else {
+        eprintln!("{code}{text}\x1b[0m");
+    }
+}
+
+/// 原地刷新一行进度：回车回到行首、清掉这一行，不换行。
+///
+/// 只在真的接在终端上时这么做 —— 输出被重定向或管道接走时，一堆 `\r` 只会把文件搞花。
+pub fn console_progress(text: &str) {
+    if !console_log() || !std::io::stderr().is_terminal() {
+        return;
+    }
+    // 认得转义序列就顺手清掉这一行（新内容比旧的短时不留尾巴），不认就只回行首。
+    if CONSOLE_VT.load(Ordering::Relaxed) {
+        eprint!("\r\x1b[2K{text}");
+    } else {
+        eprint!("\r{text}");
+    }
+}
+
+/// 进度打完之后收尾换行，免得后面的日志接在同一行尾巴上。
+pub fn console_progress_done() {
+    if !console_log() || !std::io::stderr().is_terminal() {
+        return;
+    }
+    eprintln!();
+}
+
+/// 改控制台窗口标题（最小化后任务栏上也能看到进度）。没有控制台时什么也不做。
+pub fn set_console_title(title: &str) {
+    #[cfg(windows)]
+    unsafe {
+        use winapi::um::wincon::{GetConsoleWindow, SetConsoleTitleW};
+
+        if GetConsoleWindow().is_null() {
+            return;
+        }
+        let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        SetConsoleTitleW(wide.as_ptr());
+    }
+    #[cfg(not(windows))]
+    let _ = title;
+}
 
 pub fn parse_args(
     args: Vec<String>,
@@ -51,7 +216,7 @@ pub fn parse_args(
                     args_input = Some(arg.to_string());
                 } else if args_now != 1 {
                     // the second argument is the mode.
-                    eprintln!("Unknown argument: {}", arg);
+                    crate::console!("[命令行] 未知参数：{}", arg);
                 }
                 args_now += 1;
             }
@@ -335,7 +500,7 @@ pub async fn remove_file_retry(path: &Path) -> Result<()> {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => {
                 if attempt == 0 {
-                    info!("remove {} is locked ({}), will retry", path.display(), err);
+                    info!("[文件] {} 被占用（{}），稍后重试", path.display(), err);
                 }
                 last_error = Some(err);
                 // 最后一次失败就别再等了，直接把错误抛出去
@@ -597,6 +762,9 @@ pub struct AppConfig {
     pub encoder_hevc: Option<String>,
     pub ffmpeg_path: Option<String>,
     pub print_stderr: bool,
+    /// 是否把预览的帧率（每秒一行）打到控制台。默认 `false`：那行是刷屏的主力，
+    /// 只在量性能时才需要。
+    pub print_preview_stats: bool,
     pub show_detailed_log: bool,
     /// 是否在「渲染」页显示「游玩」按钮（进入游戏内试玩）。默认 `false`。
     pub enable_play_button: bool,
@@ -624,6 +792,7 @@ impl Default for AppConfig {
             encoder_hevc: None,
             ffmpeg_path: None,
             print_stderr: false,
+            print_preview_stats: false,
             show_detailed_log: true,
             enable_play_button: true,
             preview_fullscreen: true,
@@ -656,6 +825,8 @@ pub fn save_config(config: AppConfig) -> Result<()> {
     let file = get_config_file()?;
     let table = config_table(&config, &AppConfig::default())?;
     std::fs::write(file, toml::to_string(&table)?)?;
+    // 「输出日志到控制台」改完立刻生效，不用重启。
+    set_console_log(config.print_stderr);
     Ok(())
 }
 
@@ -807,7 +978,7 @@ impl ZipPack {
         file.flush()?;
         drop(file);
         std::fs::rename(&self.part, &self.path)?;
-        info!("Create ZIP: {}", self.path.display());
+        info!("[文件] 创建压缩包 {}", self.path.display());
         Ok(())
     }
 }
@@ -858,6 +1029,21 @@ mod tests {
         let back: AppConfig = toml::from_str(&text).unwrap();
         assert!(back.high_performance);
         assert_eq!(back.preview_fullscreen, AppConfig::default().preview_fullscreen);
+    }
+
+    /// 「输出预览性能到控制台」是一个独立开关：按 camelCase 落盘、读回来还是 true。
+    #[test]
+    fn preview_stats_switch_round_trips() {
+        let changed = AppConfig {
+            print_preview_stats: true,
+            ..AppConfig::default()
+        };
+        let text = toml::to_string(&config_table(&changed, &AppConfig::default()).unwrap()).unwrap();
+        assert!(text.contains("printPreviewStats = true"), "{text}");
+        assert!(!text.contains("printStderr"), "{text}");
+        let back: AppConfig = toml::from_str(&text).unwrap();
+        assert!(back.print_preview_stats);
+        assert!(!back.print_stderr);
     }
 
     /// 预设里只留改过的渲染项；全默认的一份写成空表，读回来仍是默认值。

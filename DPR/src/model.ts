@@ -99,8 +99,8 @@ export interface Task {
  * 3. 若它是某个开关的下级，控件加 `:disabled="..."`，表达式要写**整条上级链**
  *    （例 `!renderBg || !renderBgDim` —— 上级被禁用后它自己的值仍然留着），并在 `ConfigView.vue`
  *    开头那段「高级页: 功能之间的先后关系」注释里登记；上级与下级要联动时照现有的 watch 写法加。
- * 4. i18n：`src/locales/zh-CN/config.json` 与 `src/locales/en/config.json` **都要**加标签键
- *    （只加一个语言时另一个会显示字面量 key）；提示键照邻居的写法（有的叫 `-tip`、有的叫 `-tips`）。
+ * 4. i18n：界面只有简体中文，标签键加在 `src/locales/zh-CN/config.json`（漏了会显示字面量 key）；
+ *    提示键照邻居的写法（有的叫 `-tip`、有的叫 `-tips`）。
  * 5. 后端步骤见 `src-tauri/src/render.rs` 里 `RenderConfig` 结构体上方的注释（字段 / `to_config()` /
  *    `impl Default` / `src-tauri/config.toml` 与 dev 运行时读的 exe 同目录 `config.toml`）。
  *    只有 DPS 渲染真的要用到这个值时才改它（`DPS/dps/src/config.rs` 加字段并在 `core/` 里读）。
@@ -868,6 +868,8 @@ export interface AppConfig {
   encoderHevc: string | null;
   ffmpegPath: string | null;
   printStderr: boolean;
+  /** 是否把预览帧率（每秒一行 AVG / NOW / MIN）打到控制台。默认关闭。 */
+  printPreviewStats: boolean;
   showDetailedLog: boolean;
   enablePlayButton: boolean;
   previewFullscreen: boolean;
@@ -886,6 +888,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   encoderHevc: null,
   ffmpegPath: null,
   printStderr: false,
+  printPreviewStats: false,
   showDetailedLog: true,
   enablePlayButton: true,
   previewFullscreen: true,

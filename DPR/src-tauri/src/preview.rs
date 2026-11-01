@@ -61,7 +61,7 @@ impl Scene for BaseScene {
 pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
     let (fs, _, config, info) = generate_resource(cmd, false)
         .await
-        .context("failed to prepare preview resources")?;
+        .context("准备预览资源失败")?;
 
     // 分屏游玩时这个进程是主窗口还是副窗口；不是分屏就是 `None`。
     let split = crate::split::Role::from_env();
@@ -96,6 +96,10 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
     let preview_fullscreen = crate::common::read_config()
         .map(|config| config.preview_fullscreen)
         .unwrap_or(true);
+    // 「输出预览性能到控制台」：每秒一行的帧率是刷屏的主力，默认不打。
+    let print_preview_stats = crate::common::read_config()
+        .map(|config| config.print_preview_stats)
+        .unwrap_or(false);
     match &split {
         // 分屏要两个窗口并排：位置和大小由 `crate::split::place_window` 指定，这里先退全屏。
         Some(role) => {
@@ -202,16 +206,19 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
             let real_now_fps = (1. / flash_end_during) as u32;
             let avg_fps = frame_times.iter().map(|(_, fps)| fps).sum::<u32>() / real_avg_fps;
             let min_fps = frame_times.iter().map(|(_, fps)| fps).min().unwrap_or(&0);
-            eprintln!(
-                "| AVG: {}|{} NOW: {}({:.4}ms)|{}({:.4}ms), MIN: {}",
-                real_avg_fps,
-                avg_fps,
-                real_now_fps,
-                flash_end_during * 1000.,
-                now_fps,
-                frame_end_during * 1000.,
-                min_fps
-            );
+            // 每秒打一行。窗口窄，行要短：AVG 前一个数是这一秒实际过去的帧数，后一个是这些帧
+            // 的平均渲染帧率（不含等呈现的那段时间）；NOW 括号里是含呈现等待的整帧耗时。
+            // 只在「输出预览性能到控制台」打开时打 —— 默认关着，免得刷屏。
+            if print_preview_stats {
+                eprintln!(
+                    "[预览] AVG {} FPS / {} FPS | NOW {} FPS ({:.2}ms) | MIN {} FPS",
+                    real_avg_fps,
+                    avg_fps,
+                    real_now_fps,
+                    flash_end_during * 1000.,
+                    min_fps
+                );
+            }
         }
     }
 

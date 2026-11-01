@@ -1,11 +1,11 @@
 use crate::{
     cmd_hidden,
-    common::{get_output_dir, get_tasks_file, read_config, remove_file_retry, strip_default_json},
+    common::{get_output_dir, get_tasks_file, remove_file_retry, strip_default_json},
     ipc::IPCEvent,
     render::{RenderConfig, RenderParams},
     ASSET_PATH,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Local;
 use humantime::format_duration;
 use dps::{fs, info::ChartInfo};
@@ -95,7 +95,7 @@ fn read_saved_tasks() -> Vec<SavedTask> {
     let file = match get_tasks_file() {
         Ok(file) => file,
         Err(err) => {
-            error!("Failed to locate tasks.json: {err:?}");
+            error!("[任务] 找不到任务记录文件：{}", crate::common::error_chain(&err));
             return Vec::new();
         }
     };
@@ -105,7 +105,7 @@ fn read_saved_tasks() -> Vec<SavedTask> {
     let text = match std::fs::read_to_string(&file) {
         Ok(text) => text,
         Err(err) => {
-            error!("Failed to read tasks.json: {err:?}");
+            error!("[任务] 读不出任务记录文件 {}：{}", file.display(), err);
             return Vec::new();
         }
     };
@@ -117,12 +117,12 @@ fn read_saved_tasks() -> Vec<SavedTask> {
             // 顺手把旧版写下的「整份配置」快照改写成裁剪过的：不这么做，老文件要等到下一次
             // 队列变动才会变小。写失败只记日志，原文件照用。
             if let Err(err) = write_saved_tasks(&saved) {
-                error!("Failed to trim tasks.json: {err:?}");
+                error!("[任务] 清理任务记录文件失败：{}", crate::common::error_chain(&err));
             }
             saved
         }
         Err(err) => {
-            error!("Failed to parse tasks.json: {err:?}");
+            error!("[任务] 任务记录文件 {} 解析失败：{}", file.display(), err);
             Vec::new()
         }
     }
@@ -156,7 +156,7 @@ async fn save_tasks(tasks: &Arc<Mutex<Vec<Arc<Task>>>>) {
         saved
     };
     if let Err(err) = write_saved_tasks(&saved) {
-        error!("Failed to save task queue: {err:?}");
+        error!("[任务] 保存任务队列失败：{}", crate::common::error_chain(&err));
     }
 }
 
@@ -178,13 +178,13 @@ async fn restore_queue(tasks: &Arc<Mutex<Vec<Arc<Task>>>>, next_id: &AtomicU32) 
                 max_id = max_id.max(id);
                 restored.push(Arc::new(task));
             }
-            Err(err) => error!("Failed to restore task #{id}: {err:?}"),
+            Err(err) => error!("[任务] 恢复 #{id} 失败：{}", crate::common::error_chain(&err)),
         }
     }
     if restored.is_empty() {
         return;
     }
-    info!("Restored {} task(s) from tasks.json", restored.len());
+    info!("[任务] 从任务记录里恢复 {} 个任务", restored.len());
     // id 只增不减（见 `next_id` 的注释）：新任务不能和读回来的任务撞 id
     next_id.fetch_max(max_id + 1, Ordering::Relaxed);
     tasks.lock().await.extend(restored);
@@ -368,10 +368,17 @@ pub struct Task {
 
 impl Task {
     async fn new(id: u32, params: RenderParams) -> Result<Self> {
-        let mut fs = fs::fs_from_file(&params.path)?;
+        let mut fs = fs::fs_from_file(&params.path)
+            .with_context(|| format!("读取谱面失败：{}", params.path.display()))?;
         let info = params.info.clone();
         let mut cover = NamedTempFile::new()?;
-        cover.write_all(&fs.load_file(&info.illustration).await?)?;
+        cover.write_all(&fs.load_file(&info.illustration).await.with_context(|| {
+            format!(
+                "读取谱面里的 {} 失败：{}",
+                info.illustration,
+                params.path.display()
+            )
+        })?)?;
 
         let file_name = generate_filename(&info, &params.config, Some(params.path.as_path()));
 
@@ -446,7 +453,7 @@ impl Task {
         }
 
         info!(
-            "Task #{} '{}' started ({})",
+            "[任务] #{}「{}」开始（{}）",
             self.id,
             self.name,
             self.params.path.display()
@@ -457,6 +464,9 @@ impl Task {
         let mut child = cmd_hidden(std::env::current_exe()?)
             .arg("render")
             .arg(ASSET_PATH.get().unwrap())
+            // 它的 stderr 会被收进「输出」面板，面板按 ANSI 上色，所以让它照常带颜色码；
+            // 落进日志文件之前 `log_line` 会把颜色码剥掉。
+            .env("DPR_CONSOLE_ANSI", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -487,17 +497,19 @@ impl Task {
         let mut pause_written = false;
         let mut total_pause_duration = Duration::ZERO;
         let mut pause_start: Option<Instant> = None;
-
-        let config = read_config()?;
+        // 控制台那行原地刷新的进度多久更新一次（面板走状态，不用这么勤）。
+        let mut last_console_line = Instant::now();
 
         loop {
             tokio::select! {
                 stderr_result = stderr_lines.next_line() => {
                     let line = stderr_result?;
                     let Some(line) = line else { break };
-                    if config.print_stderr {
-                        eprintln!("{}", line);
-                    }
+                    // 上面可能正挂着一行没换行的渲染进度，先把那一行清掉，别让日志接在它尾巴上。
+                    crate::common::console_progress("");
+                    // 回不回显到控制台由「输出日志到控制台」决定；下面两行（面板与日志文件）
+                    // 不受它影响。
+                    crate::console!("{}", line);
                     // 子进程自己不写日志文件：它的每行 stderr 在这里同时进「输出」面板和日志文件
                     // （面板里前端按 ANSI 上色，`log_line` 落盘前会剥掉颜色码）。
                     crate::common::log_line(&line);
@@ -552,11 +564,29 @@ impl Task {
                                 last_update_fps_sec = sec;
                             }
                             let estimate = total_frame.saturating_sub(frame_count).max(1) as f64 / last_fps.max(1) as f64;
+                            let progress = frame_count as f64 / total_frame as f64;
                             *self.status.lock().await = TaskStatus::Rendering {
-                                progress: frame_count as f64 / total_frame as f64,
+                                progress,
                                 fps: last_fps as u64,
                                 estimate,
                             };
+                            // 控制台进度一行刷完就覆盖，别每秒堆一行。开关关着、或者输出被重定向
+                            // 时 `console_progress` 自己什么都不做。
+                            if last_console_line.elapsed() >= Duration::from_millis(200) {
+                                last_console_line = Instant::now();
+                                crate::common::console_progress(&format!(
+                                    "[渲染] {:.0}%（{}/{} 帧，{} 帧/秒，剩余约 {:.0}s）",
+                                    progress * 100.,
+                                    frame_count,
+                                    total_frame,
+                                    last_fps,
+                                    estimate
+                                ));
+                                crate::common::set_console_title(&format!(
+                                    "DPRecorder — 渲染 {:.0}%",
+                                    progress * 100.
+                                ));
+                            }
                         },
                         IPCEvent::Paused => {
                             let mut status = self.status.lock().await;
@@ -582,8 +612,10 @@ impl Task {
                             }
                         },
                         IPCEvent::Done(duration) => {
-                            info!("Task #{} completed in {}", self.id, format_duration(Duration::from_secs_f64(duration)));
+                            info!("[任务] #{} 完成，用时 {}", self.id, format_duration(Duration::from_secs_f64(duration)));
                             child.wait().await?;
+                            crate::common::console_progress_done();
+                            crate::common::set_console_title("DPRecorder");
 
                             *self.status.lock().await = TaskStatus::Done {
                                 duration,
@@ -605,21 +637,23 @@ impl Task {
                     }
                 } => {
                     if self.request_cancel.load(Ordering::Relaxed) {
-                        info!("Task #{} cancelled", self.id);
+                        info!("[任务] #{} 已取消", self.id);
                         child.kill().await?;
+                        crate::common::console_progress_done();
+                        crate::common::set_console_title("DPRecorder");
                         *self.status.lock().await = TaskStatus::Canceled {
                             output: output_stderr,
                         };
                         return Ok(());
                     }
                     if self.request_pause.load(Ordering::Relaxed) && !pause_written {
-                        info!("Task #{} paused", self.id);
+                        info!("[任务] #{} 已暂停", self.id);
                         let _ = stdin.write_all(b"pause\n").await;
                         let _ = stdin.flush().await;
                         pause_written = true;
                     }
                     if !self.request_pause.load(Ordering::Relaxed) && pause_written {
-                        info!("Task #{} resumed", self.id);
+                        info!("[任务] #{} 已继续", self.id);
                         let _ = stdin.write_all(b"resume\n").await;
                         let _ = stdin.flush().await;
                         pause_written = false;
@@ -628,8 +662,10 @@ impl Task {
             }
         }
 
-        info!("Task #{} not completed", self.id);
+        info!("[任务] #{} 未完成", self.id);
         let status = child.wait().await?;
+        crate::common::console_progress_done();
+        crate::common::set_console_title("DPRecorder");
         if !status.success() {
             *self.status.lock().await = TaskStatus::Failed {
                 output: format!(
@@ -722,7 +758,7 @@ impl TaskQueue {
                             *status = TaskStatus::Canceled {
                                 output: String::new(),
                             };
-                            info!("Task #{} canceled", task.id);
+                            info!("[任务] #{} 已取消", task.id);
                             canceled_any = true;
                         }
                     }
@@ -758,10 +794,13 @@ impl TaskQueue {
                     let finished_tasks = Arc::clone(&worker_tasks);
                     tokio::spawn(async move {
                         if let Err(err) = task.run().await {
-                            error!("Task #{} failed: {:?}", task.id, err);
+                            // 失败时进度行还挂在最后一行上，先收尾，别让错误信息接在进度后面
+                            crate::common::console_progress_done();
+                            crate::common::set_console_title("DPRecorder");
+                            error!("[任务] #{} 失败：{}", task.id, crate::common::error_chain(&err));
                             let mut status = task.status.lock().await;
                             *status = TaskStatus::Failed {
-                                output: format!("{err:?}"),
+                                output: crate::common::error_chain(&err),
                             };
                         }
                         drop(permit);
@@ -781,14 +820,20 @@ impl TaskQueue {
             next_id: Arc::clone(&next_id),
         };
 
-        // 读回上次的队列同样放后台：`Task::restore` 要读谱面、解曲绘（async），
-        // 不能在 `new()` 这个同步函数里干等。
-        let restore_tasks = Arc::clone(&queue.tasks);
-        tokio::spawn(async move {
-            restore_queue(&restore_tasks, &next_id).await;
-        });
-
         queue
+    }
+
+    /// 读回上次的队列。
+    ///
+    /// 必须等 `CONFIG_DIR` 登记好之后再调用：队列文件的位置取自它，早于那一步调用只会
+    /// 读到「没有任务记录」。读回本身放到后台跑 —— `Task::restore` 要读谱面、解曲绘
+    /// （async），不能在 `new()` 这种同步位置干等。
+    pub fn start_restore(&self) {
+        let tasks = Arc::clone(&self.tasks);
+        let next_id = Arc::clone(&self.next_id);
+        tokio::spawn(async move {
+            restore_queue(&tasks, &next_id).await;
+        });
     }
 
     pub async fn post(&self, params: RenderParams) -> Result<u32> {
@@ -836,7 +881,7 @@ impl TaskQueue {
         let Some(task) = self.find(id).await else {
             return Ok(false);
         };
-        info!("Task #{}(id: {}) deleted", task.id, id);
+        info!("[任务] 已删除 #{}（id: {}）", task.id, id);
         // 还在跑的任务被移除时要先让它停下来：`remove` 只是把它从列表里摘出去，
         // worker 手里那个 `Arc<Task>` 照样继续渲染 —— 不置取消位的话它会变成一条
         // 「看不见的任务」，继续写文件、继续占着那一格并发额度（「批量移除后还在渲染」就是它）。
