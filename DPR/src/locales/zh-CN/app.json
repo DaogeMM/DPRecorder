@@ -4,6 +4,7 @@
   "batch": "批量",
   "chart-list": "谱面列表",
   "chart-mod": "谱面修改",
+  "chart-mod-config": "配置",
   "tasks": "任务",
   "settings": "设置",
   "settings-general": "通用设置",
@@ -50,8 +51,5 @@
   "dpe-output-dir-tip": "谱面修改与噪域播放器的产物都放在这里（各自的子目录）；位置固定在程序旁边，不可修改",
   "dpe-col-preview": "预览",
   "dpe-col-delete": "移除",
-  "dpe-open-render": "在渲染页打开",
-  "chart-strip-width": "选曲弹窗宽度（%）",
-  "chart-strip-width-tip": "谱面列表右下角那条「已选几首 + 曲绘」的悬浮条有多宽；也可以在界面上直接拖它改位置",
-  "chart-strip-more": "等共 {n} 张谱"
+  "dpe-open-render": "在渲染页打开"
 }

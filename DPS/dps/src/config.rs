@@ -399,6 +399,14 @@ pub struct Config {
     /// 合成噪域，屏幕上只有每个按键周围的长方形是噪域 —— 与「除了按键，哪里都是噪域」
     /// 正好相反。矩形上不印噪域编号。
     pub block_area_force_invert: bool,
+    /// 「保留原噪域」：强制定位不再**丢掉**谱面自带的 `blockAreaList`，而是把它与全屏那块
+    /// 合成噪域**叠在一起画**（原版噪域排在合成块之后 ⇒ 画在它上层，编号/贴图/简化文字都
+    /// 照旧）—— 默认关闭，即原来的行为「整层换成合成全屏噪域」。
+    ///
+    /// 只在 `block_area_force_position` 打开时有意义。与「反向强制定位」同时打开时，谱面
+    /// 自带的噪域照常保留，按键周围那圈矩形也照常是噪域。早退判据不受影响：开着强制定位
+    /// 本就不会因为谱面没噪域而提前返回。
+    pub block_area_force_keep_noise: bool,
     /// 「岩浆噪域」：把**完整噪域**的填充换成一张按屏幕平铺的 Minecraft 贴图 ——
     /// 还没生效（`appearTime..enableTime`）印下界岩 netherrock，生效中以及生效结束之后
     /// 印岩浆 lava（`lava.gif` 的 16 帧、每帧 160ms、全场共用同一个时钟循环播放）。
@@ -842,6 +850,7 @@ impl Default for Config {
             block_area_force_time: 3.0,
             block_area_force_delay: 0.3,
             block_area_force_invert: false,
+            block_area_force_keep_noise: false,
             block_area_lava: false,
             water_screen: false,
             water_opacity: 0.5,

@@ -213,7 +213,7 @@ const {
   waterScreen, waterOpacity, waterFlowSpeed, waterCellScale, waterHp, waterDrownDelay, waterDamage,
   waterDamageInterval, waterDeathTime, waterDeathParticles, waterSfxVolume, waterSfxMax,
   blockAreaForcePosition, blockAreaForceHeight, blockAreaForceWidth, blockAreaForceShow,
-  blockAreaForceTime, blockAreaForceDelay, blockAreaForceInvert, blockAreaColor,
+  blockAreaForceTime, blockAreaForceDelay, blockAreaForceInvert, blockAreaForceKeepNoise, blockAreaColor,
   blockAreaNormalColor, simplifiedBlockAreaTextColor, simplifiedBlockAreaTextPaleColor,
   blockAreaAlpha, blockAreaDensity, blockAreaSpark, blockAreaNoiseBlotch, blockAreaDisplaceStrength,
   blockAreaHover, blockAreaHoverRadius,
@@ -1154,6 +1154,7 @@ defineExpose({
             <div class="cfg-grid">
               <CfgSwitch :label="t('block-area-force-show')" v-model="blockAreaForceShow" :disabled="!renderBlockArea" :tip="t('block-area-force-show-tip')" />
               <CfgSwitch :label="t('block-area-force-invert')" v-model="blockAreaForceInvert" :disabled="!renderBlockArea" :tip="t('block-area-force-invert-tip')" />
+              <CfgSwitch :label="t('block-area-force-keep-noise')" v-model="blockAreaForceKeepNoise" :disabled="!renderBlockArea" :tip="t('block-area-force-keep-noise-tip')" />
               <CfgField :label="t('block-area-force-height')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-force-height-tip')" v-model="blockAreaForceHeight" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('block-area-force-width')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-force-width-tip')" v-model="blockAreaForceWidth" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
               <CfgField :label="t('block-area-force-time')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-force-time-tip')" v-model="blockAreaForceTime" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>

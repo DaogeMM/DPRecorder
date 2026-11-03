@@ -16,6 +16,7 @@ import { sameRenderConfig, useRenderConfig } from '@/config/useRenderConfig';
 import type { WorkingState } from '@/config/types';
 import { finishPageLoad } from '@/pageLoad';
 
+import BatchView from '@/BatchView.vue';
 import CfgField from '@/components/CfgField.vue';
 import CfgSwitch from '@/components/CfgSwitch.vue';
 import PhiGroup from '@/components/PhiGroup.vue';
@@ -36,6 +37,9 @@ import PhiSubMenu from '@/components/PhiSubMenu.vue';
  *   - 写回时把 `dirty` 置真：渲染页那边会把预设名显示成 `*原名`，跟用户在渲染页手改的效果一致。
  *
  * 顺序表（`chartModOrder`）的规则在 `./config/chartModOrder`，两页共用同一份实现。
+ *
+ * 谱面列表也在这页顶部（原来单独一页，是批量页开 `listOnly` + `scope: 'dpe'` 的那份）：勾上的谱面
+ * 就是下面要改的源文件，勾几张就一次生成几张 —— 挑谱面和改谱面在同一屏，不用来回切页。
  */
 const { ui, buildConfig, applyConfig } = useRenderConfig();
 
@@ -148,7 +152,7 @@ const outputs = ref<{ name: string; path: string; modified: number }[]>([]);
 async function refreshOutputs() {
   try {
     outputDir.value = (await invoke('get_dpe_modify_dir_path')) as string;
-    outputs.value = (await invoke('tool_video_outputs', {
+    outputs.value = (await invoke('noise_player_outputs', {
       dir: outputDir.value,
     })) as { name: string; path: string; modified: number }[];
   } catch (error) {
@@ -395,8 +399,18 @@ onMounted(async () => {
   <div class="render-view">
     <div class="render-view__scroll scroll-mask config-scroll">
       <div class="config-root">
-        <PhiGroup id="grp-chart" :title="t('title.chart')">
-      <!-- ===== 谱面修改 =====
+        <!-- ===== 谱面列表 =====
+             批量页那份列表（`listOnly` + `scope: 'dpe'`：只有全选 / 反选 / 移除 / 取消，没有批量渲染那条
+             操作条），整个组件嵌在这里，勾选状态与存储键都没变，所以下面按勾选生成、谱面融合挑同名的几张
+             都照旧。它是一级分组（与「谱面」「输出」同级），标题上的勾选数让收起时也知道选了几张。
+             `<div class="dpe-charts">` 给它一个确定高度 —— `.batch-view` 是 `flex: 1`，没有高度
+             的话列表算不出该滚多长。 -->
+        <PhiGroup id="grp-dpe-charts" :title="t('chart-list')">
+          <div class="dpe-charts"><BatchView list-only scope="dpe"></BatchView></div>
+        </PhiGroup>
+
+        <PhiGroup id="grp-chart" :title="t('chart-mod-config')">
+      <!-- ===== 配置 =====
            这些功能同属一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏
            走的是同一份转换，dps 里的入口只有一个（`Chart::apply_chart_mods`）。
            **七类互斥**：纯配置谱面 / 定轨谱面 / 隐藏按键 / 陈列按键 / 固定流速 / 谱面融合 / 按键那一类，
@@ -408,85 +422,85 @@ onMounted(async () => {
            后面的功能就在它改完的谱面上再改一遍。载入预设 / 手改 config.toml 里没这张表时按下面这个行序补齐。
            只有按键那一类有齿轮序号；纯配置谱面、隐藏按键、陈列按键都是单独一步。每一行左边 ✅/❌ 是
            这一项的开关、齿轮里是它的参数。 -->
-      <PhiSection id="sec-chart-mod" :title="t('title.chart-mod')">
+      <PhiSection id="sec-chart-mod" :title="t('chart-mod')">
         <div class="cfg-grid">
-          <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
-               横向位置；判定时刻接近竖直的按键另分到左右两条竖判定线上；判定时刻落在噪域里的按键
-               在它周围长出一块噪域矩形。开关与它的参数（判定线高度 / 按键流速 / 竖判定线的两个参数 /
-               按键噪域与它的四个参数：矩形高度 / 矩形宽度 / 时间窗 / 延后视窗）同处这一个齿轮弹窗里。 -->
-          <PhiSubMenu id="sec3-pure-config" :label="t('pure-config-chart')" :tip="t('pure-config-chart-tip')" v-model="pureConfigChart">
-            <div class="cfg-grid">
-              <CfgSwitch :label="t('pure-config-chart-side-lines')" v-model="pureConfigChartSideLines" :tip="t('pure-config-chart-side-lines-tip')" />
-              <CfgSwitch :label="t('pure-config-chart-noise')" v-model="pureConfigChartNoise" :tip="t('pure-config-chart-noise-tip')" />
-              <CfgField :label="t('pure-config-chart-line-y')" :tip="t('pure-config-chart-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-speed')" :tip="t('pure-config-chart-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-side-x')" :tip="t('pure-config-chart-side-x-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartSideX" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-angle')" :tip="t('pure-config-chart-angle-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartAngle" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero, RULES.less100]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-height')" :tip="t('pure-config-chart-noise-height-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseHeight" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-width')" :tip="t('pure-config-chart-noise-width-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseWidth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-time')" :tip="t('pure-config-chart-noise-time-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseTime" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('pure-config-chart-noise-delay')" :tip="t('pure-config-chart-noise-delay-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseDelay" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
-          <!-- 「隐藏按键」：按键整颗不画出来，判定照常按时间那条链路走（不搬 modify 的隐藏机制，
-               而是在渲染前给按键打一个「不画」的标记）。没有齿轮、也没有序号 —— 它是单独一类，
-               与纯配置谱面 / 定轨谱面 / 陈列按键 / 按键那一类互斥。 -->
-          <CfgSwitch :label="t('chart-mod-hide')" v-model="chartModHide" :tip="t('chart-mod-hide-tip')" />
-          <!-- 「陈列按键」会把整张谱面收到一条基准线上，等于重排一遍，所以它和纯配置谱面 / 定轨
-               谱面 / 隐藏按键 / 固定流速一样是单独一类：没有序号，与上面那几类互斥（见本分区开头的注释）。 -->
-          <!-- 再往后是按键那六个功能（见 dps 的 `core::chart_mod`），各占一个齿轮弹窗、开关就是齿轮
-               左边那个 ✅/❌。它们可以同时开，齿轮左边那个数字是这一次转换里的落地次序（1 = 最先落地），
-               顺序就是勾选的先后，见本分区开头的注释。 -->
-          <PhiSubMenu id="sec3-chart-mod-arrange" :label="t('chart-mod-arrange')" :tip="t('chart-mod-arrange-tip')" v-model="chartModArrange">
-            <div class="cfg-grid">
-              <CfgField :label="t('chart-mod-arrange-gap')" :tip="t('chart-mod-arrange-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-              <CfgField :label="t('chart-mod-arrange-line-y')" :tip="t('chart-mod-arrange-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-              <CfgField :label="t('chart-mod-arrange-speed')" :tip="t('chart-mod-arrange-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
-          <!-- 「谱面融合」：把勾中的同一首歌的几个难度拼成一张谱面（判据与批量页的融合一致：
-               至少两张、曲名与音乐文件都对得上、格式相同），产出照样落在本页的输出表里。
-               整张拼一张，所以它和上面几类、下面按键那一类互斥；它不改 dps 的配置，
-               没有齿轮、没有序号，也不进 `chartModOrder`。 -->
-          <CfgSwitch :label="t('chart-mod-merge')" :tip="t('chart-mod-merge-tip')" v-model="chartModMerge" />
-          <!-- 「按键替换」是四组映射：每种源键型各一个下拉框，选成它自己就等于不动。 -->
-          <PhiSubMenu id="sec3-chart-mod-replace" :label="t('chart-mod-replace')" :tip="t('chart-mod-replace-tip')" :badge="chartModIndex('replace')" v-model="chartModReplace">
-            <div class="cfg-grid">
-              <CfgField :label="t('note-types').split(',')[0]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceTap"></v-autocomplete></CfgField>
-              <CfgField :label="t('note-types').split(',')[1]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceDrag"></v-autocomplete></CfgField>
-              <CfgField :label="t('note-types').split(',')[2]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceHold"></v-autocomplete></CfgField>
-              <CfgField :label="t('note-types').split(',')[3]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceFlick"></v-autocomplete></CfgField>
-            </div>
-          </PhiSubMenu>
-          <PhiSubMenu id="sec3-chart-mod-random" :label="t('chart-mod-random')" :tip="t('chart-mod-random-tip')" :badge="chartModIndex('random')" v-model="chartModRandom"></PhiSubMenu>
-          <PhiSubMenu id="sec3-chart-mod-random-speed" :label="t('chart-mod-random-speed')" :tip="t('chart-mod-random-speed-tip')" :badge="chartModIndex('random_speed')" v-model="chartModRandomSpeed">
-            <div class="cfg-grid">
-              <CfgField :label="t('chart-mod-random-speed-min')" :tip="t('chart-mod-random-speed-min-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomSpeedMin" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('chart-mod-random-speed-max')" :tip="t('chart-mod-random-speed-max-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomSpeedMax" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
-          <PhiSubMenu id="sec3-chart-mod-random-pos" :label="t('chart-mod-random-pos')" :tip="t('chart-mod-random-pos-tip')" :badge="chartModIndex('random_pos')" v-model="chartModRandomPos">
-            <div class="cfg-grid">
-              <CfgField :label="t('chart-mod-random-pos-range')" :tip="t('chart-mod-random-pos-range-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomPosRange" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
-          <PhiSubMenu id="sec3-chart-mod-spread-hold" :label="t('chart-mod-spread-hold')" :tip="t('chart-mod-spread-hold-tip')" :badge="chartModIndex('spread')" v-model="chartModSpreadHold">
-            <div class="cfg-grid">
-              <CfgField :label="t('chart-mod-spread-hold-note-type')" :tip="t('chart-mod-spread-hold-note-type-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModSpreadHoldNoteType"></v-autocomplete></CfgField>
-              <CfgField :label="t('chart-mod-spread-hold-interval')" :tip="t('chart-mod-spread-hold-interval-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModSpreadHoldInterval" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
-          <PhiSubMenu id="sec3-chart-mod-extend-hold" :label="t('chart-mod-extend-hold')" :tip="t('chart-mod-extend-hold-tip')" :badge="chartModIndex('extend')" v-model="chartModExtendHold">
-            <div class="cfg-grid">
-              <CfgField :label="t('chart-mod-extend-hold-blank')" :tip="t('chart-mod-extend-hold-blank-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModExtendHoldBlank" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
-          <PhiSubMenu id="sec3-chart-mod-copy" :label="t('chart-mod-copy')" :tip="t('chart-mod-copy-tip')" :badge="chartModIndex('copy')" v-model="chartModCopy">
-            <div class="cfg-grid">
-              <CfgField :label="t('chart-mod-copy-times')" :tip="t('chart-mod-copy-times-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModCopyTimes" type="number" :rules="[RULES.notEmpty, RULES.int, RULES.positive]"></v-text-field></CfgField>
-              <CfgField :label="t('chart-mod-copy-offset')" :tip="t('chart-mod-copy-offset-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!chartModCopy" v-model="chartModCopyOffset" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
-            </div>
-          </PhiSubMenu>
+        <!-- 「纯配置谱面」：把判定线的移动 / 旋转 / 消失 / 速度拍平成常量，只保留每个按键在屏幕上的
+             横向位置；判定时刻接近竖直的按键另分到左右两条竖判定线上；判定时刻落在噪域里的按键
+             在它周围长出一块噪域矩形。开关与它的参数（判定线高度 / 按键流速 / 竖判定线的两个参数 /
+             按键噪域与它的四个参数：矩形高度 / 矩形宽度 / 时间窗 / 延后视窗）同处这一个齿轮弹窗里。 -->
+        <PhiSubMenu id="sec3-pure-config" :label="t('pure-config-chart')" :tip="t('pure-config-chart-tip')" v-model="pureConfigChart">
+          <div class="cfg-grid">
+            <CfgSwitch :label="t('pure-config-chart-side-lines')" v-model="pureConfigChartSideLines" :tip="t('pure-config-chart-side-lines-tip')" />
+            <CfgSwitch :label="t('pure-config-chart-noise')" v-model="pureConfigChartNoise" :tip="t('pure-config-chart-noise-tip')" />
+            <CfgField :label="t('pure-config-chart-line-y')" :tip="t('pure-config-chart-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+            <CfgField :label="t('pure-config-chart-speed')" :tip="t('pure-config-chart-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="pureConfigChartSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+            <CfgField :label="t('pure-config-chart-side-x')" :tip="t('pure-config-chart-side-x-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartSideX" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+            <CfgField :label="t('pure-config-chart-angle')" :tip="t('pure-config-chart-angle-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartSideLines" v-model="pureConfigChartAngle" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero, RULES.less100]"></v-text-field></CfgField>
+            <CfgField :label="t('pure-config-chart-noise-height')" :tip="t('pure-config-chart-noise-height-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseHeight" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            <CfgField :label="t('pure-config-chart-noise-width')" :tip="t('pure-config-chart-noise-width-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseWidth" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            <CfgField :label="t('pure-config-chart-noise-time')" :tip="t('pure-config-chart-noise-time-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseTime" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            <CfgField :label="t('pure-config-chart-noise-delay')" :tip="t('pure-config-chart-noise-delay-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!pureConfigChartNoise" v-model="pureConfigChartNoiseDelay" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+          </div>
+        </PhiSubMenu>
+        <!-- 「隐藏按键」：按键整颗不画出来，判定照常按时间那条链路走（不搬 modify 的隐藏机制，
+             而是在渲染前给按键打一个「不画」的标记）。没有齿轮、也没有序号 —— 它是单独一类，
+             与纯配置谱面 / 定轨谱面 / 陈列按键 / 按键那一类互斥。 -->
+        <CfgSwitch :label="t('chart-mod-hide')" v-model="chartModHide" :tip="t('chart-mod-hide-tip')" />
+        <!-- 「陈列按键」会把整张谱面收到一条基准线上，等于重排一遍，所以它和纯配置谱面 / 定轨
+             谱面 / 隐藏按键 / 固定流速一样是单独一类：没有序号，与上面那几类互斥（见本分区开头的注释）。 -->
+        <!-- 再往后是按键那六个功能（见 dps 的 `core::chart_mod`），各占一个齿轮弹窗、开关就是齿轮
+             左边那个 ✅/❌。它们可以同时开，齿轮左边那个数字是这一次转换里的落地次序（1 = 最先落地），
+             顺序就是勾选的先后，见本分区开头的注释。 -->
+        <PhiSubMenu id="sec3-chart-mod-arrange" :label="t('chart-mod-arrange')" :tip="t('chart-mod-arrange-tip')" v-model="chartModArrange">
+          <div class="cfg-grid">
+            <CfgField :label="t('chart-mod-arrange-gap')" :tip="t('chart-mod-arrange-gap-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeGap" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+            <CfgField :label="t('chart-mod-arrange-line-y')" :tip="t('chart-mod-arrange-line-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeLineY" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+            <CfgField :label="t('chart-mod-arrange-speed')" :tip="t('chart-mod-arrange-speed-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModArrangeSpeed" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+          </div>
+        </PhiSubMenu>
+        <!-- 「谱面融合」：把勾中的同一首歌的几个难度拼成一张谱面（判据与批量页的融合一致：
+             至少两张、曲名与音乐文件都对得上、格式相同），产出照样落在本页的输出表里。
+             整张拼一张，所以它和上面几类、下面按键那一类互斥；它不改 dps 的配置，
+             没有齿轮、没有序号，也不进 `chartModOrder`。 -->
+        <CfgSwitch :label="t('chart-mod-merge')" :tip="t('chart-mod-merge-tip')" v-model="chartModMerge" />
+        <!-- 「按键替换」是四组映射：每种源键型各一个下拉框，选成它自己就等于不动。 -->
+        <PhiSubMenu id="sec3-chart-mod-replace" :label="t('chart-mod-replace')" :tip="t('chart-mod-replace-tip')" :badge="chartModIndex('replace')" v-model="chartModReplace">
+          <div class="cfg-grid">
+            <CfgField :label="t('note-types').split(',')[0]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceTap"></v-autocomplete></CfgField>
+            <CfgField :label="t('note-types').split(',')[1]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceDrag"></v-autocomplete></CfgField>
+            <CfgField :label="t('note-types').split(',')[2]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceHold"></v-autocomplete></CfgField>
+            <CfgField :label="t('note-types').split(',')[3]" :tip="t('chart-mod-replace-row-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModReplaceFlick"></v-autocomplete></CfgField>
+          </div>
+        </PhiSubMenu>
+        <PhiSubMenu id="sec3-chart-mod-random" :label="t('chart-mod-random')" :tip="t('chart-mod-random-tip')" :badge="chartModIndex('random')" v-model="chartModRandom"></PhiSubMenu>
+        <PhiSubMenu id="sec3-chart-mod-random-speed" :label="t('chart-mod-random-speed')" :tip="t('chart-mod-random-speed-tip')" :badge="chartModIndex('random_speed')" v-model="chartModRandomSpeed">
+          <div class="cfg-grid">
+            <CfgField :label="t('chart-mod-random-speed-min')" :tip="t('chart-mod-random-speed-min-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomSpeedMin" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+            <CfgField :label="t('chart-mod-random-speed-max')" :tip="t('chart-mod-random-speed-max-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomSpeedMax" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+          </div>
+        </PhiSubMenu>
+        <PhiSubMenu id="sec3-chart-mod-random-pos" :label="t('chart-mod-random-pos')" :tip="t('chart-mod-random-pos-tip')" :badge="chartModIndex('random_pos')" v-model="chartModRandomPos">
+          <div class="cfg-grid">
+            <CfgField :label="t('chart-mod-random-pos-range')" :tip="t('chart-mod-random-pos-range-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModRandomPosRange" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+          </div>
+        </PhiSubMenu>
+        <PhiSubMenu id="sec3-chart-mod-spread-hold" :label="t('chart-mod-spread-hold')" :tip="t('chart-mod-spread-hold-tip')" :badge="chartModIndex('spread')" v-model="chartModSpreadHold">
+          <div class="cfg-grid">
+            <CfgField :label="t('chart-mod-spread-hold-note-type')" :tip="t('chart-mod-spread-hold-note-type-tip')"><v-autocomplete density="compact" hide-details="auto" :items="t('note-types').split(',')" :rules="[RULES.notEmpty]" v-model="chartModSpreadHoldNoteType"></v-autocomplete></CfgField>
+            <CfgField :label="t('chart-mod-spread-hold-interval')" :tip="t('chart-mod-spread-hold-interval-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModSpreadHoldInterval" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+          </div>
+        </PhiSubMenu>
+        <PhiSubMenu id="sec3-chart-mod-extend-hold" :label="t('chart-mod-extend-hold')" :tip="t('chart-mod-extend-hold-tip')" :badge="chartModIndex('extend')" v-model="chartModExtendHold">
+          <div class="cfg-grid">
+            <CfgField :label="t('chart-mod-extend-hold-blank')" :tip="t('chart-mod-extend-hold-blank-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModExtendHoldBlank" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+          </div>
+        </PhiSubMenu>
+        <PhiSubMenu id="sec3-chart-mod-copy" :label="t('chart-mod-copy')" :tip="t('chart-mod-copy-tip')" :badge="chartModIndex('copy')" v-model="chartModCopy">
+          <div class="cfg-grid">
+            <CfgField :label="t('chart-mod-copy-times')" :tip="t('chart-mod-copy-times-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartModCopyTimes" type="number" :rules="[RULES.notEmpty, RULES.int, RULES.positive]"></v-text-field></CfgField>
+            <CfgField :label="t('chart-mod-copy-offset')" :tip="t('chart-mod-copy-offset-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!chartModCopy" v-model="chartModCopyOffset" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>
+          </div>
+        </PhiSubMenu>
         </div>
       </PhiSection>
         </PhiGroup>
@@ -540,6 +554,14 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* 「谱面列表」小节：给嵌进来的批量页（`.batch-view` 是 `flex: 1`）一个确定高度，
+   它内部那条列表才知道该滚多长；收起这个小节时高度自然收掉。 */
+.dpe-charts {
+  display: flex;
+  height: 52vh;
+  min-height: 0;
+}
+
 /* 与「噪域播放器」同一套骨架：滚动区在上、操作条贴底，内容区不设更窄的上限。 */
 .render-view {
   display: flex;

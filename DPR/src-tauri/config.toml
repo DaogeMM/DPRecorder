@@ -145,6 +145,7 @@ blockAreaForceShow = false    # 强制定位：把按键矩形本身也着色画
 blockAreaForceTime = 3.0      # 强制定位：挖洞的时间窗（秒，默认 3）——只有判定时刻进入本值以内的按键才挖洞
 blockAreaForceDelay = 0.3     # 强制定位延后视窗（秒，默认 0.3）——判定完之后洞再停留这么久才被噪域盖回来（Hold 算到长条尾端）
 blockAreaForceInvert = false  # 反向强制定位：把强制定位的矩形本身当噪域画出来，其余地方不铺噪域（需先开强制定位）
+blockAreaForceKeepNoise = false # 保留原噪域：强制定位不再忽略谱面自带的噪域，而是与整屏那块合成噪域叠着画（原版噪域在上层）
 blockAreaLava = false         # 岩浆噪域：完整噪域的填充换成 MC 贴图——还没生效印下界岩、生效中及之后印岩浆（16 帧 160ms 循环、屏幕锚定 1/16 屏高；只在没开「简化噪域」时生效；开启时引擎直接忽略 噪声斑点/噪域扭曲/噪域火花（不改写存的配置））
 blockAreaColor = [0.9, 0.1, 0.1]     # 简化噪域颜色 rgb（0~1），简化噪域 enable 之后的填充色
 blockAreaNormalColor = [0.9, 0.1, 0.1] # 噪域颜色 rgb（0~1）：普通（完整）噪域的颜色，只取色相去整体旋转官方配色（默认红 = 不变）

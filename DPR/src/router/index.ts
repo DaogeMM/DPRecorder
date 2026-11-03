@@ -8,6 +8,7 @@ import RPEView from '../RPEView.vue';
 import TasksView from '../TasksView.vue';
 import SettingsView from '../SettingsView.vue';
 import VideoNoiseView from '@dpe/VideoNoiseView.vue';
+import MalodyImportView from '@dpe/MalodyImportView.vue';
 
 import { useOnLoaded } from '../App.vue';
 import { beginPageLoad } from '../pageLoad';
@@ -19,13 +20,13 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'render', component: RenderView },
     { path: '/batch', name: 'batch', component: BatchView },
-    // DPE 的谱面列表：与批量页是同一份页面，但去掉底部那条批量操作（`listOnly`），
-    // 存储也另起一份（`scope: 'dpe'`），与 DPR 的「批量」互不共用。
-    { path: '/charts', name: 'chart-list', component: BatchView, props: { listOnly: true, scope: 'dpe' } },
+    // DPE 的「谱面修改」：谱面列表也在这页顶部（批量页开 `listOnly` + `scope: 'dpe'` 的那份嵌进去），
+    // 所以不再单独给谱面列表开一条路由。
     { path: '/chart-mod', name: 'chart-mod', component: ChartModView },
     { path: '/bind', name: 'bind', component: RPEView },
     { path: '/tasks', name: 'tasks', component: TasksView },
-    { path: '/noise', name: 'tool-video-noise', component: VideoNoiseView },
+    { path: '/noise', name: 'noise-player', component: VideoNoiseView },
+    { path: '/malody', name: 'malody-import', component: MalodyImportView },
     { path: '/settings', name: 'settings', component: SettingsView },
   ],
   scrollBehavior(_to, from, savedPosition) {

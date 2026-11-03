@@ -400,6 +400,9 @@ pub struct RenderConfig {
     pub block_area_force_delay: f32,
     /// 「反向强制定位」：把强制定位的矩形本身当噪域画出来，其余地方不铺噪域（默认关闭）
     pub block_area_force_invert: bool,
+    /// 「保留原噪域」：强制定位不再忽略谱面自带的噪域，而是与整屏那块合成噪域叠着画
+    ///（原版噪域在上层）；只开启强制定位时才有意义（默认关闭）
+    pub block_area_force_keep_noise: bool,
     /// 「岩浆噪域」：把完整噪域的填充换成按屏幕平铺的 MC 贴图 —— 还没生效（appear..enable）
     /// 印 netherrock，生效中与生效结束后印 lava（16 帧、每帧 160ms 循环）。
     /// 只在**没打开**「简化噪域」时生效，且只贴谱面里真实的普通噪域；打开时会把
@@ -751,6 +754,7 @@ impl RenderConfig {
             block_area_force_time: self.block_area_force_time,
             block_area_force_delay: self.block_area_force_delay,
             block_area_force_invert: self.block_area_force_invert,
+            block_area_force_keep_noise: self.block_area_force_keep_noise,
             block_area_lava: self.block_area_lava,
             water_screen: self.water_screen,
             water_opacity: self.water_opacity,
@@ -1043,6 +1047,7 @@ impl Default for RenderConfig {
             block_area_force_time: 3.0,
             block_area_force_delay: 0.3,
             block_area_force_invert: false,
+            block_area_force_keep_noise: false,
             block_area_lava: false,
             water_screen: false,
             water_opacity: 0.5,

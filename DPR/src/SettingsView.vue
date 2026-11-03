@@ -318,7 +318,6 @@ async function resetConfig() {
   // 滑杆还停在原来那格。所以一并填回各自的默认值（✅ / 15）。
   listExpand.value = LIST_EXPAND_DEFAULT;
   stripWidth.value = STRIP_WIDTH_DEFAULT;
-  chartStripWidth.value = CHART_STRIP_WIDTH_DEFAULT;
   nextTick(() => {
     form.value?.resetValidation();
   });
@@ -561,14 +560,6 @@ watch(listExpand, (val) => {
 const STRIP_WIDTH_DEFAULT = 15;
 const stripWidth = useStorage<number>('TaskStrip.width', STRIP_WIDTH_DEFAULT);
 
-/**
- * 选曲弹窗（DPE 的 `DPE/ui/ChartStrip.vue`）宽度，百分比，15–100。
- * 与那边 `useFloatingStrip` 的 `ChartStrip.width` 同一个键、同样的默认值，
- * 改这里悬浮条立刻跟着变。
- */
-const CHART_STRIP_WIDTH_DEFAULT = 20;
-const chartStripWidth = useStorage<number>('ChartStrip.width', CHART_STRIP_WIDTH_DEFAULT);
-
 // 主题只有一套（DeepDark），设置里没有主题切换项。
 
 /* ===================== 关于（第二部分） ===================== */
@@ -748,8 +739,6 @@ const forkedDeps = [
               <CfgField :label="t('dpe-output-dir')" :tip="t('dpe-output-dir-tip')">
                 <v-text-field class="settings-path--default" readonly density="compact" hide-details="auto" v-model="dpeOutputDirShown" :title="dpeOutputDir" append-inner-icon="mdi-folder-open" @click:append-inner="openDpeOutputDir" @contextmenu="openDpeOutputDir"></v-text-field>
               </CfgField>
-              <!-- 选曲弹窗 = 谱面列表选了几首 + 最后那首的曲绘那条悬浮条 -->
-              <CfgSlider :label="t('chart-strip-width')" :tip="t('chart-strip-width-tip')" :min="15" :max="100" :step="1" v-model="chartStripWidth"></CfgSlider>
             </div>
           </PhiGroup>
 

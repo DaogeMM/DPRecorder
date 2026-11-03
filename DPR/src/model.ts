@@ -427,6 +427,8 @@ export interface RenderConfig {
   blockAreaForceDelay: number;
   /** 反向强制定位：把强制定位的矩形本身当噪域画出来，其余地方不铺噪域（默认关闭） */
   blockAreaForceInvert: boolean;
+  /** 保留原噪域：强制定位不再忽略谱面自带的噪域，而是与整屏那块合成噪域叠着画（原版噪域在上层） */
+  blockAreaForceKeepNoise: boolean;
   /** 简化取消合并：每个简化噪域各画一趟，重叠的 enable 噪域不合并成一个连通区域 */
   blockAreaColor: [number, number, number];
   /** 噪域颜色：普通（完整）噪域的颜色（rgb 0~1），只取色相去整体旋转官方配色，默认 0.9 / 0.1 / 0.1 */
@@ -770,6 +772,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   blockAreaForceTime: 3.0,
   blockAreaForceDelay: 0.3,
   blockAreaForceInvert: false,
+  blockAreaForceKeepNoise: false,
   blockAreaColor: [0.9, 0.1, 0.1],
   blockAreaNormalColor: [0.9, 0.1, 0.1],
   simplifiedBlockAreaTextColor: [1, 0.3765, 0.5804],

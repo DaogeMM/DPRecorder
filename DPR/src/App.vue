@@ -48,7 +48,6 @@ import { toast, openExternal } from './common';
 import { applyPhiTheme } from './design/theme';
 import { sectionGateState } from './config/sectionGate';
 import TaskStrip from './components/TaskStrip.vue';
-import ChartStrip from '@dpe/ChartStrip.vue';
 import { useTasks } from './tasks';
 import { pageReady } from './pageLoad';
 import { PARTS, usePart, type PartId } from './parts';
@@ -618,11 +617,9 @@ onUnmounted(() => {
           </div>
         </Transition>
       </main>
-        <!-- 悬浮条按当前部分二选一：
-             渲染进度条（DPR，当前正在渲染的谱面，见 components/TaskStrip.vue）；
-             已选谱面（DPE，选了几首 + 最后选的那首的曲绘，见 DPE/ui/ChartStrip.vue）。 -->
+        <!-- 悬浮条只给 DPR：渲染进度条（当前正在渲染的谱面，见 components/TaskStrip.vue）。
+             DPE 那边原来还有一条「已选几首 + 曲绘」的悬浮条，谱面列表折进「谱面修改」页之后就去掉了。 -->
         <TaskStrip v-if="part === 'dpr'" />
-        <ChartStrip v-else />
     </div>
     <v-dialog v-model="ffmpegDialog" width="auto" min-width="400px" class="log-card-bg">
       <v-card class="log-card-window">

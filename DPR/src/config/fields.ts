@@ -504,7 +504,7 @@ const JUDGE = {
 } satisfies Partial<FieldTable>;
 
 /* ============================== 噪域 ============================== */
-/* `section` 只是配置族归类，不代表界面位置：`blockAreaLava`（岩浆噪域）与四个
+/* `section` 只是配置族归类，不代表界面位置：`blockAreaLava`（岩浆噪域）与
    `blockAreaForce*`（强制定位）在界面上位于谱面组的「更多」（ConfigView.vue 的 `sec-more-chart`）。 */
 const BLOCK_AREA = {
   blockAreaNoiseBlotch: { widget: 'checkbox' },
@@ -518,6 +518,7 @@ const BLOCK_AREA = {
   blockAreaForcePosition: { widget: 'checkbox' },
   blockAreaForceShow: { widget: 'checkbox' },
   blockAreaForceInvert: { widget: 'checkbox' },
+  blockAreaForceKeepNoise: { widget: 'checkbox' },
   blockAreaDensity: { widget: 'number' },
   blockAreaNormalColor: { widget: 'color' },
   blockAreaDisplaceStrength: { widget: 'number' },

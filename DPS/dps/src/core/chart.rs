@@ -464,8 +464,12 @@ impl Chart {
         // 「反向强制定位」（`block_area_force_invert`）正好反过来：不铺全屏噪域，只把那圈
         // 矩形**本身**当噪域画出来 ⇒ 这里传**空**方块列表，矩形由 `render_all` 直接从
         // `Resource::force_position_quads` 推成可绘制的 zone（不是合成块）。
+        //
+        // 「保留原噪域」（`block_area_force_keep_noise`）：谱面自带的噪域不换掉，与全屏那块
+        // 合成噪域**叠着画**（见下面 `underlay` / `blocks` 两片参数）。
         let force = res.config.block_area_force_position;
         let force_invert = force && res.config.block_area_force_invert;
+        let keep_noise = force && res.config.block_area_force_keep_noise;
         // 「简化噪域」单独勾选也要能出画面，所以两个开关任一打开就渲染
         //
         // 「纯配置谱面」下谱面自带的 `blockAreaList` 整层不画：判定线被拍平后那些方块都是按判定线原先
@@ -482,7 +486,7 @@ impl Chart {
             let flip_x = res.config.flip_x();
             let simplified = res.config.simplified_block_area || self.block_area_renderer.borrow().style.simplified;
             let reuse = res.config.block_area_reuse || self.block_area_renderer.borrow().style.reuse;
-            super::block_area::render_native_block_areas(res, &[], &[], time, flip_x, simplified, reuse, &self.blocked_touches);
+            super::block_area::render_native_block_areas(res, &[], &[], &[], time, flip_x, simplified, reuse, &self.blocked_touches);
             return;
         }
         if res.config.pure_config_chart
@@ -493,16 +497,14 @@ impl Chart {
         }
         let time = res.time;
         let forced = [BlockArea::force_position_fullscreen()];
-        let blocks: &[BlockArea] = if force_invert {
-            &[]
-        } else if force {
-            &forced
-        } else {
-            &self.block_areas
-        };
-        // 「强制定位」把整层换成合成噪域（反向时只留下按键矩形），谱面自带的 rpe-next 噪域
-        // 同样要忽略，所以这两种情况都传空列表。
-        let next: &[NextArea] = if force { &[] } else { &self.next_block_areas };
+        // 全屏那块合成噪域铺在**下层**：`render_all` 先铺 `underlay`、再铺 `blocks`，所以
+        // 勾了「保留原噪域」时谱面自带的方块画在它上面（编号、岩浆贴图、简化文字都照旧）。
+        // 反向强制定位没有全屏块，`underlay` 是空的。
+        let underlay: &[BlockArea] = if force && !force_invert { &forced } else { &[] };
+        // 谱面自带的方块：强制定位默认整层换掉，勾了「保留原噪域」才并进来（反向时同理）。
+        let blocks: &[BlockArea] = if force && !keep_noise { &[] } else { &self.block_areas };
+        // 同上，rpe-next 那批噪域也算谱面自带的：跟着原版噪域一起保留或一起忽略。
+        let next: &[NextArea] = if force && !keep_noise { &[] } else { &self.next_block_areas };
         let flip_x = res.config.flip_x();
         // 噪域现在只有一条管线：Phira-Pro 的原生实现（掩码 + 原版 Unity 面元着色器）。
         // 「简化噪域」**不是另一条路**，而是让同一份官方材质退化成「纯色 × 不透明度」
@@ -511,6 +513,6 @@ impl Chart {
         let simplified = res.config.simplified_block_area || self.block_area_renderer.borrow().style.simplified;
         // 「噪域复用」同理：只换「简化噪域文字」印的号（条目序号 → 噪域编号），不碰画面。
         let reuse = res.config.block_area_reuse || self.block_area_renderer.borrow().style.reuse;
-        super::block_area::render_native_block_areas(res, blocks, next, time, flip_x, simplified, reuse, &self.blocked_touches);
+        super::block_area::render_native_block_areas(res, underlay, blocks, next, time, flip_x, simplified, reuse, &self.blocked_touches);
     }
 }

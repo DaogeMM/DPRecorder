@@ -343,8 +343,14 @@ pub use shader::{judge_paint_view, reset_block_effects, Zone};
 ///
 /// `next` 是 rpe-next v220 噪域（[`super::next`]）。它们解算出来的 `Zone` 与原生那批**同层同趟**
 /// 画，编号取 `usize::MAX`（不参与「简化噪域文字」的编号）。
+///
+/// `underlay` 是先铺的**下层**方块，`blocks` 接在它后面 —— `zones` 的先后就是绘制先后，
+/// 所以 `blocks` 压在 `underlay` 上面。这个参数只服务于「保留原噪域」：谱面自带的方块走
+/// `blocks`，强制定位那块合成全屏噪域走 `underlay`，两批一起送进同一趟而不是每帧拼 Vec
+///（噪域谱的 `blockAreaList` 能到几十万条，拼一次就是一整份克隆）。
 pub fn render_all(
     res: &mut Resource,
+    underlay: &[BlockArea],
     blocks: &[BlockArea],
     next: &[NextArea],
     time: f64,
@@ -354,14 +360,16 @@ pub fn render_all(
     touches: &[(u64, Vector)],
 ) {
     let aspect = res.aspect_ratio;
-    let mut zones = collect(blocks, time, aspect, reuse);
+    let mut zones = collect(underlay, time, aspect, reuse);
+    zones.extend(collect(blocks, time, aspect, reuse));
     // rpe-next 的块必须并进同一趟：早退条件只看 `zones`，单独渲染会让「只有 rpe-next 噪域的
     // 谱面」整层画不出来。
     zones.extend(super::next::zones(next, time, aspect));
-    // 「反向强制定位」：上游（`Chart::render_block_area`）此时传的是**空**列表 —— 不铺全屏
-    // 噪域；屏幕上唯一该出现噪域的地方就是每个按键周围那圈矩形，于是把它们当成**真方块**
+    // 「反向强制定位」：上游（`Chart::render_block_area`）此时不铺全屏噪域；屏幕上唯一该出现
+    // 噪域的地方就是每个按键周围那圈矩形，于是把它们当成**真方块**
     // 推进 `zones`（`judge_cover = 0` ⇒ 照常进层、照常被绘制；编号取 `usize::MAX` ⇒ 不印号）。
     // 必须赶在下面的 `zones.is_empty()` 早退**之前**：这时 `zones` 十有八九就是空的。
+    //（勾了「保留原噪域」时上游还会把谱面自带的方块一起传下来，它们排在矩形之前。）
     //
     // 「纯配置谱面」勾了按键噪域时走同一条路：转换阶段把判定时刻落在噪域里的按键标了出来，上游
     // 同样传空列表，于是屏幕上只剩这些按键周围的矩形是噪域。

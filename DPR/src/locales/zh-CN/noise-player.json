@@ -1,6 +1,6 @@
 {
   "tools": "工具",
-  "tool-video-noise": "噪域播放器",
+  "noise-player": "噪域播放器",
 
   "vn-drop-video": "（可拖放视频至此）",
   "vn-duration": "时长",
@@ -35,11 +35,8 @@
   "vn-col-name": "文件名",
   "vn-col-path": "文件路径",
   "vn-col-preview": "预览",
-  "vn-col-delete": "删除",
+  "vn-col-delete": "移除",
   "vn-open-render": "在渲染页打开",
-  "vn-delete-title": "删除谱面",
-  "vn-delete-message": "确定删除「{name}」吗？",
-  "vn-deleted": "已删除",
 
   "vn-open-folder": "打开输出文件夹",
   "vn-generate": "生成谱面",

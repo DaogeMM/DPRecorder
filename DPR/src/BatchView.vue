@@ -78,6 +78,23 @@ function toggleExpanded(id: number) {
   else expandedIds.value.push(id);
 }
 
+/* 卡片上的三个入口在 `listOnly`（DPE 的谱面列表）里一律不做事：那一份只用来勾选，
+   展开详情、曲名跳渲染页、点曲绘预览都是 DPR 批量页的用法。 */
+function onRowClick(chart: RenderChart) {
+  if (props.listOnly) return;
+  toggleExpanded(chart.id);
+}
+
+function onNameClick(chart: RenderChart) {
+  if (props.listOnly) return;
+  openInRender(chart);
+}
+
+function onCoverClick(chart: RenderChart) {
+  if (props.listOnly) return;
+  void previewChart(chart);
+}
+
 /**
  * 展开的卡片各有一份谱面信息表单 —— 渲染前要校验**这一张**的表单，
  * 所以按 id 记住组件实例（收起时 Vue 会以 null 回调，正好把记录删掉）。
@@ -331,22 +348,6 @@ async function checkInfo(chart: RenderChart) {
   return true;
 }
 
-// 悬浮条（DPE 的 `ChartStrip.vue`）显示「最后选中的那首」的曲绘，所以每次勾选变动
-// 就把这次新勾上的那张路径记进 `DPE.LastSelected`（多张一起勾选时取最后一张）。
-let selectedPaths = new Set<string>();
-
-watch(
-  charts,
-  (list) => {
-    const selected = new Set(list.filter((chart) => chart.isSelect).map((chart) => chart.path));
-    const added = [...selected].filter((path) => !selectedPaths.has(path));
-    const last = added[added.length - 1];
-    if (last) localStorage.setItem('DPE.LastSelected', last);
-    selectedPaths = selected;
-  },
-  { deep: true },
-);
-
 function selectAll() {
   filteredCharts.value.forEach(chart => {
     chart.isSelect = true
@@ -562,7 +563,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="batch-view">
+  <div class="batch-view" :class="{ 'batch-view--list': listOnly }">
     <!-- 谱面列表：卡片高度随展开变化，所以不用 v-virtual-scroll，整列自己滚 -->
     <div class="batch-view__list">
       <div v-if="charts.length === 0" class="batch-view__empty">
@@ -574,27 +575,29 @@ onUnmounted(() => {
 
       <template v-else>
         <div v-for="item in filteredCharts" :key="item.id" class="batch-item">
-          <!-- 勾选框在卡片左边框外面（同任务页）：放在整行里会把行高撑开 -->
-          <span
-            class="batch-item__check"
-            :class="{ 'batch-item__check--on': item.isSelect }"
-            @mousedown.prevent
-            @click.stop="item.isSelect = !item.isSelect"
-          >
-            <v-checkbox-btn :model-value="item.isSelect" density="compact" :ripple="false"></v-checkbox-btn>
-          </span>
-
           <v-card class="batch-card" :class="{ 'batch-card--open': expandedIds.includes(item.id) }">
-            <!-- 整行点击 = 展开 / 收起；曲绘与曲名各自 stop 掉，它们另有去处 -->
-            <div class="batch-row" @click="toggleExpanded(item.id)">
-              <div class="batch-row__cover" :title="t('preview-cover-tip')" @click.stop="previewChart(item)">
+            <!-- 整行点击 = 展开 / 收起；曲绘与曲名各自 stop 掉，它们另有去处。
+                 `listOnly`（DPE 的谱面列表）里只有横卡片与勾选框：不展开、不跳渲染页、不预览。 -->
+            <div class="batch-row" :class="{ 'batch-row--static': listOnly }" @click="onRowClick(item)">
+              <!-- 勾选框默认吊在卡片左边框外面（同任务页），不占行高；`listOnly` 里改成排在卡片内最前
+                   （见 `.batch-item__check--inline`），否则那一栏会跟卡片隔着一截空白。 -->
+              <span
+                class="batch-item__check"
+                :class="{ 'batch-item__check--on': item.isSelect, 'batch-item__check--inline': listOnly }"
+                @mousedown.prevent
+                @click.stop="item.isSelect = !item.isSelect"
+              >
+                <v-checkbox-btn :model-value="item.isSelect" density="compact" :ripple="false"></v-checkbox-btn>
+              </span>
+              <div class="batch-row__cover" :class="{ 'batch-row__cover--static': listOnly }" :title="listOnly ? undefined : t('preview-cover-tip')" @click.stop="onCoverClick(item)">
                 <ChartThumb :path="item.path" :illustration="item.chartInfo.illustration"></ChartThumb>
               </div>
               <div class="batch-row__text">
                 <span
                   class="batch-row__name"
-                  :title="`${item.chartInfo.name}\n${t('chart-open-tip')}`"
-                  @click.stop="openInRender(item)"
+                  :class="{ 'batch-row__name--link': !listOnly }"
+                  :title="listOnly ? item.chartInfo.name : `${item.chartInfo.name}\n${t('chart-open-tip')}`"
+                  @click.stop="onNameClick(item)"
                   @contextmenu="showInFolder(item.path)"
                 >{{ item.chartInfo.name }}</span>
                 <span v-if="diffTier(item.chartInfo)" class="batch-row__diff">
@@ -609,11 +612,11 @@ onUnmounted(() => {
                 :title="item.path"
                 @contextmenu="showInFolder(item.path)"
               >{{ item.path }}</span>
-              <v-icon class="batch-row__chevron" icon="mdi-chevron-down" size="20"></v-icon>
+              <v-icon v-if="!listOnly" class="batch-row__chevron" icon="mdi-chevron-down" size="20"></v-icon>
             </div>
 
             <v-expand-transition>
-              <div v-if="expandedIds.includes(item.id)" class="batch-detail">
+              <div v-if="!listOnly && expandedIds.includes(item.id)" class="batch-detail">
                 <!-- 上半：渲染页顶部那份谱面横幅（点一下同样进预览） -->
                 <div class="batch-hero" :title="t('preview-cover-tip')" @click="previewChart(item)">
                   <ChartHero :info="item.chartInfo" :path="item.path"></ChartHero>
@@ -783,6 +786,18 @@ onUnmounted(() => {
   scrollbar-width: none;
 }
 
+/* DPE 的谱面列表（`listOnly`）里勾选框挪进了卡片内侧，那 42px 就不用留了；
+   底部留出一截，滚到底时最后一张卡片的圆角不会被容器边缘切掉 */
+.batch-view--list .batch-view__list {
+  padding-left: var(--phi-space-6);
+  padding-bottom: var(--phi-space-4);
+}
+
+/* `listOnly` 里没有展开详情，卡片下面是空的 —— 四角都圆，别留成「接在详情上面」的半圆角 */
+.batch-view--list .batch-card {
+  border-radius: var(--phi-radius-lg) !important;
+}
+
 /* 一张谱面 = 一张卡片（版式照任务页 `.task-item` + `.task-card`） */
 .batch-item {
   position: relative;
@@ -812,6 +827,15 @@ onUnmounted(() => {
 .batch-item:hover .batch-item__check,
 .batch-item__check--on,
 .batch-item__check:focus-within {
+  opacity: 1;
+}
+
+/* 排在卡片内侧那一版：不再绝对定位，跟着行内顺序走，而且一直可见
+   （没了卡片外侧那一栏，靠 hover 才露出来会让人找不到勾选框） */
+.batch-item__check--inline {
+  position: static;
+  flex: none;
+  transform: none;
   opacity: 1;
 }
 
@@ -846,6 +870,10 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+.batch-row--static {
+  cursor: default;
+}
+
 .batch-row__cover {
   display: flex;
   flex: none;
@@ -861,7 +889,11 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.batch-row__cover:hover {
+.batch-row__cover--static {
+  cursor: default;
+}
+
+.batch-row__cover:not(.batch-row__cover--static):hover {
   border-color: var(--phi-accent);
 }
 
@@ -889,10 +921,14 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--phi-label-primary);
+  cursor: inherit;
+}
+
+.batch-row__name--link {
   cursor: pointer;
 }
 
-.batch-row__name:hover {
+.batch-row__name--link:hover {
   color: var(--phi-accent);
   text-decoration: underline;
 }

@@ -1,4 +1,4 @@
-//! 工具页「噪域播放器」：把一段视频逐格取色，写成一张**全程只有噪域**的官方格式谱面。
+//! 「噪域播放器」：把一段视频逐格取色，写成一张**全程只有噪域**的官方格式谱面。
 //!
 //! 为什么产出谱面而不是视频：噪域逐像素的样子（底色、噪点、描边、辉光、岩浆）全在引擎的
 //! 着色器里，`blockAreaList` 是那套着色器唯一的输入。写一张谱面既不必在这里重做一遍着色器，
@@ -9,9 +9,14 @@
 //!
 //! 坐标：谱面的百分比坐标原点在**左下角**、`(1, 1)` 在右上角；视频的像素行从上往下，所以
 //! 第 `row` 行（0 起）落在 `y ∈ [1 - (row + 1) / rows, 1 - row / rows]`。
+//!
+//! 放在 `DPE/src` 这一层：与它的界面（`DPE/ui/VideoNoiseView.vue`）搁在一起，DPR 只留
+//! tauri 那一侧的命令（`DPR/src-tauri/src/noise_player.rs` 按路径引用本文件）。这里不碰
+//! tauri；ffmpeg 路径、默认输出目录都从调用方传进来。
 
 use std::{
     cmp::Ordering,
+    fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
     process::Stdio,
@@ -24,8 +29,8 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use dps::core::simple_block_area;
 use serde::{Deserialize, Serialize};
-use tauri::ipc::InvokeError;
 use tokio::io::AsyncReadExt;
+use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 /// 抽帧时最多保留多少格。再大只是把谱面写成一坨、渲染也跑不动。
 const MAX_CELLS: u32 = 65_536;
@@ -72,8 +77,8 @@ fn report_done(stage: &str) {
     }
 }
 
-#[tauri::command]
-pub fn tool_video_progress() -> ConversionProgress {
+/// 前端按固定间隔轮询这个快照显示进度条。
+pub fn progress() -> ConversionProgress {
     PROGRESS.lock().map(|it| it.clone()).unwrap_or_default()
 }
 
@@ -160,46 +165,34 @@ pub struct ChartReport {
 }
 
 // ---------------------------------------------------------------------------
-// 命令
+// 对外的三步：读视频信息 / 转换 / 列产物
 // ---------------------------------------------------------------------------
 
-async fn wrap<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<T, InvokeError> {
-    future.await.map_err(|e| {
-        tracing::error!("[命令] 执行失败：{}", crate::common::error_chain(&e));
-        InvokeError::from_anyhow(e)
-    })
+/// 读视频的时长、分辨率、帧率、有没有音轨。
+pub async fn probe_video(ffmpeg: &str, path: &str) -> Result<VideoMeta> {
+    let video = PathBuf::from(path.trim());
+    if !video.is_file() {
+        bail!("tool-video.video-missing");
+    }
+    probe(ffmpeg, &video).await
 }
 
-#[tauri::command]
-pub async fn tool_video_probe(path: String) -> Result<VideoMeta, InvokeError> {
-    wrap(async move {
-        let video = PathBuf::from(path.trim());
-        if !video.is_file() {
-            bail!("tool-video.video-missing");
-        }
-        probe(&ffmpeg()?, &video).await
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn tool_video_convert(params: VideoNoiseParams) -> Result<ChartReport, InvokeError> {
-    wrap(async move {
-        if BUSY.swap(true, AtomicOrdering::SeqCst) {
-            bail!("tool-video.busy");
-        }
-        let result = convert(params).await;
-        BUSY.store(false, AtomicOrdering::SeqCst);
-        report_done(if result.is_ok() { "done" } else { "failed" });
-        result
-    })
-    .await
-}
-
-/// 打开谱面文件夹：直接复用程序里那个「打开目录」，免得再写一套 explorer 兜底。
-#[tauri::command]
-pub fn tool_video_reveal(dir: String) -> Result<(), InvokeError> {
-    crate::open_dir(dir)
+/// 转换：同一时间只跑一趟（两趟同时抽帧既抢 CPU，又会往同一个输出目录里写）。
+///
+/// `default_dir` 是参数里没指定输出目录时用的那个目录，由调用方按程序目录与设置算好 ——
+/// 这一层不认「程序目录」这种东西。
+pub async fn convert(
+    ffmpeg: &str,
+    default_dir: &Path,
+    params: VideoNoiseParams,
+) -> Result<ChartReport> {
+    if BUSY.swap(true, AtomicOrdering::SeqCst) {
+        bail!("tool-video.busy");
+    }
+    let result = convert_inner(ffmpeg, default_dir, params).await;
+    BUSY.store(false, AtomicOrdering::SeqCst);
+    report_done(if result.is_ok() { "done" } else { "failed" });
+    result
 }
 
 /// 「输出列表」里的一行。
@@ -219,64 +212,65 @@ pub struct ToolOutput {
 /// 列出输出目录里的 `.pez`，按修改时间从新到旧（新的在上面）。
 ///
 /// 目录还不存在（一次都没生成过）时返回空列表，不报错 —— 前端那栏就显示「还没有生成过谱面」。
-#[tauri::command]
-pub async fn tool_video_outputs(dir: String) -> Result<Vec<ToolOutput>, InvokeError> {
-    wrap(async move {
-        let dir = PathBuf::from(dir.trim());
-        if dir.as_os_str().is_empty() || !dir.is_dir() {
-            return Ok(Vec::new());
+pub async fn outputs(dir: &str) -> Result<Vec<ToolOutput>> {
+    let dir = PathBuf::from(dir.trim());
+    if dir.as_os_str().is_empty() || !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut outputs = Vec::new();
+    let mut entries = tokio::fs::read_dir(&dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        let is_pez = path
+            .extension()
+            .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("pez"));
+        if !is_pez || !path.is_file() {
+            continue;
         }
-        let mut outputs = Vec::new();
-        let mut entries = tokio::fs::read_dir(&dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            let is_pez = path
-                .extension()
-                .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("pez"));
-            if !is_pez || !path.is_file() {
-                continue;
-            }
-            let Ok(metadata) = entry.metadata().await else {
-                continue;
-            };
-            let modified = metadata
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|delta| delta.as_millis() as i64)
-                .unwrap_or(0);
-            outputs.push(ToolOutput {
-                name: path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-                path: path.to_string_lossy().to_string(),
-                size: metadata.len(),
-                modified,
-            });
-        }
-        outputs.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
-        Ok(outputs)
-    })
-    .await
+        let Ok(metadata) = entry.metadata().await else {
+            continue;
+        };
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|delta| delta.as_millis() as i64)
+            .unwrap_or(0);
+        outputs.push(ToolOutput {
+            name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            path: path.to_string_lossy().to_string(),
+            size: metadata.len(),
+            modified,
+        });
+    }
+    outputs.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
+    Ok(outputs)
 }
 
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
 
-fn ffmpeg() -> Result<String> {
-    crate::render::find_ffmpeg()?.ok_or_else(|| anyhow!("tool-video.no-ffmpeg"))
+/// 起一个 ffmpeg 子进程。Windows 上故意不加 `CREATE_NO_WINDOW`：没有终端就看不到它的日志，
+/// 这一层只在这里接 stdout/stderr，不弹窗。
+fn command(program: &str) -> tokio::process::Command {
+    tokio::process::Command::new(program)
 }
 
-async fn convert(params: VideoNoiseParams) -> Result<ChartReport> {
+async fn convert_inner(
+    ffmpeg: &str,
+    default_dir: &Path,
+    params: VideoNoiseParams,
+) -> Result<ChartReport> {
     let video = PathBuf::from(params.video.trim());
     if !video.is_file() {
         bail!("tool-video.video-missing");
     }
-    let ffmpeg = ffmpeg()?;
     report("probe", 0, 0);
-    let meta = probe(&ffmpeg, &video).await?;
+    let meta = probe(ffmpeg, &video).await?;
 
     // 截取段：终点越界就收到视频结尾，起点夹在片子中间。
     let start = params.start.max(0.).min((meta.duration - 0.05).max(0.));
@@ -328,13 +322,7 @@ async fn convert(params: VideoNoiseParams) -> Result<ChartReport> {
     // 输出目录先算出来：谱面包直接在这里成型，不再经临时目录 —— 谱面 JSON 有几十 MB，
     // 先写进临时目录、打包时再读回来压缩，等于把同样的字节在磁盘上搬两遍。
     let dir = if params.output_dir.trim().is_empty() {
-        let preferred = crate::common::video_tool_dir()?;
-        // 程序目录不可写（装进 Program Files、便携版落在受控文件夹里）就退回设置里的输出目录
-        if tokio::fs::create_dir_all(&preferred).await.is_ok() {
-            preferred
-        } else {
-            crate::common::get_output_dir()?
-        }
+        default_dir.to_path_buf()
     } else {
         PathBuf::from(params.output_dir.trim())
     };
@@ -361,7 +349,7 @@ async fn convert(params: VideoNoiseParams) -> Result<ChartReport> {
     // 压缩级别取 3：谱面 JSON 是这一趟里最大的一块（一份 60 s / 847k 条的谱面约 144 MB
     // 文本），实测 9 级 4.5 s、6 级 2.9 s、3 级 2.1 s、1 级 1.6 s，而 3 级只比 6 级大 4%
     // （1 级要大一倍多）—— 再往上调省不下几个字节，纯粹烧时间。
-    let mut pack = crate::common::ZipPack::create(&pez, 3)?;
+    let mut pack = ZipPack::create(&pez, 3)?;
     pack.bytes(
         "info.yml",
         info_yaml(&name, duration, aspect, &music, cover.is_some())?.as_bytes(),
@@ -412,7 +400,7 @@ async fn convert(params: VideoNoiseParams) -> Result<ChartReport> {
 async fn probe(ffmpeg: &str, video: &Path) -> Result<VideoMeta> {
     // 不指定输出文件：ffmpeg 把流信息打到 stderr 后以非 0 退出，这里要的就是那段文字，
     // 所以退出码不看。
-    let output = crate::cmd_hidden(ffmpeg)
+    let output = command(ffmpeg)
         .args(["-hide_banner", "-nostdin"])
         .arg("-i")
         .arg(video)
@@ -474,7 +462,7 @@ async fn decode_frames(
     grid: &mut Grid,
 ) -> Result<()> {
     let filter = format!("fps={rate:.6},scale={cols}:{rows}:flags=area+accurate_rnd+full_chroma_int");
-    let mut child = crate::cmd_hidden(ffmpeg)
+    let mut child = command(ffmpeg)
         .args(["-hide_banner", "-nostdin", "-v", "error"])
         .arg("-ss")
         .arg(format!("{start:.3}"))
@@ -683,7 +671,7 @@ async fn make_cover(ffmpeg: &str, aspect: f64) -> Result<Vec<u8>> {
 
 /// 跑一趟 ffmpeg，把它写到 stdout 的内容整段收下来（`pipe:1` 的产物）。
 async fn capture_ffmpeg(ffmpeg: &str, args: &[String]) -> Result<Vec<u8>> {
-    let result = crate::cmd_hidden(ffmpeg)
+    let result = command(ffmpeg)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -957,17 +945,109 @@ fn sanitize(name: &str) -> String {
     }
 }
 
+/// 已经是压缩格式的后缀：再 deflate 一遍体积几乎不变，只是白烧 CPU（几十 MB 的谱面包里
+/// 音频与图片占大头，跳过它们能省下打包时间的大半）。
+fn zip_method_of(path: &Path) -> CompressionMethod {
+    let extension = path
+        .extension()
+        .map(|it| it.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match extension.as_str() {
+        "mp3" | "ogg" | "m4a" | "aac" | "flac" | "jpg" | "jpeg" | "png" | "webp" | "zip"
+        | "pez" => CompressionMethod::Stored,
+        _ => CompressionMethod::Deflated,
+    }
+}
+
+/// 边生成边打包的 zip 写入器：条目的内容由调用方现写（内存块或者流），**不落中间文件**。
+///
+/// 谱面 JSON 有几十 MB，先写进临时目录再读回来压缩，等于把同样的字节在磁盘上搬两遍；这里
+/// 内容直接从生成处流进 zip，谱面包从一开始就写在输出目录里。
+///
+/// 写到一半失败要能收场：先落 `<目标名>.part`，[`Self::finish`] 时才改名成目标名 ——
+/// 半路出错（抽帧失败、程序被杀）不会在输出目录里留下一个看起来能打开、其实不完整的包。
+///
+/// 与 DPR 的 `common::ZipPack` 是同一套行为；这里自带一份是为了让这一层不反过来依赖那边。
+struct ZipPack {
+    /// `finish` 之后变成 `None`：那时文件已经改名，`Drop` 不该再删。
+    zip: Option<ZipWriter<BufWriter<File>>>,
+    path: PathBuf,
+    part: PathBuf,
+    level: i64,
+}
+
+impl ZipPack {
+    /// 建一个包，`level` 是 deflate 压缩级别（0~9）。
+    fn create(path: impl Into<PathBuf>, level: i64) -> Result<Self> {
+        let path = path.into();
+        let part = path.with_extension(match path.extension() {
+            Some(extension) => format!("{}.part", extension.to_string_lossy()),
+            None => "part".to_owned(),
+        });
+        let file = File::create(&part)?;
+        Ok(Self {
+            zip: Some(ZipWriter::new(BufWriter::new(file))),
+            path,
+            part,
+            level,
+        })
+    }
+
+    /// 写一个已经在内存里的条目（`info.yml`、`config.toml`、音频、曲绘这类）。
+    fn bytes(&mut self, name: &str, data: &[u8]) -> Result<()> {
+        self.entry(name, |out| Ok(out.write_all(data)?))
+    }
+
+    /// 写一个内容现生成的条目：`write` 拿到的是 zip 里那条数据的写入端。
+    fn entry<F>(&mut self, name: &str, write: F) -> Result<()>
+    where
+        F: FnOnce(&mut dyn Write) -> Result<()>,
+    {
+        let zip = self.zip.as_mut().ok_or_else(|| anyhow!("zip 已经收尾"))?;
+        let method = zip_method_of(Path::new(name));
+        let options = FileOptions::<()>::default()
+            .compression_method(method)
+            // `Stored` 不接受压缩级别：给了会得到 `Unsupported compression level`
+            .compression_level(matches!(method, CompressionMethod::Deflated).then_some(self.level))
+            .unix_permissions(0o755);
+        zip.start_file_from_path(name, options)?;
+        write(zip)
+    }
+
+    /// 收尾：写完中央目录，再把 `.part` 改名成目标文件。
+    fn finish(mut self) -> Result<()> {
+        let zip = self.zip.take().ok_or_else(|| anyhow!("zip 已经收尾"))?;
+        let mut file = zip.finish()?;
+        file.flush()?;
+        drop(file);
+        std::fs::rename(&self.part, &self.path)?;
+        Ok(())
+    }
+}
+
+impl Drop for ZipPack {
+    fn drop(&mut self) {
+        // 没收尾就丢掉：删掉半成品
+        if self.zip.is_some() {
+            let _ = std::fs::remove_file(&self.part);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// 端到端：ffmpeg 抽帧 → 写谱面 → 用引擎自己的解析器读回来。
     ///
-    /// 需要一段真视频：把 `DPR_TOOL_VIDEO_TEST` 指过去才跑，否则直接跳过 ——
-    /// 这个用例依赖本机文件，不能让别处的 `cargo test` 一律挂在这上面。
+    /// 需要一段真视频与一个 ffmpeg：`DPR_TOOL_VIDEO_TEST` 指视频、`DPR_TOOL_VIDEO_FFMPEG`
+    /// 指 ffmpeg，否则直接跳过 —— 这个用例依赖本机文件，不能让别处的 `cargo test` 一律挂在这上面。
     #[test]
     fn writes_a_chart_the_engine_can_parse() {
-        let Ok(path) = std::env::var("DPR_TOOL_VIDEO_TEST") else {
+        let (Ok(path), Ok(ffmpeg)) = (
+            std::env::var("DPR_TOOL_VIDEO_TEST"),
+            std::env::var("DPR_TOOL_VIDEO_FFMPEG"),
+        ) else {
             return;
         };
         let video = PathBuf::from(path);
@@ -979,27 +1059,27 @@ mod tests {
         let out = video.with_extension("vn-pez");
         let _ = std::fs::remove_dir_all(&out);
 
-        // `find_ffmpeg` 会读配置，而配置目录是进程启动时一次性登记进 `CONFIG_DIR` 的；
-        // 测试里没有那一步，这里自己指一个（别的测试先占住了就沿用它的）。
-        let _ = crate::common::CONFIG_DIR.set(std::env::temp_dir().join("dpr-tool-video-test"));
-
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .build()
             .expect("建 tokio runtime");
         let report = runtime
-            .block_on(convert(VideoNoiseParams {
-                video: video.display().to_string(),
-                cols: 24,
-                rows: 0,
-                rate: 4.,
-                start: 0.,
-                end: 2.,
-                tolerance: 6,
-                keep_audio: true,
-                aspect: 0.,
-                name: "vn-test".to_owned(),
-                output_dir: out.display().to_string(),
-            }))
+            .block_on(convert(
+                &ffmpeg,
+                &out,
+                VideoNoiseParams {
+                    video: video.display().to_string(),
+                    cols: 24,
+                    rows: 0,
+                    rate: 4.,
+                    start: 0.,
+                    end: 2.,
+                    tolerance: 6,
+                    keep_audio: true,
+                    aspect: 0.,
+                    name: "vn-test".to_owned(),
+                    output_dir: out.display().to_string(),
+                },
+            ))
             .expect("转换应当成功");
 
         assert!(report.entries > 0, "没有写出任何噪域");
@@ -1013,7 +1093,8 @@ mod tests {
             ["song.mp3", "song.wav"].iter().any(|it| archive.by_name(it).is_ok()),
             "缺少音频文件：渲染管线读不到 music 就起不来"
         );
-        let (mut chart_text, mut info_text) = (String::new(), String::new());
+        let (mut chart_text, mut info_text, mut config_text) =
+            (String::new(), String::new(), String::new());
         {
             use std::io::Read as _;
             archive
@@ -1025,6 +1106,11 @@ mod tests {
                 .by_name("info.yml")
                 .expect(".pez 里没有 info.yml")
                 .read_to_string(&mut info_text)
+                .unwrap();
+            archive
+                .by_name("config.toml")
+                .expect(".pez 里没有 config.toml")
+                .read_to_string(&mut config_text)
                 .unwrap();
         }
         assert!(
@@ -1039,17 +1125,21 @@ mod tests {
             "读回来的噪域条数应当与写出的一致"
         );
 
-        // 谱面自带的渲染配置：只留噪域、偏移 0、总分 1
-        let forced = runtime
-            .block_on(crate::chart_config::read(pez))
-            .expect("读取 config.toml")
-            .expect("谱面里应当带 config.toml");
-        assert_eq!(forced.get("offset"), Some(&serde_json::json!(0.0)));
-        assert_eq!(forced.get("scoreTotal"), Some(&serde_json::json!(1)));
-        assert_eq!(forced.get("renderLine"), Some(&serde_json::json!(false)));
-        assert_eq!(forced.get("renderBlockArea"), Some(&serde_json::json!(true)));
-        // 背景：纯白曲绘要真的画出来（renderBg），压暗归零，白底才不会被压成灰
-        assert_eq!(forced.get("renderBg"), Some(&serde_json::json!(true)));
-        assert_eq!(forced.get("backgroundDim"), Some(&serde_json::json!(0.0)));
+        // 谱面自带的渲染配置：只留噪域、偏移 0、总分 1（键名与程序的 config.toml 一致，
+        // 由 DPR 的 `chart_config` 读；这里按文本核对就够，不必把那份读取逻辑搬过来）
+        for expected in [
+            "offset = 0.0",
+            "scoreTotal = 1",
+            "renderBlockArea = true",
+            "renderLine = false",
+            // 背景：纯白曲绘要真的画出来（renderBg），压暗归零，白底才不会被压成灰
+            "renderBg = true",
+            "backgroundDim = 0.00",
+        ] {
+            assert!(
+                config_text.contains(expected),
+                "config.toml 里缺少 `{expected}`"
+            );
+        }
     }
 }

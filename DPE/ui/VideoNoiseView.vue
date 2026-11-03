@@ -5,7 +5,7 @@
  * 视频逐格取色后写成一张**全程只有噪域**的谱面，默认打包成一个 `.pez`
  * （`chart.json` + `info.yml` + `song.mp3` + `background.png` 平铺在包根上），
  * 在「渲染」页导入就能预览 / 渲染。抽帧、合成音频与打谱面都在 Rust 侧
- * （`src-tauri/src/tool_video.rs`），这一页只负责参数与输出列表。
+ * （`src-tauri/src/noise_player.rs` 与 `DPE/src/noise_player.rs`），这一页只负责参数与输出列表。
  *
  * 版式与「渲染」页一致：整页滚动 + 贴底操作条（`.render-view` 那三件套），
  * 参数用 `PhiGroup` + `PhiSection` + `.cfg-grid` + `CfgField`，不另起一套卡片样式。
@@ -104,7 +104,9 @@ Object.entries(DEFAULTS).forEach(([key, value]) => {
   }
 });
 
-const videoPath = ref('');
+/* 上一次导入的视频记在 localStorage 里，刷新页面接着用（重进时重新探一遍元数据，
+   文件要是被删了/搬走了就把记录清掉，页面回到空态）。 */
+const videoPath = useStorage('VideoNoiseView.Video', '');
 const meta = ref<VideoMeta | null>(null);
 const probing = ref(false);
 const generating = ref(false);
@@ -244,11 +246,34 @@ async function loadVideo(path: string) {
   params.value.end = 0;
   probing.value = true;
   try {
-    meta.value = await invoke<VideoMeta>('tool_video_probe', { path });
+    meta.value = await invoke<VideoMeta>('noise_player_probe', { path });
     // 上一段视频可能比这个长 / 快：帧率超出新上限就压回上限（密度是百分比，不用压）
     params.value.rate = Math.min(params.value.rate, maxRate.value);
   } catch (error) {
     fail(error);
+  } finally {
+    probing.value = false;
+  }
+}
+
+/**
+ * 刷新后接着用上次导入的那个视频：只重探元数据，**不动** `start` / `end`
+ * （`loadVideo` 会把它们清回 0，那是「换了个新视频」时才该做的事）。
+ */
+async function restoreVideo() {
+  const path = videoPath.value;
+  if (!path) return;
+  if (!isVideo(path)) {
+    videoPath.value = '';
+    return;
+  }
+  probing.value = true;
+  try {
+    meta.value = await invoke<VideoMeta>('noise_player_probe', { path });
+    params.value.rate = Math.min(params.value.rate, maxRate.value);
+  } catch {
+    meta.value = null;
+    videoPath.value = '';
   } finally {
     probing.value = false;
   }
@@ -267,7 +292,7 @@ async function refreshOutputs() {
   if (!dir) return;
   loadingOutputs.value = true;
   try {
-    outputs.value = await invoke<ToolOutput[]>('tool_video_outputs', { dir });
+    outputs.value = await invoke<ToolOutput[]>('noise_player_outputs', { dir });
   } catch {
     outputs.value = [];
   } finally {
@@ -280,7 +305,7 @@ async function openOutputDir() {
   const dir = outputDir.value;
   if (!dir) return;
   try {
-    await invoke('tool_video_reveal', { dir });
+    await invoke('noise_player_reveal', { dir });
   } catch (error) {
     fail(error);
   }
@@ -338,29 +363,10 @@ async function previewOutput(row: ToolOutput) {
   }
 }
 
-/** 待确认删除的那一行（`null` = 没有弹窗）。用应用自己的确认框，不弹系统框。 */
-const deleteTarget = ref<ToolOutput | null>(null);
-
-/** `v-dialog` 的开关：点遮罩或取消就清掉待删行。 */
-const deleteDialog = computed({
-  get: () => deleteTarget.value !== null,
-  set: (open: boolean) => {
-    if (!open) deleteTarget.value = null;
-  },
-});
-
-function deleteOutput(row: ToolOutput) {
-  deleteTarget.value = row;
-}
-
-/** 确认删除：删文件、刷新列表；关弹窗放在前面，删失败也有 toast 报原因。 */
-async function confirmDelete() {
-  const row = deleteTarget.value;
-  deleteTarget.value = null;
-  if (!row) return;
+/** 产物列表里的「移除」：直接从磁盘删掉，不弹确认框 —— 删错了重新生成一次就是。 */
+async function deleteOutput(row: ToolOutput) {
   try {
     await invoke('delete_file', { path: row.path });
-    toast(t('vn-deleted'), 'success');
     await refreshOutputs();
   } catch (error) {
     fail(error);
@@ -377,7 +383,7 @@ function startProgress() {
   lastSample = null;
   progressTimer = window.setInterval(async () => {
     try {
-      const next = await invoke<ConversionProgress>('tool_video_progress');
+      const next = await invoke<ConversionProgress>('noise_player_progress');
       progress.value = next;
       if (next.stage !== 'frames' || !next.frame) return;
       const now = performance.now();
@@ -409,7 +415,7 @@ async function generate() {
   report.value = null;
   startProgress();
   try {
-    report.value = await invoke<ChartReport>('tool_video_convert', {
+    report.value = await invoke<ChartReport>('noise_player_convert', {
       params: {
         video: videoPath.value,
         cols: densityCells.value,
@@ -444,7 +450,7 @@ watch(
 );
 
 onMounted(async () => {
-  invoke<string>('get_video_tool_dir_path')
+  invoke<string>('get_noise_player_dir_path')
     .then((dir) => {
       defaultOutputDir.value = dir;
       void refreshOutputs();
@@ -468,7 +474,7 @@ onMounted(async () => {
 
   // 上一次的转换可能还在跑（切走再回来），接着把它的进度显示出来
   try {
-    const running = await invoke<ConversionProgress>('tool_video_progress');
+    const running = await invoke<ConversionProgress>('noise_player_progress');
     if (running.running) {
       generating.value = true;
       startProgress();
@@ -476,6 +482,8 @@ onMounted(async () => {
   } catch {
     // 读不到进度不影响页面
   }
+
+  await restoreVideo();
 
   // 揭开内容区那层转圈（见 `../pageLoad`）：这一页没有要等的异步数据
   finishPageLoad();
@@ -631,24 +639,6 @@ onUnmounted(() => {
         {{ t('vn-generate') }}
       </v-btn>
     </div>
-
-    <!-- 删除确认：用应用自己的确认框（与任务页「取消渲染」同一种），不调系统对话框 -->
-    <v-dialog v-model="deleteDialog" width="auto" min-width="400px" class="log-card-bg">
-      <v-card class="log-card-only-window">
-        <v-card-title>{{ t('vn-delete-title') }}</v-card-title>
-        <v-card-text>
-          <div class="block whitespace-pre overflow-auto">
-            {{ t('vn-delete-message', { name: deleteTarget?.name ?? '' }) }}
-          </div>
-        </v-card-text>
-        <v-card-actions class="justify-end">
-          <v-btn class="hover-scale" variant="text" @click="deleteDialog = false">{{ t('cancel') }}</v-btn>
-          <v-btn class="hover-scale" variant="text" color="error" @click="confirmDelete">
-            {{ t('vn-col-delete') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 

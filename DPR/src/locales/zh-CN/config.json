@@ -530,6 +530,8 @@
   "block-area-force-delay-tip": "判定后再留多久才盖回去",
   "block-area-force-invert": "反向强制定位",
   "block-area-force-invert-tip": "反过来：只把按键周围那圈当噪域画",
+  "block-area-force-keep-noise": "保留原噪域",
+  "block-area-force-keep-noise-tip": "不丢谱面自带的噪域，和整屏噪域叠着画（原版在上层）",
   "render-judge-range": "判定范围",
   "render-judge-range-tips": "判定范围的宽度与长度，以屏高 / 屏宽为基准",
   "render-double-hint": "双押提示",

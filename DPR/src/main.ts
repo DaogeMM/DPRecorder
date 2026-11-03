@@ -30,7 +30,8 @@ import renderzhCN from './locales/zh-CN/render.json';
 import rpezhCN from './locales/zh-CN/rpe.json';
 import settingzhCN from './locales/zh-CN/setting.json';
 import taskzhCN from './locales/zh-CN/task.json';
-import toolszhCN from './locales/zh-CN/tools.json';
+import noisePlayerzhCN from './locales/zh-CN/noise-player.json';
+import malodyzhCN from './locales/zh-CN/malody.json';
 
 // 界面只有简体中文：没有语言切换，也不再读 localStorage 里的 `locale`
 // （旧版本存过 en / zh-TW，留着也不生效）。`t('key')` 的写法保留，键都在
@@ -48,7 +49,8 @@ const i18n = createI18n({
       ...rpezhCN,
       ...settingzhCN,
       ...taskzhCN,
-      ...toolszhCN,
+      ...noisePlayerzhCN,
+      ...malodyzhCN,
     },
   },
   legacy: false,

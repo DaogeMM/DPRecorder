@@ -464,7 +464,7 @@ pub fn dpe_output_dir(sub: &str) -> Result<PathBuf> {
 /// 工具页「噪域播放器」的输出目录：**`<dpe>/noisePlayer`**。
 ///
 /// 它是 DPE 的产物（谱面 `.pez`，不是渲染视频），所以放在 `<程序目录>/dpe` 之下。
-pub fn video_tool_dir() -> Result<PathBuf> {
+pub fn noise_player_dir() -> Result<PathBuf> {
     dpe_output_dir(DPE_NOISE_DIR)
 }
 

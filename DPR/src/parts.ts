@@ -52,16 +52,16 @@ export const PARTS: Part[] = [
   {
     id: 'dpe',
     label: 'DPE',
-    home: 'chart-list',
+    home: 'chart-mod',
     nav: [
-      // 谱面列表是 DPE 的默认页：挑要编辑的谱面（与 DPR 的批量页各存各的）
-      { name: 'chart-list', icon: 'mdi-filmstrip-box-multiple' },
+      // 谱面列表不再单独一项：它折进了「谱面修改」页顶部
       { name: 'chart-mod', icon: 'mdi-wrench-outline' },
-      { name: 'tool-video-noise', icon: 'mdi-movie-open-star-outline' },
+      { name: 'noise-player', icon: 'mdi-movie-open-star-outline' },
+      { name: 'malody-import', icon: 'mdi-file-import-outline' },
     ],
     // 设置页与 DPR 共用同一份（标题随部分变），所以这里也要写上，
     // 不然在 DPE 里点设置就会被当成 DPR 的路由、切换器跟着弹回 DPR。
-    routes: ['chart-list', 'chart-mod', 'tool-video-noise', 'settings'],
+    routes: ['chart-mod', 'noise-player', 'malody-import', 'settings'],
   },
 ];
 

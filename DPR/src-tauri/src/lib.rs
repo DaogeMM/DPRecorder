@@ -7,12 +7,13 @@ mod chart_config;
 mod common;
 mod icon;
 mod ipc;
+mod malody_convert;
 mod merge;
+mod noise_player;
 mod preview;
 mod render;
 mod split;
 mod task;
-mod tool_video;
 
 use anyhow::{bail, Context, Result};
 use common::{
@@ -308,11 +309,14 @@ pub fn run() -> Result<()> {
                 get_presets_path,
                 get_output_dir_path,
                 get_temp_dir_path,
-            get_video_tool_dir_path,
+            get_noise_player_dir_path,
             get_dpe_output_dir_path,
             get_dpe_modify_dir_path,
             dpe_preview,
             dpe_generate_modified,
+            malody_convert::dpe_malody_probe,
+            malody_convert::dpe_malody_convert,
+            malody_convert::get_dpe_malody_dir_path,
                 get_app_dir,
                 get_respack_dir_path,
                 get_appendant_dir_path,
@@ -338,11 +342,11 @@ pub fn run() -> Result<()> {
                 delete_autosave,
                 save_info,
                 read_info,
-                tool_video::tool_video_probe,
-                tool_video::tool_video_convert,
-                tool_video::tool_video_progress,
-                tool_video::tool_video_reveal,
-        tool_video::tool_video_outputs,
+                noise_player::noise_player_probe,
+                noise_player::noise_player_convert,
+                noise_player::noise_player_progress,
+                noise_player::noise_player_reveal,
+        noise_player::noise_player_outputs,
                 merge::merge_charts,
                 merge::dpe_merge_charts,
             ])
@@ -1539,8 +1543,8 @@ fn get_temp_dir_path() -> Result<String, InvokeError> {
 /// 工具页「噪域播放器」的输出目录：`<程序目录>/dpe/noisePlayer`（DPE 的产物目录）。
 /// 工具页那格空着时拿它当占位提示 —— 默认值看得见、也能一键打开。
 #[tauri::command]
-fn get_video_tool_dir_path() -> Result<String, InvokeError> {
-    common::video_tool_dir()
+fn get_noise_player_dir_path() -> Result<String, InvokeError> {
+    common::noise_player_dir()
         .map(|path| path.to_string_lossy().to_string())
         .map_err(InvokeError::from_anyhow)
 }

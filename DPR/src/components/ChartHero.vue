@@ -26,7 +26,15 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { formatLvl, formatLvlInText } from '../lvl';
 import type { ChartInfo } from '../model';
 
-const props = defineProps<{ info?: ChartInfo; path?: string; coverPath?: string }>();
+/**
+ * `info` 只要「有哪几行就显示哪几行」，不必是完整的 `ChartInfo`：
+ * Malody 转谱页只有曲名 / 曲师 / 谱师 / 难度，给不出来源谱面那三十多个字段。
+ *
+ * `assetPath` 是「按包内相对路径去读曲绘」时用的读取根，默认跟 `path` 一样。
+ * 单独给它的理由：单张 `.mc` 谱面本身不是压缩包，读不出里面的文件，
+ * 只能把它所在的文件夹当根（见 `fs::fs_from_file`）。
+ */
+const props = defineProps<{ info?: Partial<ChartInfo>; path?: string; coverPath?: string; assetPath?: string }>();
 
 const { t } = useI18n();
 
@@ -66,7 +74,7 @@ async function loadCover() {
   // 渲染页没有这个路径，才回落到「按谱面包内相对路径去后端读字节」这条路。
   const key = props.coverPath
     ? `file:${props.coverPath}`
-    : `asset:${props.path ?? ''}|${props.info?.illustration ?? ''}`;
+    : `asset:${props.assetPath ?? props.path ?? ''}|${props.info?.illustration ?? ''}`;
   if (key === loadedKey) return;
   loadedKey = key;
 
@@ -81,9 +89,10 @@ async function loadCover() {
   }
 
   const name = props.info?.illustration;
-  if (!name || !props.path) return;
+  const root = props.assetPath ?? props.path;
+  if (!name || !root) return;
   try {
-    const bytes = (await invoke('read_chart_asset', { path: props.path, name })) as ArrayBuffer;
+    const bytes = (await invoke('read_chart_asset', { path: root, name })) as ArrayBuffer;
     if (!(bytes instanceof ArrayBuffer) || bytes.byteLength === 0) return;
     coverUrl = URL.createObjectURL(new Blob([bytes], { type: mimeOf(name) }));
     coverIsBlob = true;
@@ -93,7 +102,9 @@ async function loadCover() {
   }
 }
 
-watch(() => [props.path, props.info?.illustration, props.coverPath] as const, loadCover, { immediate: true });
+watch(() => [props.assetPath, props.path, props.info?.illustration, props.coverPath] as const, loadCover, {
+  immediate: true,
+});
 onUnmounted(revokeCover);
 
 /**
