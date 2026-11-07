@@ -15,9 +15,10 @@ pub use anim::{Anim, AnimFloat, AnimFloatF64, AnimVector, Keyframe};
 mod block_area;
 pub use block_area::simple as simple_block_area;
 pub use block_area::{
-    block_touch_blocked, collect_zones, ease as block_area_ease, group_block_areas, is_native_block_area, is_next_block_area,
-    parse_block_areas, parse_next as parse_next_block_areas, render_native_block_areas, touch_inset_world, BlockArea, BlockAreaRenderer,
-    BlockAreaStyle, BlockGroup, BlockPhase, NativeBlocks, NextArea, NextTempo, Zone, EASE_LINEAR, EASE_ONE, EASE_ZERO,
+    assign_layers as assign_next_layers, block_touch_blocked, collect_zones, ease as block_area_ease, group_block_areas, is_native_block_area,
+    is_next_block_area, parse_block_areas, parse_next as parse_next_block_areas, render_native_block_areas, touch_inset_world, BlockArea,
+    BlockAreaRenderer, BlockAreaStyle, BlockGroup, BlockPhase, NativeBlocks, NextArea, NextTempo, NoiseLayer, NoiseLayers, Zone, EASE_LINEAR, EASE_ONE,
+    EASE_ZERO,
 };
 
 pub mod appendant;

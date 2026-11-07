@@ -244,7 +244,7 @@ pub struct RPEJudgeLine {
 #[serde(rename_all = "camelCase")]
 pub struct RPEMetadata {
     #[serde(rename = "RPEVersion")]
-    #[allow(unused)] rpe_version: i32,
+    rpe_version: i32,
     offset: i32,
 }
 
@@ -261,6 +261,13 @@ pub struct RPEChart {
     /// 是原生条目，两类可能混在同一个数组里，解析时逐条判别。
     #[serde(default, alias = "BlockAreaList")]
     block_area_list: Option<Vec<serde_json::Value>>,
+    /// rpe-next v230 的噪域层（`noiseAreaLayers`）：每条噪域按 `layerId` 归到其中一层。
+    /// 没有这个字段的谱面只有一层 `default`。
+    #[serde(default)]
+    noise_area_layers: Option<Vec<serde_json::Value>>,
+    /// rpe-next 的噪域选项，目前只认 `ignoreTripleInversion`（见 `next_single_inversion`）。
+    #[serde(default)]
+    noise_area_options: Option<serde_json::Value>,
 }
 
 fn parse_events<T: Tweenable, V: Clone + Into<T>>(
@@ -828,6 +835,14 @@ pub async fn parse_rpe(source: &str, fs: &mut dyn FileSystem, extra: ChartExtra)
     let rpe: RPEChart = serde_json::from_str(source).with_context(|| ptl!("json-parse-failed"))?;
     let bezier_map = get_bezier_map(&rpe);
     let block_area_list = rpe.block_area_list;
+    // 层表要先于噪域解析：噪域只记 `layerId`，归到第几层由这张表决定。
+    let noise_layers = crate::core::NoiseLayers::parse(rpe.noise_area_layers.as_deref());
+    let ignore_triple_inversion = rpe
+        .noise_area_options
+        .as_ref()
+        .and_then(|options| options.get("ignoreTripleInversion"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let bpm_list = rpe.bpm_list;
     let mut r = BpmList::new(bpm_list.clone().into_iter().map(|it| (it.start_time.beats(), it.bpm)).collect());
     fn vec<T>(v: &Option<Vec<T>>) -> impl Iterator<Item = &T> {
@@ -902,10 +917,55 @@ pub async fn parse_rpe(source: &str, fs: &mut dyn FileSystem, extra: ChartExtra)
         if !next.is_empty() {
             // 这条换算要**原始 bpm**：判定线自己的 BPM 是除过 `bpmFactor` 的，噪域不能用那份。
             match crate::core::NextTempo::new(bpm_list.iter().map(|it| (it.start_time.beats(), it.bpm))) {
-                Ok(tempo) => chart.next_block_areas = crate::core::parse_next_block_areas(&next, &tempo),
+                Ok(tempo) => {
+                    let mut areas = crate::core::parse_next_block_areas(&next, &tempo);
+                    crate::core::assign_next_layers(&mut areas, &noise_layers);
+                    chart.next_block_areas = areas;
+                }
                 Err(error) => tracing::warn!("blockAreaList: BPMList 无法用于 rpe-next 噪域，已忽略：{error:#}"),
             }
         }
     }
+    chart.next_noise_layers = noise_layers.into_layers();
+    // v230 的层模型与 `noiseAreaOptions.ignoreTripleInversion` 都改成「恰好一次反转才算减掉覆盖」，
+    // 三次反转不再翻回去（参考实现的 `rpen::features`）。旧谱面保持奇偶规则。
+    chart.next_single_inversion = ignore_triple_inversion
+        || (rpe.meta.rpe_version >= 230 && !chart.next_block_areas.is_empty())
+        || rpe.noise_area_layers.as_ref().is_some_and(|layers| !layers.is_empty());
     Ok(chart)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// rpe-next 的 UI 列表里没有 `dif`，右下角那一格叫 `level`。这一条解析不了就会让整张谱面
+    /// 报 `unknown variant 'level'`（枚举见 [`UIElement`]）。
+    #[test]
+    fn attach_ui_accepts_level() {
+        let json = r#"{
+            "META": {"RPEVersion": 230, "offset": 0},
+            "BPMList": [{"startTime": [0, 0, 1], "bpm": 120.0}],
+            "judgeLineList": [{"Name": "ui", "Texture": "line.png", "eventLayers": [], "isCover": 0, "attachUI": "level"}]
+        }"#;
+        let chart: RPEChart = serde_json::from_str(json).unwrap();
+        assert!(matches!(chart.judge_line_list[0].attach_ui, Some(UIElement::Level)));
+    }
+
+    /// `noiseAreaLayers` / `noiseAreaOptions` 要原样收进解析器（不做校验，交给 `NoiseLayers::parse`）。
+    #[test]
+    fn noise_layer_fields_are_kept() {
+        let json = r#"{
+            "META": {"RPEVersion": 230, "offset": 0},
+            "BPMList": [{"startTime": [0, 0, 1], "bpm": 120.0}],
+            "judgeLineList": [],
+            "noiseAreaLayers": [{"id": "main", "name": "默认层", "skin": "shader/NoiseField-builtin", "channel": "normal"}],
+            "noiseAreaOptions": {"ignoreTripleInversion": true}
+        }"#;
+        let chart: RPEChart = serde_json::from_str(json).unwrap();
+        let layers = chart.noise_area_layers.as_deref().unwrap();
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0]["id"], "main");
+        assert_eq!(chart.noise_area_options.unwrap()["ignoreTripleInversion"], true);
+    }
 }

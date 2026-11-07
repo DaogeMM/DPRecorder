@@ -12,6 +12,10 @@ use nalgebra::Rotation2;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 
+/// 判定线可以绑定的 UI 元素（谱面的 `attachUI`）。
+///
+/// `Dif` 是官方 RPE 的叫法；rpe-next 的列表里没有 `Dif`，右下角那一格叫 `Level`，
+/// 画的是完整难度文本（`META.level`，如 "IN Lv.16"），位置与 `Dif` 是同一格。
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 #[repr(u8)]
@@ -23,6 +27,7 @@ pub enum UIElement {
     Bar = 5,
     Name = 6,
     Dif = 7,
+    Level = 8,
 }
 
 impl UIElement {
@@ -35,6 +40,7 @@ impl UIElement {
             5 => Self::Bar,
             6 => Self::Name,
             7 => Self::Dif,
+            8 => Self::Level,
             _ => return None,
         })
     }

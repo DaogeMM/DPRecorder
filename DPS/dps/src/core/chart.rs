@@ -1,7 +1,7 @@
 crate::tl_file!("parser");
 
 use super::{
-    BlockArea, BlockAreaRenderer, BlockGroup, BpmList, Effect, JudgeLine, JudgeLineKind, Matrix, NextArea, Resource, UIElement, Vector,
+    BlockArea, BlockAreaRenderer, BlockGroup, BpmList, Effect, JudgeLine, JudgeLineKind, Matrix, NextArea, NoiseLayer, Resource, UIElement, Vector,
 };
 use crate::{
     core::Object,
@@ -46,6 +46,13 @@ pub struct Chart {
     /// rpe-next v220 噪域（同一份 `blockAreaList` 里另一套字段的条目），时间单位是**全局 beat**，
     /// 解析时就靠谱面 BPM 表换算成秒了。
     pub next_block_areas: Vec<NextArea>,
+    /// rpe-next v230 的噪域层（`noiseAreaLayers`）：每条噪域按 `layerId` 归到其中一层。
+    ///
+    /// 没有层字段的谱面只有一层 `default`（见 [`super::NoiseLayers`]），旧谱面的行为不变。
+    pub next_noise_layers: Vec<NoiseLayer>,
+    /// rpe-next 噪域的遮挡规则：为真时层内只有**恰好一次**反转才算减掉覆盖（v230 的层模型
+    /// 与 `noiseAreaOptions.ignoreTripleInversion` 都走这一套），为假时按奇偶规则。
+    pub next_single_inversion: bool,
     /// 这一帧被噪域吞掉的触摸（`(手指 id, chart 坐标)`）：处于 `Active` 相位噪域里的手指。
     ///
     /// 官方语义：这些触点**不参与判定**（下面的按键打不中），同时噪域上会以它们为圆心
@@ -57,7 +64,11 @@ pub struct Chart {
     block_area_renderer: RefCell<BlockAreaRenderer>,
 
     order: Vec<usize>,
-    attach_ui: [Option<usize>; 7],
+    /// 每种 UI 元素绑到了哪条判定线（下标 = `UIElement as usize - 1`）。
+    ///
+    /// 长度必须覆盖 `UIElement` 的最大编号：`with_element` 按 `element as usize - 1` 取，
+    /// 加了新元素而没扩这里会直接越界 panic。
+    attach_ui: [Option<usize>; 8],
     trs: Vec<Matrix>,
     /// 「谱面修改」是否已经落到这份谱面上。
     ///
@@ -80,7 +91,7 @@ impl Chart {
         hitsounds: HitSoundMap,
         fonts: Vec<RefCell<TextPainter>>,
     ) -> Self {
-        let mut attach_ui = [None; 7];
+        let mut attach_ui = [None; 8];
         let mut order = (0..lines.len())
             .filter(|it| {
                 if let Some(element) = lines[*it].attach_ui {
@@ -106,6 +117,8 @@ impl Chart {
             fonts,
             block_areas: Vec::new(),
             next_block_areas: Vec::new(),
+            next_noise_layers: Vec::new(),
+            next_single_inversion: false,
             blocked_touches: Vec::new(),
             block_groups: Vec::new(),
             block_area_renderer: RefCell::new(BlockAreaRenderer::default()),
@@ -187,7 +200,7 @@ impl Chart {
             keep
         });
 
-        let mut attach_ui = [None; 7];
+        let mut attach_ui = [None; 8];
         let mut order = Vec::with_capacity(self.lines.len());
         for (index, line) in self.lines.iter().enumerate() {
             match line.attach_ui {
@@ -212,6 +225,12 @@ impl Chart {
     pub fn with_block_area_style(self, f: impl FnOnce(&mut super::BlockAreaStyle)) -> Self {
         f(&mut self.block_area_renderer.borrow_mut().style);
         self
+    }
+
+    /// 这种 UI 元素是否绑到了某条判定线上。
+    #[inline]
+    pub fn has_element(&self, element: UIElement) -> bool {
+        self.attach_ui[element as usize - 1].is_some()
     }
 
     #[inline]

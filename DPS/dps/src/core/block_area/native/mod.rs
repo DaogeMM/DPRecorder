@@ -289,7 +289,9 @@ fn inset_local(size: f32, inset_world: f32) -> f32 {
 ///
 /// `next` 是 rpe-next v220 噪域（见 [`super::next`]），它自己那套 beat / 画布单位判定
 /// 已经解算成同一空间的矩形，所以这里只需在原生结果上再或一次。
-pub fn block_touch_blocked(areas: &[BlockArea], next: &[NextArea], p: Vector, t: f64, aspect: f32) -> bool {
+///
+/// `single_inversion` 见 [`super::next::blocked`]：v230 的层模型只认「恰好一次反转」。
+pub fn block_touch_blocked(areas: &[BlockArea], next: &[NextArea], p: Vector, t: f64, aspect: f32, single_inversion: bool) -> bool {
     let inset = touch_inset_world(aspect);
     let mut orig_non = false;
     let mut orig_sub = 0u32;
@@ -315,7 +317,7 @@ pub fn block_touch_blocked(areas: &[BlockArea], next: &[NextArea], p: Vector, t:
         }
     }
     let native = (orig_non as u32) != (orig_sub & 1) && (ins_non as u32) != (ins_sub & 1);
-    native || super::next::blocked(next, p, t, aspect)
+    native || super::next::blocked(next, p, t, aspect, single_inversion)
 }
 
 mod mask;

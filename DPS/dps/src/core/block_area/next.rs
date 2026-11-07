@@ -21,6 +21,7 @@
 //! 任何 aspect 下都完全一致，`aspect == 1.5` 时与参考实现完全一致，其余情况旋转块有
 //! `O(1 - 1.5 / aspect)` 的二阶偏差；渲染与遮挡判定用同一套几何，二者始终自洽。
 
+use super::layers::{NoiseLayers, DEFAULT_LAYER_ID};
 use super::native::touch_inset_world;
 use crate::core::{Vector, Zone};
 use anyhow::{ensure, Context, Result};
@@ -219,6 +220,9 @@ struct AreaData {
     /// 这块噪域的颜色，写法与按键的 `color` 一致（见 [`super::RawBlockArea::color`]）。
     #[serde(default, deserialize_with = "super::deserialize_zone_color")]
     color: Option<[f32; 3]>,
+    /// v230 起这一条属于哪一层（`noiseAreaLayers` 的 `id`）；缺省归 [`DEFAULT_LAYER_ID`]。
+    #[serde(default)]
+    layer_id: Option<String>,
 }
 
 /// 齐次仿射矩阵（`f64`，与参考实现一致）。
@@ -528,6 +532,10 @@ pub struct NextArea {
     tracks: [Track; 5],
     /// 这块噪域的颜色（`None` = 原生红），见 [`super::RawBlockArea::color`]。
     color: Option<[f32; 3]>,
+    /// 谱面里的 `layerId` 原值，解析时先留着，由 [`assign_layers`] 折算成层号。
+    layer_id: Option<String>,
+    /// 层号（`noiseAreaLayers` 的下标）；没归层时是 0。
+    layer: usize,
 }
 
 /// 某一时刻解算出来的结果。
@@ -535,6 +543,8 @@ struct Sample {
     zone: Zone,
     /// 1 = ready（紧接着的生效区间开始前那段闪烁窗口），2 = active（计入遮挡）。
     state: u8,
+    /// 这块噪域所在的层，遮挡判定按层各自合成。
+    layer: usize,
 }
 
 impl NextArea {
@@ -592,6 +602,8 @@ impl NextArea {
                 track(data.scale_y_events, Axis::Y, 1., "scaleYEvents")?,
             ],
             color: data.color,
+            layer_id: data.layer_id,
+            layer: 0,
         })
     }
 
@@ -642,7 +654,7 @@ impl NextArea {
             // 谱面里给了颜色就跟原生噪域一样走彩色材质（按它的色相旋转官方配色）。
             color: self.color,
         };
-        Some(Sample { zone, state: if active { 2 } else if ready { 1 } else { 0 } })
+        Some(Sample { zone, state: if active { 2 } else if ready { 1 } else { 0 }, layer: self.layer })
     }
 }
 
@@ -673,7 +685,33 @@ pub fn parse_next(list: &[Value], tempo: &Tempo) -> Vec<NextArea> {
         .collect()
 }
 
+/// 把解析好的噪域按 `layerId` 归到 [`NoiseLayers`] 的层号上。
+///
+/// 未知层归入第一层（谱面里删掉了一层、噪域还指着它时不该整块消失），最后按层号稳定排序：
+/// 同层内保持谱面顺序，层与层之间按 `noiseAreaLayers` 的顺序 —— 也就是绘制顺序。
+pub fn assign_layers(areas: &mut [NextArea], layers: &NoiseLayers) {
+    let mut missing: Vec<String> = Vec::new();
+    for area in areas.iter_mut() {
+        let id = area.layer_id.as_deref().unwrap_or(DEFAULT_LAYER_ID);
+        match layers.index(id) {
+            Some(index) => area.layer = index,
+            None => {
+                if !missing.iter().any(|known| known == id) {
+                    missing.push(id.to_owned());
+                }
+                area.layer = 0;
+            }
+        }
+    }
+    for id in missing {
+        warn!("blockAreaList: 噪域引用了不存在的层 {id:?}，已归入第一层");
+    }
+    areas.sort_by_key(|area| area.layer);
+}
+
 /// `time` 时刻所有可见噪域解算出来的 [`Zone`]，直接交给原生渲染那一趟一起画。
+///
+/// 顺序就是 [`NextArea`] 的顺序：`assign_layers` 已经按层排好，所以层叠关系与谱面一致。
 pub fn zones(areas: &[NextArea], time: f64, aspect: f32) -> Vec<Zone> {
     areas.iter().filter_map(|area| area.sample(time, aspect)).map(|sample| sample.zone).collect()
 }
@@ -692,15 +730,23 @@ fn contains(zone: &Zone, p: Vector, inset: f32) -> bool {
     local.x.abs() <= zone.half.x + sign * ix && local.y.abs() <= zone.half.y + sign * iy
 }
 
-/// 触摸点是否被 rpe-next 噪域挡住：与原生那套一样按奇偶规则算。
+/// 触摸点是否被 rpe-next 噪域挡住。
 ///
-/// 只统计 `active` 的块；普通块算「被盖住」，减算块算一次反转。要求零内缩与外扩内缩两次都成立，
-/// 这样贴着边缘的手指不会漏过去。
-pub fn blocked(areas: &[NextArea], point: Vector, time: f64, aspect: f32) -> bool {
+/// 按层各自合成：层内「有普通块」与「反转次数」按奇偶相消，层与层之间取或 —— 每层是一张
+/// 独立的噪域图，两层的减算块不该跨层抵消。
+///
+/// `single_inversion` 对应谱面的 `noiseAreaOptions.ignoreTripleInversion` 与 v230 起的
+/// 层模型（见 `parse::rpe`）：为真时只有**恰好一次**反转才算减掉覆盖，三次反转不再翻回去。
+///
+/// 只统计 `active` 的块；要求零内缩与外扩内缩两次都成立，这样贴着边缘的手指不会漏过去。
+pub fn blocked(areas: &[NextArea], point: Vector, time: f64, aspect: f32, single_inversion: bool) -> bool {
     let samples: Vec<_> = areas.iter().filter_map(|area| area.sample(time, aspect)).collect();
-    let coverage = |inset: f32| {
+    let mut layers: Vec<usize> = samples.iter().map(|sample| sample.layer).collect();
+    layers.sort_unstable();
+    layers.dedup();
+    let coverage = |layer: usize, inset: f32| {
         let (mut normal, mut inversions) = (false, 0u32);
-        for sample in samples.iter().filter(|sample| sample.state == 2) {
+        for sample in samples.iter().filter(|sample| sample.state == 2 && sample.layer == layer) {
             if contains(&sample.zone, point, inset) {
                 if sample.zone.invert {
                     inversions += 1;
@@ -709,9 +755,9 @@ pub fn blocked(areas: &[NextArea], point: Vector, time: f64, aspect: f32) -> boo
                 }
             }
         }
-        normal ^ (inversions % 2 == 1)
+        normal ^ if single_inversion { inversions == 1 } else { inversions % 2 == 1 }
     };
-    coverage(0.) && coverage(touch_inset_world(aspect))
+    layers.into_iter().any(|layer| coverage(layer, 0.) && coverage(layer, touch_inset_world(aspect)))
 }
 
 #[cfg(test)]
@@ -736,6 +782,12 @@ mod tests {
             value[key.as_str()] = item.clone();
         }
         value
+    }
+
+    /// 两层的层表：噪域用 `layerId` 指向 `a` / `b`。
+    fn layers_ab() -> NoiseLayers {
+        let value = json!([{"id": "a"}, {"id": "b"}]);
+        NoiseLayers::parse(value.as_array().map(Vec::as_slice))
     }
 
     #[test]
@@ -804,19 +856,19 @@ mod tests {
         let t = 1.5;
         let aspect = 1.5;
         // 正中心一定挡住。
-        assert!(blocked(&areas, Vector::new(0., 0.), t, aspect));
+        assert!(blocked(&areas, Vector::new(0., 0.), t, aspect, false));
         // y = 0.5 在两条边界之内。
-        assert!(blocked(&areas, Vector::new(0., 0.5), t, aspect));
+        assert!(blocked(&areas, Vector::new(0., 0.5), t, aspect, false));
         // y = 0.65 落在原始矩形里、但落在内缩后的边界外 ⇒ 不挡。
         // （touch_inset_world(1.5) = 0.05 * 2 / 1.5 = 1/15，内缩后半高 2/3 - 1/15 = 0.6）
-        assert!(!blocked(&areas, Vector::new(0., 0.65), t, aspect));
+        assert!(!blocked(&areas, Vector::new(0., 0.65), t, aspect, false));
         // 横向同理：1 - 1/15 = 0.9333。
-        assert!(!blocked(&areas, Vector::new(0.95, 0.), t, aspect));
+        assert!(!blocked(&areas, Vector::new(0.95, 0.), t, aspect, false));
         // 完全在外面。
-        assert!(!blocked(&areas, Vector::new(1.2, 0.), t, aspect));
+        assert!(!blocked(&areas, Vector::new(1.2, 0.), t, aspect, false));
         // 不在生效区间里就不挡。
-        assert!(!blocked(&areas, Vector::new(0., 0.), 2.5, aspect));
-        assert!(!blocked(&areas, Vector::new(0., 0.), 0.7, aspect));
+        assert!(!blocked(&areas, Vector::new(0., 0.), 2.5, aspect, false));
+        assert!(!blocked(&areas, Vector::new(0., 0.), 0.7, aspect, false));
     }
 
     #[test]
@@ -827,10 +879,71 @@ mod tests {
         assert!(inverted[0].invert);
         let point = Vector::new(0., 0.);
         // 单块减算：普通块 0 次、反转 1 次 ⇒ 仍然算挡住（奇偶规则）。
-        assert!(blocked(&inverted, point, 1.5, 1.5));
+        assert!(blocked(&inverted, point, 1.5, 1.5, false));
         // 普通 + 减算重叠：反转一次把覆盖抵消掉。
         let both: Vec<_> = normal.into_iter().chain(inverted).collect();
-        assert!(!blocked(&both, point, 1.5, 1.5));
+        assert!(!blocked(&both, point, 1.5, 1.5, false));
+    }
+
+    /// 层内奇偶相消、层间取或：两层各自的减算块不该跨层把对方的覆盖抵消掉。
+    #[test]
+    fn layers_are_counted_separately() {
+        let tempo = tempo_120();
+        let layers = layers_ab();
+        let point = Vector::new(0., 0.);
+        let mut areas = parse_next(
+            &[full_canvas(json!({"layerId": "a"})), full_canvas(json!({"layerId": "b", "isInvert": true}))],
+            &tempo,
+        );
+        assign_layers(&mut areas, &layers);
+        assert_eq!(areas.iter().map(|area| area.layer).collect::<Vec<_>>(), vec![0, 1]);
+        // a 层盖住、b 层是减算：两层各自合成，结果仍是挡住。
+        assert!(blocked(&areas, point, 1.5, 1.5, false));
+        // 同一个层里的普通块 + 减算块才会相消。
+        let mut same = parse_next(
+            &[full_canvas(json!({"layerId": "a"})), full_canvas(json!({"layerId": "a", "isInvert": true}))],
+            &tempo,
+        );
+        assign_layers(&mut same, &layers);
+        assert!(!blocked(&same, point, 1.5, 1.5, false));
+    }
+
+    /// v230 的 `single_inversion`：层内只有**恰好一次**反转才算减掉覆盖，三次反转不再翻回去。
+    #[test]
+    fn single_inversion_only_subtracts_once() {
+        let tempo = tempo_120();
+        let mut areas = parse_next(
+            &[
+                full_canvas(json!({})),
+                full_canvas(json!({"isInvert": true})),
+                full_canvas(json!({"isInvert": true})),
+                full_canvas(json!({"isInvert": true})),
+            ],
+            &tempo,
+        );
+        assign_layers(&mut areas, &NoiseLayers::default());
+        let point = Vector::new(0., 0.);
+        // 奇偶规则：普通块 + 3 次反转 ⇒ 翻回不挡。
+        assert!(!blocked(&areas, point, 1.5, 1.5, false));
+        // v230：3 次反转不算减，普通块照样挡住。
+        assert!(blocked(&areas, point, 1.5, 1.5, true));
+    }
+
+    /// 归层：未知层归第一层，排序后同层保持谱面顺序、层间按 `noiseAreaLayers` 的顺序。
+    #[test]
+    fn assign_layers_sorts_by_layer_and_falls_back() {
+        let tempo = tempo_120();
+        let layers = layers_ab();
+        let mut areas = parse_next(
+            &[
+                full_canvas(json!({"layerId": "b"})),
+                full_canvas(json!({"layerId": "missing"})),
+                full_canvas(json!({"layerId": "a"})),
+            ],
+            &tempo,
+        );
+        assign_layers(&mut areas, &layers);
+        assert_eq!(areas.iter().map(|area| area.layer).collect::<Vec<_>>(), vec![0, 0, 1]);
     }
 
     #[test]
@@ -918,5 +1031,51 @@ mod tests {
             assert!((curve(id, 1.) - 1.).abs() < 1e-3, "id={id}");
         }
         assert!((curve(1, 0.25) - 0.25).abs() < 1e-12);
+    }
+
+    /// 实弹：`example/pez4/靈.pez`（`META.RPEVersion = 230`）的噪域层。
+    /// 谱面不在仓库里，缺文件时按 skip 处理（`example_path` 见 `mod.rs` 的测试模块）。
+    #[test]
+    fn layers_come_from_a_real_v230_chart() {
+        let Some(path) = super::super::tests::example_path("pez4/靈.pez") else {
+            eprintln!("skip: example chart not found");
+            return;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("skip: example chart not found");
+            return;
+        };
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let text = {
+            use std::io::Read;
+            let mut text = String::new();
+            zip.by_name("chart.json").unwrap().read_to_string(&mut text).unwrap();
+            text
+        };
+        let chart: Value = serde_json::from_str(&text).unwrap();
+        // BPMList → beat 到秒的换算表（噪域的时间是全局 beat）。
+        let tempo = Tempo::new(chart["BPMList"].as_array().unwrap().iter().map(|item| {
+            let beat = item["startTime"].as_array().unwrap();
+            let beat = beat[0].as_f64().unwrap() + beat[1].as_f64().unwrap() / beat[2].as_f64().unwrap();
+            (beat, item["bpm"].as_f64().unwrap())
+        }))
+        .unwrap();
+        let mut areas = parse_next(chart["blockAreaList"].as_array().unwrap(), &tempo);
+        let layers = NoiseLayers::parse(chart["noiseAreaLayers"].as_array().map(Vec::as_slice));
+        assign_layers(&mut areas, &layers);
+        let layers = layers.into_layers();
+
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].id, "5a172c37-233b-4b30-9392-26261225dd81");
+        assert_eq!(layers[0].name, "默认层");
+        assert_eq!(layers[0].skin.as_deref(), Some("shader/NoiseField-builtin"));
+        // 五条噪域全部指向那一层。
+        assert_eq!(areas.len(), 5);
+        assert!(areas.iter().all(|area| area.layer == 0));
+        assert!(areas[3].invert && areas[4].invert);
+        // 第 0 条在 3 秒（6 beat @120）落在生效区间里，是普通块。
+        let sample = areas[0].sample(3., 1.5).unwrap();
+        assert_eq!(sample.state, 2);
+        assert!(!sample.zone.invert);
     }
 }

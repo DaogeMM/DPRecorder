@@ -1311,17 +1311,24 @@ impl GameScene {
         }
         // 「雪降SP」特殊演出自己会提供难度文本，所以模式下即使关掉了难度显示也照画
         if res.config.render_ui_difficulty || xuejiang_sp.is_some() {
+            // rpe-next 把这一格叫 `level`、画的是完整难度文本（"IN Lv.16"）；官方叫 `dif`，
+            // 文本由 `render_ui_level` 决定用完整版还是只留难度名。两者占同一格，绑了哪个画哪个。
+            let level_bound = self.chart.has_element(UIElement::Level);
+            let element = if level_bound { UIElement::Level } else { UIElement::Dif };
             let diff_text = match xuejiang_sp {
                 Some(it) => match it.fake_diff {
                     true => res.config.xuejiang_sp_diff_fake.as_str(),
                     false => res.config.xuejiang_sp_diff_real.as_str(),
                 },
-                None => match res.config.render_ui_level {
-                    true => res.info.difficulty.as_str(),
-                    false => res.info.diff.as_str(),
-                },
+                None => {
+                    if level_bound || res.config.render_ui_level {
+                        res.info.difficulty.as_str()
+                    } else {
+                        res.info.diff.as_str()
+                    }
+                }
             };
-            self.chart.with_element(ui, res, UIElement::Dif, Some((-lf, bt)), Some((-lf, bt)), |ui, color| {
+            self.chart.with_element(ui, res, element, Some((-lf, bt)), Some((-lf, bt)), |ui, color| {
                 match &baoying {
                     // 「报应SP」：难度换成「SP  LV.?」的手绘贴图，从右往左排
                     Some(style) => {

@@ -63,11 +63,16 @@ impl<T: Tweenable> Anim<T> {
         self.keyframes.is_empty() && self.next.is_none()
     }
 
+    /// 把多段动画首尾串起来：后一段的值叠加到前一段上。
+    ///
+    /// 空动画（没有关键帧、也没有后续段）在这里直接丢掉。它的 `now_opt` 是 `None`，
+    /// 留在链上会让前一段的叠加拿到 `None`；谱面里 `"alphaEvents": []` 这类空事件数组
+    /// 就会解析出这种动画。
     pub fn chain(elements: Vec<Anim<T>>) -> Self {
+        let mut elements: Vec<_> = elements.into_iter().filter(|it| !it.is_default()).map(Box::new).collect();
         if elements.is_empty() {
             return Self::default();
         }
-        let mut elements: Vec<_> = elements.into_iter().map(Box::new).collect();
         elements.last_mut().unwrap().next = None;
         while elements.len() > 1 {
             let last = elements.pop().unwrap();
@@ -118,10 +123,13 @@ impl<T: Tweenable> Anim<T> {
         let Some(now) = self.now_opt_inner() else {
             return None;
         };
-        Some(if let Some(next) = &self.next {
-            T::add(&now, &next.now_opt().unwrap())
-        } else {
-            now
+        Some(match &self.next {
+            // 后续段可能是空动画（见 [`Self::chain`]）：它不贡献任何值，不能当成有值来叠加。
+            Some(next) => match next.now_opt() {
+                Some(value) => T::add(&now, &value),
+                None => now,
+            },
+            None => now,
         })
     }
 
@@ -160,5 +168,32 @@ impl AnimVector {
 
     pub fn now_with_def(&self, x: f32, y: f32) -> Vector {
         Vector::new(self.0.now_opt().unwrap_or(x), self.1.now_opt().unwrap_or(y))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn anim(keyframes: &[(f64, f32)]) -> AnimFloat {
+        // 2 号缓动是线性（0 号是常量 0，1 号是常量 1）。
+        AnimFloat::new(keyframes.iter().map(|&(time, value)| Keyframe::new(time, value, 2)).collect())
+    }
+
+    /// 空事件数组（`"alphaEvents": []`）解析出来的是空动画：它挂在链尾时，前一段的叠加
+    /// 不能因为拿到 `None` 而 panic。
+    #[test]
+    fn empty_layer_does_not_break_the_chain() {
+        let mut chain = AnimFloat::chain(vec![anim(&[(0., 1.), (1., 2.)]), AnimFloat::default()]);
+        chain.set_time(0.5);
+        assert_eq!(chain.now_opt(), Some(1.5));
+
+        // 空动画在链首时同样不参与叠加。
+        let mut trailing = AnimFloat::chain(vec![AnimFloat::default(), anim(&[(0., 3.), (1., 3.)])]);
+        trailing.set_time(0.5);
+        assert_eq!(trailing.now_opt(), Some(3.));
+
+        // 全是空动画时退化成 `default`，没有值。
+        assert!(AnimFloat::chain(vec![AnimFloat::default(), AnimFloat::default()]).now_opt().is_none());
     }
 }

@@ -20,15 +20,17 @@
 //! `BlockAreaStyle::simplified` 的「简化噪域」也共用同一份官方材质，
 //! 只是逐帧覆写 uniform 把它降级成纯色。细节见 [`native`] 与 `blockArea/NATIVE_PORT.md`。
 
+mod layers;
 mod native;
 mod next;
 pub mod simple;
 
+pub use layers::{NoiseLayer, NoiseLayers};
 pub use native::{
     block_touch_blocked, collect as collect_zones, judge_paint_view, render_all as render_native_block_areas, reset_block_effects as reset_native_block_effects,
     touch_inset_world, NativeBlocks, Zone,
 };
-pub use next::{is_native_block_area, is_next_block_area, parse_next, NextArea, Tempo as NextTempo};
+pub use next::{assign_layers, is_native_block_area, is_next_block_area, parse_next, NextArea, Tempo as NextTempo};
 
 use super::Resource;
 use macroquad::prelude::*;
@@ -794,7 +796,7 @@ mod tests {
     /// 它可能在 `CARGO_MANIFEST_DIR` 上面若干级，所以这里逐级向上找；
     /// 也可以直接用环境变量 `DPS_EXAMPLE_DIR` 指过去。
     /// 返回 `None` 表示没有示例谱面，调用方按「skip」处理。
-    fn example_dir() -> Option<std::path::PathBuf> {
+    pub(super) fn example_dir() -> Option<std::path::PathBuf> {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(dir) = std::env::var("DPS_EXAMPLE_DIR") {
             if !dir.is_empty() {
@@ -810,7 +812,7 @@ mod tests {
     }
 
     /// `example/` 下的一个文件；不存在时返回 `None`。
-    fn example_path(rel: &str) -> Option<std::path::PathBuf> {
+    pub(super) fn example_path(rel: &str) -> Option<std::path::PathBuf> {
         let path = example_dir()?.join(rel);
         path.is_file().then_some(path)
     }

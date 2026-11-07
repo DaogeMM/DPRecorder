@@ -717,7 +717,8 @@ impl Judge {
                 // 触点 y 轴与 chart 相反（触摸是屏幕坐标，chart 的 y 向上）
                 let p = Vector::new(touch.position.x, -touch.position.y);
                 // 已经被挡住的触点不再重复测试（它可能已经滑出噪域），仍然算挡着
-                let inside = !self.blocked_finger_ids.contains(&touch.id) && block_touch_blocked(areas, next, p, t, aspect);
+                let inside = !self.blocked_finger_ids.contains(&touch.id)
+                    && block_touch_blocked(areas, next, p, t, aspect, chart.next_single_inversion);
                 if finger_blocked(&mut self.blocked_finger_ids, touch.id, touch.phase, inside) {
                     blocked.push((touch.id, p));
                     false
