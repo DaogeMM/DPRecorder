@@ -36,7 +36,61 @@ pub fn play_sfx(sfx: &mut Sfx, config: &Config) {
     });
 }
 
-#[cfg(all(not(target_os = "windows"), not(target_os = "ios")))]
+/// wasm 侧没有可用的音频后端（`sasa` 在浏览器里是空实现），按键音效改成排队交给页面：
+/// 每次该出声时把音效名投进队列，页面用 WebAudio 播 `assets/<名字>.ogg`。
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_sfx {
+    use std::sync::Mutex;
+
+    static QUEUE: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+    pub fn push(name: &'static str) {
+        if let Ok(mut q) = QUEUE.lock() {
+            q.push(name);
+        }
+    }
+
+    /// 取走排队的音效名，用逗号拼起来（一次调用把队列清空）。
+    pub fn take() -> String {
+        match QUEUE.lock() {
+            Ok(mut q) => {
+                if q.is_empty() {
+                    String::new()
+                } else {
+                    let s = q.join(",");
+                    q.clear();
+                    s
+                }
+            },
+            Err(_) => String::new(),
+        }
+    }
+}
+
+/// 队列化的按键音效：条件与 `play_sfx` 一致，只是把名字交给页面。
+#[cfg(target_arch = "wasm32")]
+fn queue_sfx(name: &'static str, config: &Config) {
+    // 引擎自己能用 WebAudio 出声时就不用记名字了，否则页面那份音效桥会再把同一个音播一遍。
+    if config.volume_sfx > 1e-2
+        && !crate::ext::audio_silent()
+        && !crate::ext::wasm_audio_native()
+    {
+        wasm_sfx::push(name);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn queue_sfx(_name: &'static str, _config: &Config) {}
+
+#[cfg(target_arch = "wasm32")]
+fn get_uptime() -> f64 {
+    web_sys::window()
+        .and_then(|it| it.performance())
+        .map(|it| it.now() * 1e-3)
+        .unwrap_or(0.)
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "ios"), not(target_arch = "wasm32")))]
 fn get_uptime() -> f64 {
     let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     let ret = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) };
@@ -73,16 +127,19 @@ impl HitSound {
             HitSound::None => {}
             HitSound::Click => {
                 if check_hitsound(&mut res.played_hitsounds_count, "click") {
+                    queue_sfx("click", &res.config);
                     play_sfx(&mut res.sfx_click, &res.config)
                 }
             },
             HitSound::Flick => {
                 if check_hitsound(&mut res.played_hitsounds_count, "flick") {
+                    queue_sfx("flick", &res.config);
                     play_sfx(&mut res.sfx_flick, &res.config)
                 }
             },
             HitSound::Drag => {
                 if check_hitsound(&mut res.played_hitsounds_count, "drag") {
+                    queue_sfx("drag", &res.config);
                     play_sfx(&mut res.sfx_drag, &res.config)
                 }
             },

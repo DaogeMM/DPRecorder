@@ -51,8 +51,10 @@ export const PARTS: Part[] = [
   {
     id: 'dpe',
     label: 'Editor',
-    home: 'chart-mod',
+    home: 'chart-edit',
     nav: [
+      // 编辑窗口在「谱面修改」上面：先把谱面挑出来，再决定改什么
+      { name: 'chart-edit', icon: 'mdi-file-edit-outline' },
       // 谱面列表不再单独一项：它折进了「谱面修改」页顶部
       { name: 'chart-mod', icon: 'mdi-wrench-outline' },
       { name: 'noise-player', icon: 'mdi-movie-open-star-outline' },
@@ -60,7 +62,7 @@ export const PARTS: Part[] = [
     ],
     // 设置页与 DPR 共用同一份（标题随部分变），所以这里也要写上，
     // 不然在 DPE 里点设置就会被当成 DPR 的路由、切换器跟着弹回 DPR。
-    routes: ['chart-mod', 'noise-player', 'malody-import', 'settings'],
+    routes: ['chart-edit', 'chart-mod', 'noise-player', 'malody-import', 'settings'],
   },
 ];
 

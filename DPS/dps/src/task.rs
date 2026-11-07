@@ -16,7 +16,7 @@ impl<T: Send + 'static> Task<T> {
         let arc = Arc::new(Mutex::new(None));
         {
             let arc = Arc::clone(&arc);
-            tokio::spawn(async move {
+            spawn(async move {
                 let result = future.await;
                 *arc.lock().unwrap() = Some(result);
             });
@@ -45,4 +45,15 @@ impl<T: Send + Clone + 'static> Task<T> {
     pub fn clone_result(&self) -> Option<T> {
         self.0.lock().unwrap().clone()
     }
+}
+
+/// wasm 里没有 tokio 运行时，任务交给浏览器的微任务队列；桌面端仍用 tokio。
+#[cfg(target_arch = "wasm32")]
+fn spawn(future: impl Future<Output = ()> + 'static) {
+    wasm_bindgen_futures::spawn_local(future);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn(future: impl Future<Output = ()> + Send + 'static) {
+    tokio::spawn(future);
 }

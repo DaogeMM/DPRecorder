@@ -1,0 +1,23 @@
+{
+  "identifier": "editor",
+  "description": "「编辑窗口」那个独立 webview（label = editor）的权限：它能监听后端的 editor-draft-changed、能操作自己的窗口，也要能弹文件选择框（导入素材）。",
+  "local": true,
+  "windows": [
+    "editor"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-title",
+    "dialog:allow-open",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

@@ -692,11 +692,6 @@ impl GameScene {
     /// 入场动画与前奏阶段直接跳过：编辑器拖到哪里就该看到哪里，不该先播一遍入场。
     /// 往回拖之后的复位（谱面、判定、粒子）由下一次 `update` 里「时间倒退」那条分支完成。
     pub fn scrub(&mut self, tm: &mut TimeManager, time: f64, playing: bool) -> Result<()> {
-        if !matches!(self.state, State::Playing) {
-            self.state = State::Playing;
-            self.res.alpha = 1.;
-            self.first_in = false;
-        }
         // 先定「走不走」再拨位置：`seek_to` 按当前暂停状态换算基准时刻，顺序反了就差了暂停时长。
         if playing {
             if tm.paused() {
@@ -713,6 +708,21 @@ impl GameScene {
         } else {
             self.music.pause()?;
         }
+        self.prepare_at(tm);
+        Ok(())
+    }
+
+    /// 把场景拉回「正在游玩」并记下回退静音窗口，但不碰时钟与音乐。
+    ///
+    /// 预览暂停时播放头由宿主自己冻着，拖动进度条只能走这里：时钟一停引擎就会把自带的
+    /// 暂停菜单画进预览区。另外 `Ending` 阶段的时间被钉在曲末、不再跟时钟走，所以往回拖
+    /// 之前必须先把状态拉回 `Playing`，否则画面停在结束帧、什么都重画不出来。
+    pub fn prepare_at(&mut self, tm: &TimeManager) {
+        if !matches!(self.state, State::Playing) {
+            self.state = State::Playing;
+            self.res.alpha = 1.;
+            self.first_in = false;
+        }
         self.pause_rewind = PauseRewind {
             time: Some(tm.now()),
             duration: Some(REWIND_MUTE),
@@ -721,7 +731,33 @@ impl GameScene {
         self.res.disable_hit_fx = true;
         // 停顿或大幅跳转期间攒下的帧间隔不能留给特效，否则粒子会瞬移
         self.last_update_time = tm.real_time();
+    }
+
+    /// 编辑器预览宿主用的「只听声音」开关：把 BGM 对齐到 `time`，`playing` 决定之后是否出声。
+    ///
+    /// 不动时钟、不动场景状态。预览暂停时播放头由宿主自己冻住（web 那侧是虚拟时钟），
+    /// 不能顺手 `tm.pause()` —— 那会让引擎把自带的暂停菜单（返回 / 重试 / 倍速）画进预览区。
+    pub fn set_music_playing(&mut self, time: f64, playing: bool) -> Result<()> {
+        self.music.seek_to(time.max(0.))?;
+        if playing {
+            self.music.play()?;
+        } else {
+            self.music.pause()?;
+        }
         Ok(())
+    }
+
+    /// 编辑器预览宿主用的音量：音乐走混音器的 `set_amplifier`（当场换音量，不重建曲目），
+    /// 音效只改 `config.volume_sfx` —— `Judge::play_sfx` 每次播放都读它，不用再推一遍。
+    ///
+    /// 两个参数都是 0~1，超出按边界夹住。谱面自带的 `volume_music` / `volume_sfx` 只是初值，
+    /// 宿主调过之后以这里为准；倍速换曲目（`reset_music_speed!`）也会沿用新的 `volume_music`。
+    pub fn set_volume(&mut self, music: f32, sfx: f32) {
+        let music = music.clamp(0., 1.);
+        self.res.config.volume_music = music;
+        self.res.config.volume_sfx = sfx.clamp(0., 1.);
+        let amplifier = music * if crate::ext::audio_silent() { 0. } else { 1. };
+        self.music.set_amplifier(amplifier).ok();
     }
 
     /// 编辑器预览宿主用的热重载：原地换成新解析出来的谱面，不重建窗口、不重建场景。
@@ -2344,12 +2380,10 @@ impl Scene for GameScene {
         self.gl.quad_gl.render_pass(chart_onto.map(|it| it.render_pass));
         self.chart.render(ui, res);
 
-        self.gl.quad_gl.render_pass(
-            res.chart_target
-                .as_ref()
-                .map(|it| it.output().render_pass)
-                .or_else(|| res.camera.render_pass()),
-        );
+        // 打击特效（`emitter`）与坏键标记跟谱面同一层：拖影下必须画进累积缓冲。
+        // 若这里回落到默认 framebuffer（拖影没有 `chart_target`，旧写法就会回落到屏幕），
+        // 它们画在屏幕上、随后被整块拷屏的累积画面盖掉 —— 拖影下看不到打击特效就是这个原因。
+        self.gl.quad_gl.render_pass(res.chart_onto().map(|it| it.render_pass));
 
         self.bad_notes.retain(|dummy| dummy.render(res));
         let t = tm.real_time();

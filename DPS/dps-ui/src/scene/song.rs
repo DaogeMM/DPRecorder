@@ -1905,6 +1905,8 @@ impl Scene for SongScene {
 
     fn render(&mut self, tm: &mut TimeManager, ui: &mut Ui) -> Result<()> {
         set_camera(&ui.camera());
+        // 游玩相关的界面（选曲详情、打歌、成绩）用原尺寸字号，不跟菜单页一起缩小。
+        ui.text_scale = 1.;
         let t = tm.now() as f32;
         ui.fill_rect(ui.screen_rect(), (*self.illu.texture.1, ui.screen_rect()));
         ui.fill_rect(ui.screen_rect(), semi_black(0.55));

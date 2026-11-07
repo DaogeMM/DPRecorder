@@ -1,0 +1,53 @@
+/* 全局弹窗基底。
+   应用里每个 `v-dialog` 卡片都套这套皮：直角、88% 不透明的深底、居中不加重的大标题、
+   纯白正文与按钮。取值与 `design/config.css` 里 `.phi-config-dialog` 那套共用皮肤一致
+   （内容区底色 `#151517` = `rgb(21 21 23)` 留 88%、直角、白字）；带明确像素宽的弹窗
+   （齿轮、文件名格式、批量页两个配置窗、设置页重置框）另外叠 `.phi-config-dialog`，
+   它只多一条 `width: 100%`，背景与圆角的值相同。
+
+   这段之所以单独一个文件、由 `main.ts` 直接引入，而不是写在某个组件的 `<style>` 里：
+   主界面与编辑窗口是两个入口（`main.ts` 按 URL 上的 `editor=1` 决定挂哪个根组件），
+   弹窗样式两边都要用，跟着某个组件走就会有一边拿不到。 */
+
+/* 弹窗遮罩（v-dialog / v-overlay 的变暗层）：
+   Vuetify 的 `.v-overlay__scrim` 用的是 `rgb(var(--v-theme-on-surface))`，而深色主题的
+   on-surface 是**白色** —— 于是弹窗一开，整页不是变暗而是被「洗白」一遍。
+   这里统一改成半透明黑，和界面其余部分（深底 + 淡描边）一致。 */
+.v-overlay__scrim {
+  background: rgb(0 0 0 / 32%) !important;
+  opacity: 1 !important;
+}
+
+.log-card-window,
+.log-card-only-window {
+  --phi-config-dialog-alpha: 88%;
+  background: rgb(21 21 23 / var(--phi-config-dialog-alpha)) !important;
+  border: 1px solid var(--phi-border-l2);
+  border-radius: 0 !important;
+  color: var(--phi-static-bluish-00);
+}
+
+/* 弹窗标题行：与齿轮弹窗的 `.phi-config-dialog__title` 一模一样（居中、1.5rem、不加粗、纯白）。
+   标题元素是 Vuetify 的 `v-card-title`（字号 / 字重 / 左对齐都是它自带的），这里统一覆盖。
+   只用 `>` 命中弹窗卡片的直接子标题 —— RPEView 列表卡片里那个 `v-card-title` 不受影响。 */
+.log-card-window > .v-card-title,
+.log-card-only-window > .v-card-title {
+  padding: calc(var(--phi-space-3) + var(--phi-space-2)) calc(var(--phi-space-3) * 2.2) var(--phi-space-2);
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--phi-static-bluish-00);
+}
+
+/* 正文与操作按钮也统一成纯白：界面其余地方的 `.v-btn` 用的是 `.v-btn { color: var(--phi-label-primary) }`，
+   `v-card-text` 用的是 Vuetify 的 on-surface，弹窗里两者都拉齐到标题的白色。
+   `!important` 是为了压过 Vuetify 给带 `color="…"` 的按钮写的颜色。 */
+.log-card-window .v-card-text,
+.log-card-only-window .v-card-text,
+.log-card-window .v-card-actions .v-btn,
+.log-card-only-window .v-card-actions .v-btn {
+  color: var(--phi-static-bluish-00) !important;
+}

@@ -522,6 +522,10 @@ pub struct Ui<'a> {
     pub top: f32,
     pub viewport: (i32, i32, i32, i32),
 
+    /// 当前页面文字的缩放。菜单页统一调小，游玩界面保持原尺寸；
+    /// 由页面系统在渲染每个页面前设置。
+    pub text_scale: f32,
+
     pub text_painter: &'a mut TextPainter,
 
     model_stack: Vec<Matrix>,
@@ -541,6 +545,8 @@ impl<'a> Ui<'a> {
         Self {
             top: viewport.3 as f32 / viewport.2 as f32,
             viewport,
+
+            text_scale: 1.,
 
             text_painter,
 

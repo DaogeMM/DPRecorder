@@ -2,12 +2,13 @@ crate::tl_file!("parser" ptl);
 
 use super::RPE_TWEEN_MAP;
 #[cfg(feature = "video")]
-use crate::core::Video;
+use crate::core::{Video, VideoAttach};
 use crate::{
-    core::{Anim, BpmList, ChartExtra, ClampedTween, Effect, Keyframe, StaticTween, Triple, Tweenable, Uniform, VideoAttach, EPS},
-    ext::ScaleType,
+    core::{Anim, BpmList, ChartExtra, ClampedTween, Effect, Keyframe, StaticTween, Triple, Tweenable, Uniform, EPS},
     fs::FileSystem,
 };
+#[cfg(feature = "video")]
+use crate::ext::ScaleType;
 use anyhow::{Context, Result};
 use macroquad::prelude::{Color, Vec2};
 use serde::Deserialize;
@@ -123,6 +124,8 @@ struct ExtEffect {
     global: bool,
 }
 
+/// 视频事件。`VideoAttach` 只在 `video` feature 下存在，整个结构体跟着门控。
+#[cfg(feature = "video")]
 #[derive(Deserialize)]
 struct ExtVideo {
     path: String,
@@ -144,6 +147,7 @@ struct Extra {
     bpm: BpmForm,
     #[serde(default)]
     effects: Vec<ExtEffect>,
+    #[cfg(feature = "video")]
     #[serde(default)]
     videos: Vec<ExtVideo>,
 }

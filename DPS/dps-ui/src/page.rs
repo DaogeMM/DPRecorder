@@ -446,6 +446,11 @@ pub trait Page {
         None
     }
 
+    /// 这个页面文字的缩放：菜单页整体调小一点，游玩界面保持原尺寸。
+    fn text_scale(&self) -> f32 {
+        0.8
+    }
+
     fn can_play_bgm(&self) -> bool {
         true
     }

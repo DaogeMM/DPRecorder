@@ -1312,21 +1312,27 @@ pub fn find_ffmpeg() -> Result<Option<String>> {
             return Ok(Some(ffmpeg_path.display().to_string()));
         }
     }
-    if test_ffmpeg("ffmpeg") {
-        return Ok(Some("ffmpeg".to_owned()));
-    }
     let exe_dir = std::env::current_exe()?.parent().unwrap().to_owned();
     let ffmpeg = if cfg!(target_os = "windows") {
         "ffmpeg.exe"
     } else {
         "ffmpeg"
     };
-    let ffmpeg = exe_dir.join(ffmpeg);
-    Ok(if test_ffmpeg(&ffmpeg) {
-        Some(ffmpeg.display().to_string())
-    } else {
-        None
-    })
+    // 程序目录里的两份排在 PATH 前面：随程序发的那份、程序自己下下来的那份都跟版本绑在一起，
+    // 比用户机器上某个全局 ffmpeg 更可预期；顺带也避开「裸名字 `ffmpeg` 被当前目录里的同名
+    // 文件夹接住」这种情况（那样返回的是相对路径，换个工作目录就找不到）。
+    let downloaded = exe_dir.join("ffmpeg").join(ffmpeg);
+    if test_ffmpeg(&downloaded) {
+        return Ok(Some(downloaded.display().to_string()));
+    }
+    let bundled = exe_dir.join(ffmpeg);
+    if test_ffmpeg(&bundled) {
+        return Ok(Some(bundled.display().to_string()));
+    }
+    if test_ffmpeg("ffmpeg") {
+        return Ok(Some("ffmpeg".to_owned()));
+    }
+    Ok(None)
 }
 
 /// 设置页「FFmpeg 路径」那格显示的**目录**（那格写的是 exe 所在的文件夹，不是 exe 本身）。
@@ -2961,8 +2967,8 @@ pub async fn main(cmd: bool) -> Result<()> {
             config.force_limit,
             config.limit_threshold,
         ) {
-            Ok(()) => stages.push(("进水", water_time.elapsed())),
-            Err(err) => crate::console!(warn, "[进水] 混入进水音效失败（视频本身正常）：{err}"),
+            Ok(()) => stages.push(("混音", water_time.elapsed())),
+            Err(err) => crate::console!(warn, "[混音] 混入进水 / 打击音轨失败（视频本身正常）：{err}"),
         }
     }
     // 各阶段耗时一行到底：逐行打太占地方，真正要对比的时候又不好一眼看完。
@@ -3104,9 +3110,11 @@ fn mix_water_sfx(
         }
         sources.push(out);
     }
-    if sources.is_empty() {
-        return Ok(());
-    }
+    // 缺 `appendant.water.zip` 时这里没有进水素材，但**不能**因此整体返回：
+    // 真正的打击音轨（`sfx_wav`）也靠这趟 remux 混进视频，提前返回就等于把打击音整条丢掉，
+    // 成片只剩背景音（主 ffmpeg 那条打击轨是静音占位）。
+    // 没有素材时事件日志必然也是空的，这里再兜一层，免得下面 `idx % sources.len()` 除零。
+    let events = if sources.is_empty() { &[][..] } else { events };
 
     // 2) 铺进一条与视频等长的缓冲区（末尾多留最长素材的长度）
     let longest = sources.iter().map(|s| s.len()).max().unwrap_or(0);
@@ -3250,8 +3258,9 @@ fn mix_water_sfx(
         )
     })?;
     crate::console!(
-        "[进水] 已把 {} 个进水音效混入视频音轨：{}",
+        "[混音] 已把 {} 个进水音效{}混入视频音轨：{}",
         played,
+        if sfx_wav.is_some() { "与打击音轨" } else { "" },
         output_path.display()
     );
     Ok(())

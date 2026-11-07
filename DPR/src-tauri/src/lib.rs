@@ -6,6 +6,8 @@ dps::tl_file!("main" mtl);
 mod chart_config;
 mod common;
 mod dpe;
+mod drafts;
+mod ffmpeg_download;
 mod icon;
 mod ipc;
 mod malody_convert;
@@ -43,7 +45,7 @@ use std::{
     time::SystemTime,
 };
 use task::{TaskQueue, TaskView};
-use tauri::{ipc::InvokeError, Manager, State, WindowEvent};
+use tauri::{ipc::InvokeError, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_prevent_default::Flags;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt},
@@ -260,6 +262,22 @@ pub fn run() -> Result<()> {
         }
     }
 
+    // 编辑窗口的预览区里，引擎用 cpal 的 WebAudio 后端自己建 AudioContext 出声；没有用户手势时
+    // 浏览器的自动播放策略会把刚建的上下文挂成 suspended，听起来就是「一点声音都没有」。
+    // 桌面程序自己的窗口不需要这条策略，于是在建 WebView2 环境之前就把它加进启动参数
+    // （WebView2 只认环境创建时的那一份，两个窗口各传一份会撞 0x8007139F）。
+    // 调试时外部已经用这个变量传了别的参数（比如 --remote-debugging-port），就在后面追加。
+    {
+        let mut args = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        if !args.contains("autoplay-policy") {
+            if !args.is_empty() {
+                args.push(' ');
+            }
+            args.push_str("--autoplay-policy=no-user-gesture-required");
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", args);
+        }
+    }
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -317,6 +335,25 @@ pub fn run() -> Result<()> {
             get_noise_player_dir_path,
             get_dpe_output_dir_path,
             get_dpe_modify_dir_path,
+            stage_chart_to_editor,
+            open_editor_folder,
+            list_editor_charts,
+            list_editor_chart_files,
+            read_editor_chart_file,
+            open_editor_window,
+            editor_context,
+            set_editor_draft,
+            list_editor_drafts,
+            load_editor_draft,
+            create_editor_draft,
+            save_editor_draft,
+            delete_editor_draft,
+            open_editor_drafts_folder,
+            import_editor_media,
+            import_editor_media_dir,
+            read_editor_media,
+            missing_editor_media,
+            export_editor_draft,
             dpe_preview,
             dpe_generate_modified,
             malody_convert::dpe_malody_probe,
@@ -339,6 +376,8 @@ pub fn run() -> Result<()> {
                 check_ffmpeg,
                 get_ffmpeg_path,
                 check_ffmpeg_filter,
+                download_ffmpeg,
+                cancel_ffmpeg_download,
                 get_encoder,
                 test_encoder,
                 export_pez,
@@ -355,19 +394,12 @@ pub fn run() -> Result<()> {
                 merge::merge_charts,
                 merge::dpe_merge_charts,
             ])
-            .on_window_event(|_, event| match event {
-                //WindowEvent::CloseRequested { api, .. } => {
+            .on_window_event(|window, event| match event {
+                // 关主窗口 = 退出整个程序；编辑窗口是独立窗口，关掉它只关掉它自己。
                 WindowEvent::CloseRequested { .. } => {
-                    /*event
-                    .window()
-                    .app_handle()
-                    .tray_handle()
-                    .get_item("toggle")
-                    .set_title(mtl!("tray-show"))
-                    .unwrap();*/
-                    exit_program(0);
-                    //event.window().hide().unwrap();
-                    //api.prevent_close();
+                    if window.label() != EDITOR_WINDOW_LABEL {
+                        exit_program(0);
+                    }
                 }
                 _ => {}
             })
@@ -1591,6 +1623,627 @@ fn get_dpe_modify_dir_path() -> Result<String, InvokeError> {
         .map_err(InvokeError::from_anyhow)
 }
 
+/// 编辑窗口加载谱面：把源谱面复制/解包进 `<程序目录>/dpe/editor/charts`，返回**解包后目录**的路径。
+///
+/// 编辑窗口只动这份副本，用户拖进来的原文件不受影响；重名时由
+/// [`common::stage_chart_in_editor`] 另起名字，覆盖不到已有的目录。
+#[tauri::command]
+fn stage_chart_to_editor(path: String) -> Result<String, InvokeError> {
+    (|| {
+        let dest = common::stage_chart_in_editor(Path::new(&path))?;
+        info!("[编辑窗口] 摊开谱面 {} → {}", path, dest.display());
+        Ok(dest.to_string_lossy().to_string())
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 编辑窗口的谱面目录：`<程序目录>/dpe/editor/charts`，打开它（没有就先建）。
+#[tauri::command]
+fn open_editor_folder() -> Result<(), InvokeError> {
+    (|| {
+        let dir = common::editor_charts_dir()?;
+        info!("[编辑窗口] 打开谱面列表文件夹 {}", dir.display());
+        open_folder(&dir)?;
+        Ok(())
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 编辑窗口的标签：独立于主窗口的一个 webview（`index.html?editor=1`）。
+const EDITOR_WINDOW_LABEL: &str = "editor";
+
+/// 主窗口又点了另一张谱面 / 换了草稿时发给编辑窗口的事件：窗口开着就换内容，不另开第二个。
+const EDITOR_DRAFT_EVENT: &str = "editor-draft-changed";
+
+/// 编辑窗口当前在编辑的草稿 id。
+///
+/// 不塞进窗口的 URL：窗口起来之后本来就要读草稿内容，统一从这里取省一次编解码。
+static EDITOR_DRAFT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// 切到某个草稿（编辑窗口自己新建 / 切换草稿时调）。
+///
+/// 记下来是为了「主窗口再点同一张谱面」时能认出这个窗口已经在编辑那个草稿了。
+#[tauri::command]
+fn set_editor_draft(id: String) -> Result<(), InvokeError> {
+    *EDITOR_DRAFT.lock().unwrap() = Some(id);
+    Ok(())
+}
+
+/// 决定这次要开哪个草稿：给了 id 就用它，只给谱面路径就找一份引用了它的草稿、没有就新建。
+async fn resolve_editor_draft(path: Option<String>, draft: Option<String>) -> Result<String> {
+    if let Some(id) = draft {
+        return Ok(id);
+    }
+    let Some(path) = path else {
+        return Ok(drafts::create(None)?.id);
+    };
+    if let Some(existing) = drafts::find_by_chart(&path) {
+        return Ok(existing.id);
+    }
+
+    // 新草稿：只把用户点名的那份谱面挂到「谱面」轨道上，名字先照曲名起
+    // （解析不出来就留自动编号的名字）。音乐与曲绘由用户自己往轨道上放。
+    // 路径可能是一个摊开的谱面包目录，这时挑出目录里真正的谱面文件。
+    let mut created = drafts::create(None)?;
+    if let Ok(info) = load_editor_chart_info(Path::new(&path)).await {
+        if !info.name.trim().is_empty() {
+            created.name = info.name.clone();
+        }
+    }
+    let chart = if Path::new(&path).is_dir() {
+        drafts::chart_file_in(Path::new(&path))
+    } else {
+        Some(Path::new(&path).to_path_buf())
+    };
+    if let Some(chart) = chart {
+        if let Ok(media) = drafts::media_from_path(&chart) {
+            created.assign(media);
+        }
+    }
+    Ok(drafts::save(created)?.id)
+}
+
+/// 打开编辑窗口 —— 独立窗口，不是主窗口里的一页。
+///
+/// 三种进法：`draft` 给了就直接开那个草稿；只给 `path`（主窗口「谱面修改」点了一张谱面）
+/// 就找引用这份谱面的草稿、没有就新建一个把谱面挂上去；两个都没给就开一个新草稿。
+///
+/// 已经开着时不再开第二个：把焦点切过去，再发 `editor-draft-changed` 让它换草稿
+/// （窗口位置、大小都是用户自己调的，关掉重开就全丢了）。
+///
+/// **必须是 `async fn`**：同步命令跑在主线程上，而建窗口要等主线程的
+/// 事件循环，同步写法会把两边互相等死（界面看起来没反应）。
+#[tauri::command]
+async fn open_editor_window(
+    app: tauri::AppHandle,
+    path: Option<String>,
+    draft: Option<String>,
+) -> Result<(), InvokeError> {
+    let id = resolve_editor_draft(path, draft)
+        .await
+        .map_err(InvokeError::from_anyhow)?;
+    *EDITOR_DRAFT.lock().unwrap() = Some(id.clone());
+
+    (|| {
+        if let Some(window) = app.get_webview_window(EDITOR_WINDOW_LABEL) {
+            window.set_focus()?;
+            window.emit(EDITOR_DRAFT_EVENT, id.clone())?;
+            return Ok(());
+        }
+
+        tauri::WebviewWindowBuilder::new(
+            &app,
+            EDITOR_WINDOW_LABEL,
+            tauri::WebviewUrl::App("index.html?editor=1".into()),
+        )
+        // 无系统标题栏：和主窗口一样，标题栏由页面自己画（那条 `.editor-titlebar`
+        // 同时是拖拽区与窗口按钮），否则会多出一条重复的标题栏。
+        .title("DPEditor")
+        .decorations(false)
+        .inner_size(1600.0, 1000.0)
+        .min_inner_size(1100.0, 700.0)
+        .build()?;
+
+        info!("[编辑窗口] 打开编辑窗口：草稿 {id}");
+        Ok(())
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 编辑窗口启动时问「我要编辑哪个草稿」。
+#[tauri::command]
+fn editor_context() -> Option<String> {
+    EDITOR_DRAFT.lock().unwrap().clone()
+}
+
+/// 草稿列表（最近改过的排前面），编辑窗口的「草稿」菜单用它。
+#[tauri::command]
+fn list_editor_drafts() -> Result<Vec<drafts::EditorDraft>, InvokeError> {
+    drafts::list().map_err(InvokeError::from_anyhow)
+}
+
+/// 读一个草稿。
+#[tauri::command]
+fn load_editor_draft(id: String) -> Result<drafts::EditorDraft, InvokeError> {
+    drafts::load(&id).map_err(InvokeError::from_anyhow)
+}
+
+/// 新建一个空草稿（名字缺省时自动编号）。
+#[tauri::command]
+fn create_editor_draft(name: Option<String>) -> Result<drafts::EditorDraft, InvokeError> {
+    drafts::create(name).map_err(InvokeError::from_anyhow)
+}
+
+/// 保存草稿（轨道上放了什么、名字改没改都在这里面）。
+#[tauri::command]
+fn save_editor_draft(draft: drafts::EditorDraft) -> Result<drafts::EditorDraft, InvokeError> {
+    drafts::save(draft).map_err(InvokeError::from_anyhow)
+}
+
+/// 删掉一个草稿（连同它那个目录）。
+#[tauri::command]
+fn delete_editor_draft(id: String) -> Result<(), InvokeError> {
+    (|| Ok(drafts::remove(&id)?))().map_err(InvokeError::from_anyhow)
+}
+
+/// 打开草稿目录：`<程序目录>/dpe/editor/drafts`。
+#[tauri::command]
+fn open_editor_drafts_folder() -> Result<(), InvokeError> {
+    (|| {
+        let dir = drafts::drafts_dir()?;
+        info!("[编辑窗口] 打开草稿目录 {}", dir.display());
+        open_folder(&dir)?;
+        Ok(())
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 把用户挑中的文件包成素材项（**不复制文件**，只记路径）。
+///
+/// 认不出种类的那些跳过：一次挑十个文件里混了一个 `.txt`，不该让整次导入失败；
+/// 一个都没认出来才报错，由前端提示支持哪些格式。
+///
+/// 拖进来的是文件夹时把它里面的素材摊开收进来（往后最多三十一层，跳过以 `.` 开头的项），
+/// 但目录本身永远不当成「一张谱面」——谱面轨道只收谱面文件。`.pez` / `.zip` 不按文件收：
+/// 解开成一层文件夹，素材库按包名建文件夹装它里面的东西。
+#[tauri::command]
+fn import_editor_media(paths: Vec<String>) -> Result<Vec<drafts::MediaInDir>, InvokeError> {
+    (|| Ok(drafts::media_import(&paths)?))().map_err(InvokeError::from_anyhow)
+}
+
+/// 把一个文件夹里认得出的素材全部包成素材项（同样只记路径，不复制）。
+///
+/// 用给素材库的「导入素材 → 选文件夹」：谱面包目录里那些 json / 音频 / 曲绘一次就都进素材库
+/// （往后最多三十一层），另外带回每一项在选中目录下的相对目录，素材库照它建出真实的文件夹层级；
+/// 目录里的 `.pez` / `.zip` 解开成一层文件夹，不按压缩包文件出现。
+#[tauri::command]
+fn import_editor_media_dir(dir: String) -> Result<Vec<drafts::MediaInDir>, InvokeError> {
+    (|| Ok(drafts::media_import_in_dir(Path::new(&dir))?))().map_err(InvokeError::from_anyhow)
+}
+
+/// 读一个素材文件的原始字节（预览区把音频 / 曲绘塞进播放器，曲绘也用它出缩略图）。
+#[tauri::command]
+fn read_editor_media(path: String) -> Result<tauri::ipc::Response, InvokeError> {
+    (|| {
+        let bytes =
+            std::fs::read(&path).with_context(|| format!("读取素材失败：{path}"))?;
+        Ok(tauri::ipc::Response::new(bytes))
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 挑出已经不存在的素材路径（草稿只记路径，原文件被挪走或删掉时要能看出来）。
+#[tauri::command]
+fn missing_editor_media(paths: Vec<String>) -> Vec<String> {
+    paths
+        .into_iter()
+        .filter(|path| !Path::new(path).exists())
+        .collect()
+}
+
+/// 编辑窗口列表里的一张谱面：摊开后的目录 + 解析出来的谱面信息。
+#[derive(Serialize)]
+struct EditorChartEntry {
+    path: String,
+    info: ChartInfo,
+}
+
+/// 扫一遍编辑窗口的谱面目录，`<程序目录>/dpe/editor/charts` 下**每个子目录就是一张谱面**。
+///
+/// 列表以这个目录为准：重名目录（`名字` 与 `名字 (2)`）各自一张，不按曲名合并；
+/// 目录里多出来的（用户自己拷进去的、重新解包的）也照列，少了的由前端去掉卡片。
+/// 单个目录解析不了（不是谱面、文件被删了一半）只跳过它，不让整张列表失败。
+#[tauri::command]
+async fn list_editor_charts() -> Result<Vec<EditorChartEntry>, InvokeError> {
+    wrap_async(async move {
+        let dir = common::editor_charts_dir()?;
+        let mut paths = Vec::new();
+        for entry in std::fs::read_dir(&dir)
+            .with_context(|| format!("读取谱面列表文件夹失败：{}", dir.display()))?
+        {
+            let path = entry?.path();
+            if path.is_dir() {
+                paths.push(path);
+            }
+        }
+        // 目录名的顺序就是默认顺序（前端还会按自己的排序规则再排一次）
+        paths.sort();
+
+        let mut charts = Vec::with_capacity(paths.len());
+        for path in paths {
+            match load_editor_chart_info(&path).await {
+                Ok(info) => charts.push(EditorChartEntry {
+                    path: path.to_string_lossy().to_string(),
+                    info,
+                }),
+                Err(err) => warn!(
+                    "[编辑窗口] 跳过无法解析的谱面 {}：{}",
+                    path.display(),
+                    common::error_chain(&err)
+                ),
+            }
+        }
+        Ok(charts)
+    })
+    .await
+}
+
+/// 网页播放器要的谱面资源清单：谱面里的全部文件，相对路径用 `/` 分隔。
+///
+/// 谱面既可能是**目录**（摊开的一份），也可能是 `.pez` / `.zip`（草稿直接引用用户那份包），
+/// 两种都要能列：目录走递归，包就读 zip 的条目表。从解包缓存里摊出来的谱面包（素材库把压缩包
+/// 解开的那些）按**整包**列：谱面轨道只拿了包里的某个 json，播放器却还要包里的曲绘与配置。
+///
+/// 播放器（`DPS/dps/src/bin/wasm_player.rs` 编出来的 wasm）在浏览器里没有文件系统，谱面
+/// 资源由前端读成字节、塞进它的内存文件系统，所以要先把文件名列出来。
+#[tauri::command]
+async fn list_editor_chart_files(path: String) -> Result<Vec<String>, InvokeError> {
+    let root = PathBuf::from(&path);
+    let package = if root.is_dir() { Some(root.clone()) } else { editor_unpacked_root(&root) };
+    if let Some(package) = package {
+        return wrap_async(async move {
+            let mut files = Vec::new();
+            collect_editor_chart_files(&package, &package, &mut files)?;
+            files.sort();
+            Ok(files)
+        })
+        .await;
+    }
+    (|| {
+        let file = std::fs::File::open(&root)
+            .with_context(|| format!("打不开谱面包：{}", root.display()))?;
+        let mut archive = match zip::ZipArchive::new(file) {
+            Ok(archive) => archive,
+            // 散装谱面：只有一个 json / pec 文件，没有包可拆。
+            Err(_) => {
+                let name = root
+                    .file_name()
+                    .map(|it| it.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if name.is_empty() {
+                    bail!("{} 不是合法的谱面包", root.display());
+                }
+                return Ok(vec![name]);
+            }
+        };
+        let mut files = Vec::with_capacity(archive.len());
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index)?;
+            if entry.is_dir() {
+                continue;
+            }
+            files.push(entry.name().replace('\\', "/"));
+        }
+        files.sort();
+        Ok(files)
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 谱面文件是不是从解包缓存里摊出来的：是就返回那个包解出来的根目录。
+///
+/// 压缩包解开后谱面轨道拿到的只是包里的某个 json，播放器却要整包（曲绘、`info.txt` 这些），
+/// 所以按缓存目录的第一段找回包的根。
+fn editor_unpacked_root(path: &Path) -> Option<PathBuf> {
+    let cache = common::editor_unpacked_dir().ok()?;
+    let rel = path.strip_prefix(&cache).ok()?;
+    let root = cache.join(rel.components().next()?);
+    root.is_dir().then_some(root)
+}
+
+/// 把 `/` 分隔的条目名拼到目录上；空段、`.`、`..` 一律拒绝（不许跳出谱面包）。
+fn join_entry(dir: &Path, name: &str) -> Result<PathBuf> {
+    let mut full = dir.to_path_buf();
+    for seg in name.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            bail!("非法的谱面文件名：{name}");
+        }
+        full.push(seg);
+    }
+    Ok(full)
+}
+
+/// 递归收集谱面目录里的文件（相对路径用 `/`），读不了的子项跳过。
+fn collect_editor_chart_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
+    for entry in
+        std::fs::read_dir(dir).with_context(|| format!("读取谱面目录失败：{}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_editor_chart_files(root, &path, out)?;
+        } else if let Ok(rel) = path.strip_prefix(root) {
+            out.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(())
+}
+
+/// 读谱面里的一个文件，按原始字节回给前端（网页播放器把它们塞进 wasm 内存文件系统）。
+///
+/// 目录与 `.pez` / `.zip` 都认：目录按相对路径拼，包按 zip 条目名取；
+/// 散装谱面（单个 `.json`）的条目名就是文件名本身，解包缓存里摊出来的则相对包的根。
+#[tauri::command]
+fn read_editor_chart_file(path: String, name: String) -> Result<tauri::ipc::Response, InvokeError> {
+    (|| {
+        let root = PathBuf::from(&path);
+        if !root.is_dir() {
+            // 解包缓存里的谱面包：条目名相对包根，谱面本身可能就在包里的子目录下
+            if let Some(package) = editor_unpacked_root(&root) {
+                let full = join_entry(&package, &name)?;
+                let bytes = std::fs::read(&full)
+                    .with_context(|| format!("读取谱面文件失败：{}", full.display()))?;
+                return Ok(tauri::ipc::Response::new(bytes));
+            }
+            let file = std::fs::File::open(&root)
+                .with_context(|| format!("打不开谱面包：{}", root.display()))?;
+            let mut archive = match zip::ZipArchive::new(file) {
+                Ok(archive) => archive,
+                // 散装谱面只有一个文件，条目名就是文件名本身。
+                Err(_) => {
+                    let single = root
+                        .file_name()
+                        .map(|it| it.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if single != name {
+                        bail!("{} 里没有 {name}", root.display());
+                    }
+                    let bytes = std::fs::read(&root)
+                        .with_context(|| format!("读取谱面文件失败：{}", root.display()))?;
+                    return Ok(tauri::ipc::Response::new(bytes));
+                }
+            };
+            let mut entry = archive
+                .by_name(&name)
+                .with_context(|| format!("谱面包里没有 {name}"))?;
+            let mut bytes = Vec::with_capacity(entry.size() as usize);
+            std::io::copy(&mut entry, &mut bytes)
+                .with_context(|| format!("读取谱面包条目失败：{name}"))?;
+            return Ok(tauri::ipc::Response::new(bytes));
+        }
+
+        let full = join_entry(&root, &name)?;
+        let bytes = std::fs::read(&full)
+            .with_context(|| format!("读取谱面文件失败：{}", full.display()))?;
+        Ok(tauri::ipc::Response::new(bytes))
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 导出包里塞的空谱面：谱面轨道空着也得有一张，播放器没有谱面起不来。
+///
+/// 与预览里塞的那张一致：PGR 格式，一条判定线，没有任何音符。
+const EMPTY_EDITOR_CHART: &str = r#"{"formatVersion":3,"offset":0,"judgeLineList":[{"bpm":120,"speedEvents":[],"notesAbove":[],"notesBelow":[],"judgeLineMoveEvents":[],"judgeLineRotateEvents":[],"judgeLineDisappearEvents":[]}]}"#;
+
+/// 导出包里一个条目的来源：磁盘上的文件按路径现读，内存里生成的（`info.txt`、空谱面）直接给字节。
+enum ExportEntry {
+    File(PathBuf),
+    Bytes(Vec<u8>),
+}
+
+/// 把草稿导出成 `<dpe>/editor/output/<曲名>_<草稿名>.pez`，返回文件的绝对路径。
+///
+/// 条件是**放了音乐 + 写了曲名**：播放器没有音乐就起不来（引擎的谱面长度取音乐长度），
+/// 没有曲名的包在任何列表里都只能显示成文件名。谱面、曲绘都可以空着 —— 谱面空着就塞一张
+/// 空谱面，曲绘空着就黑屏。
+///
+/// 包里的内容就是「谱面包 + 音乐 + 曲绘 + 一份 `info.txt`」：谱面包按整包带上（目录递归、
+/// 压缩包读条目、解包缓存里摊出来的按包根找回整包），音乐与曲绘按原文件名铺在根上，
+/// `info.txt` 最后写，盖掉包里自带的那份。
+#[tauri::command]
+fn export_editor_draft(draft: drafts::EditorDraft) -> Result<String, InvokeError> {
+    (|| {
+        let title = draft.info.name.trim();
+        if title.is_empty() {
+            bail!("还没有写曲名，导出不了");
+        }
+        let music = draft.music.as_ref().context("还没有放音乐，导出不了")?;
+        let music_path = PathBuf::from(&music.path);
+        if !music_path.is_file() {
+            bail!("音乐文件不在了：{}", music_path.display());
+        }
+        let music_name = file_name_of(&music_path)?;
+
+        let mut entries: Vec<(String, ExportEntry)> = Vec::new();
+        // 谱面包：条目名相对包根
+        if let Some(chart) = draft.chart.as_ref() {
+            let chart_path = PathBuf::from(&chart.path);
+            let package = if chart_path.is_dir() {
+                Some(chart_path.clone())
+            } else {
+                editor_unpacked_root(&chart_path)
+            };
+            match package {
+                Some(root) => {
+                    let mut files = Vec::new();
+                    collect_editor_chart_files(&root, &root, &mut files)?;
+                    for name in files {
+                        let source = join_entry(&root, &name)?;
+                        push_export_entry(&mut entries, name, ExportEntry::File(source));
+                    }
+                }
+                None if chart_path.is_file() => {
+                    match std::fs::File::open(&chart_path).map(zip::ZipArchive::new) {
+                        // 还没解开过的 `.pez` / `.zip`：条目整份读进内存，谱面包大多只有几 MB
+                        Ok(Ok(mut archive)) => {
+                            for index in 0..archive.len() {
+                                let mut entry = archive.by_index(index)?;
+                                if entry.is_dir() {
+                                    continue;
+                                }
+                                let name = entry.name().replace('\\', "/");
+                                let mut bytes = Vec::with_capacity(entry.size() as usize);
+                                std::io::copy(&mut entry, &mut bytes)
+                                    .with_context(|| format!("读取谱面包条目失败：{name}"))?;
+                                push_export_entry(&mut entries, name, ExportEntry::Bytes(bytes));
+                            }
+                        }
+                        // 散装谱面（单个 json / pec）：条目名就是文件名本身
+                        _ => {
+                            push_export_entry(
+                                &mut entries,
+                                file_name_of(&chart_path)?,
+                                ExportEntry::File(chart_path.clone()),
+                            );
+                        }
+                    }
+                }
+                // 谱面文件已经不在了：当作没放谱面
+                None => {}
+            }
+        }
+
+        // 谱面轨道上挂着的那份，包里没有就按包里的第一个谱面找
+        let wanted = draft
+            .chart
+            .as_ref()
+            .map(|it| PathBuf::from(&it.path))
+            .and_then(|it| it.file_name().map(|it| it.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let chart_name = entries
+            .iter()
+            .map(|(name, _)| name.clone())
+            .find(|name| !wanted.is_empty() && (*name == wanted || name.ends_with(&format!("/{wanted}"))))
+            .or_else(|| {
+                entries
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .find(|name| is_editor_chart_name(name))
+            });
+        let chart_name = match chart_name {
+            Some(name) => name,
+            None => {
+                push_export_entry(
+                    &mut entries,
+                    "editor-empty.json".to_owned(),
+                    ExportEntry::Bytes(EMPTY_EDITOR_CHART.as_bytes().to_vec()),
+                );
+                "editor-empty.json".to_owned()
+            }
+        };
+
+        // 音乐、曲绘铺在包根上，按原文件名
+        push_export_entry(&mut entries, music_name.clone(), ExportEntry::File(music_path));
+        let mut cover_name = None;
+        if let Some(cover) = draft.cover.as_ref() {
+            let cover_path = PathBuf::from(&cover.path);
+            if cover_path.is_file() {
+                let name = file_name_of(&cover_path)?;
+                push_export_entry(&mut entries, name.clone(), ExportEntry::File(cover_path));
+                cover_name = Some(name);
+            }
+        }
+
+        // `info.txt` 最后写，盖掉包里自带的那份
+        let mut info = String::from("#\n");
+        info.push_str(&format!("Name: {title}\n"));
+        for (key, value) in [
+            ("Level", draft.info.difficulty.trim()),
+            ("Charter", draft.info.charter.trim()),
+            ("Composer", draft.info.composer.trim()),
+        ] {
+            if !value.is_empty() {
+                info.push_str(&format!("{key}: {value}\n"));
+            }
+        }
+        info.push_str(&format!("Chart: {chart_name}\nMusic: {music_name}\n"));
+        if let Some(cover) = cover_name.as_ref() {
+            info.push_str(&format!("Image: {cover}\n"));
+        }
+        push_export_entry(
+            &mut entries,
+            "info.txt".to_owned(),
+            ExportEntry::Bytes(info.into_bytes()),
+        );
+
+        let draft_name = match draft.name.trim() {
+            "" => "未命名草稿".to_owned(),
+            name => common::safe_file_name(name),
+        };
+        let output = common::editor_output_dir()?
+            .join(format!("{}_{draft_name}.pez", common::safe_file_name(title)));
+
+        let mut pack = common::ZipPack::create(&output, 9)?;
+        let mut buffer = vec![0u8; 1 << 20];
+        for (name, entry) in entries {
+            match entry {
+                ExportEntry::Bytes(bytes) => pack.bytes(&name, &bytes)?,
+                ExportEntry::File(path) => {
+                    let mut source = std::fs::File::open(&path)
+                        .with_context(|| format!("读取文件失败：{}", path.display()))?;
+                    pack.entry(&name, |out| {
+                        loop {
+                            let read = std::io::Read::read(&mut source, &mut buffer)?;
+                            if read == 0 {
+                                return Ok(());
+                            }
+                            std::io::Write::write_all(out, &buffer[..read])?;                        }
+                    })?;
+                }
+            }
+        }
+        pack.finish()?;
+        Ok(output.to_string_lossy().into_owned())
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 导出包里的条目名：重名时后写的盖掉先写的（`info.txt`、音乐、曲绘要压过包里那份）。
+fn push_export_entry(entries: &mut Vec<(String, ExportEntry)>, name: String, entry: ExportEntry) {
+    match entries.iter_mut().find(|(it, _)| *it == name) {
+        Some(slot) => slot.1 = entry,
+        None => entries.push((name, entry)),
+    }
+}
+
+/// 文件名的文本形式；没有文件名（路径以 `..` 结尾之类）就是出错。
+fn file_name_of(path: &Path) -> Result<String> {
+    path.file_name()
+        .map(|it| it.to_string_lossy().into_owned())
+        .filter(|it| !it.is_empty())
+        .with_context(|| format!("文件没有文件名：{}", path.display()))
+}
+
+/// 条目名是不是谱面文件（与 [`drafts::classify`] 同一个口径：`json` / `pec`）。
+fn is_editor_chart_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .map(|it| {
+            let extension = it.to_string_lossy().to_ascii_lowercase();
+            extension == "json" || extension == "pec"
+        })
+        .unwrap_or(false)
+}
+
+/// 读一张摊开后的谱面的信息（与 `parse_chart` 同一条路，只是不经过命令层）。
+async fn load_editor_chart_info(path: &Path) -> Result<ChartInfo> {
+    let mut fs: Box<dyn FileSystem + Send + Sync + 'static> = fs::fs_from_file(path)
+        .with_context(|| mtl!("read-chart-failed", "path" => path.display().to_string()))?;
+    fs::load_info(fs.deref_mut())
+        .await
+        .with_context(|| mtl!("load-info-failed", "path" => path.display().to_string()))
+}
+
 /// DPE「生成谱面」：复制源 `.pez`，把谱面修改写进它的 `config.toml`，落到
 /// `<程序目录>/dpe/modify/<原名>.(<修改1>→<修改2>).pez`，返回新文件的绝对路径。
 ///
@@ -1831,6 +2484,62 @@ mod tests {
         // 谱面自带的括号说明（内容对不上修改链）不裁。
         assert_eq!(strip_old_marker("Song (Live)", &mods), "Song (Live)");
         assert_eq!(strip_old_marker("Song", &mods), "Song");
+    }
+
+    /// 导出把三条轨道上的东西和一个 `info.txt` 都装进一个 `.pez`：
+    /// 谱面按原文件名、音乐与曲绘铺在根上，`info.txt` 写曲名与三条引用。
+    #[test]
+    fn export_packs_tracks_and_info_txt() {
+        let dir = std::env::temp_dir().join(format!("dpr-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let chart = dir.join("chart.json");
+        let music = dir.join("song.mp3");
+        let cover = dir.join("cover.png");
+        std::fs::write(&chart, EMPTY_EDITOR_CHART).unwrap();
+        std::fs::write(&music, b"fake audio").unwrap();
+        std::fs::write(&cover, b"fake image").unwrap();
+
+        let draft = drafts::EditorDraft {
+            info: drafts::DraftInfo {
+                name: "测试曲".to_owned(),
+                difficulty: "IN Lv.15".to_owned(),
+                ..Default::default()
+            },
+            chart: Some(drafts::media_from_path(&chart).unwrap()),
+            music: Some(drafts::media_from_path(&music).unwrap()),
+            cover: Some(drafts::media_from_path(&cover).unwrap()),
+            ..Default::default()
+        };
+        let saved = export_editor_draft(draft.clone()).expect("导出应当成功");
+        assert!(saved.ends_with("测试曲_未命名草稿.pez"), "文件名：{saved}");
+
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&saved).unwrap()).unwrap();
+        let mut names = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, vec!["chart.json", "cover.png", "info.txt", "song.mp3"]);
+
+        let mut info = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("info.txt").unwrap(), &mut info).unwrap();
+        assert!(info.starts_with("#\n"), "info.txt：{info}");
+        assert!(info.contains("Name: 测试曲\n"));
+        assert!(info.contains("Level: IN Lv.15\n"));
+        assert!(info.contains("Chart: chart.json\n"));
+        assert!(info.contains("Music: song.mp3\n"));
+        assert!(info.contains("Image: cover.png\n"));
+
+        // 没有曲名 / 没有音乐都不许导出
+        let mut no_title = draft.clone();
+        no_title.info.name = "  ".to_owned();
+        assert!(export_editor_draft(no_title).is_err());
+        let mut no_music = draft;
+        no_music.music = None;
+        assert!(export_editor_draft(no_music).is_err());
+
+        let _ = std::fs::remove_file(&saved);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -2093,6 +2802,22 @@ fn check_ffmpeg() -> Result<bool, InvokeError> {
 #[tauri::command]
 fn get_ffmpeg_path() -> Result<Option<String>, InvokeError> {
     (|| Ok(render::find_ffmpeg_dir()?))().map_err(InvokeError::from_anyhow)
+}
+
+/// 启动时自动下载 FFmpeg，成功后返回 ffmpeg 的完整路径。
+///
+/// 进度走 `ffmpeg-download` 事件（见 `ffmpeg_download::Progress`），前端弹窗照着画进度条。
+#[tauri::command]
+async fn download_ffmpeg(app: tauri::AppHandle) -> Result<String, InvokeError> {
+    ffmpeg_download::download_ffmpeg(&app)
+        .await
+        .map_err(InvokeError::from_anyhow)
+}
+
+/// 取消正在进行的自动下载（弹窗上的「取消」）。只置一个开关，下载循环自己收尾。
+#[tauri::command]
+fn cancel_ffmpeg_download() {
+    ffmpeg_download::cancel_download();
 }
 
 #[tauri::command]

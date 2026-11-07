@@ -11,12 +11,16 @@ use crate::{
     ui::{FontArc, TextPainter},
 };
 use anyhow::{Context, Result};
-use image::{codecs::gif, AnimationDecoder, DynamicImage, ImageError};
+use image::{codecs::gif, AnimationDecoder, DynamicImage};
+#[cfg(not(target_arch = "wasm32"))]
+use image::ImageError;
 use macroquad::prelude::{Color, WHITE};
 use rustc_hash::FxHashMap;
 use sasa::AudioClip;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, collections::HashMap, future::IntoFuture, rc::Rc, str::FromStr, time::Duration};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, str::FromStr, time::Duration};
+#[cfg(not(target_arch = "wasm32"))]
+use std::future::IntoFuture;
 use tracing::debug;
 
 pub const RPE_WIDTH: f32 = 1350.;
@@ -697,15 +701,23 @@ async fn parse_judge_line(
                     .load_file(&rpe.texture)
                     .await
                     .with_context(|| ptl!("gif-load-failed", "path" => rpe.texture.clone()))?;
+                // wasm 里没有 tokio 运行时，GIF 就地解；桌面端放到后台线程，别卡住主线程
+                #[cfg(target_arch = "wasm32")]
+                let collected: std::vec::Vec<_> = {
+                    let decoder = gif::GifDecoder::new(&data[..])?;
+                    decoder.into_frames().collect()
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                let collected: std::vec::Vec<_> = tokio::spawn(async move {
+                    let decoder = gif::GifDecoder::new(&data[..])?;
+                    debug!("decoding gif");
+                    Ok::<std::vec::Vec<_>, ImageError>(decoder.into_frames().collect())
+                })
+                .into_future()
+                .await??;
                 let frames = GifFrames::new(
-                    tokio::spawn(async move {
-                        let decoder = gif::GifDecoder::new(&data[..])?;
-                        debug!("decoding gif");
-                        Ok::<std::vec::Vec<_>, ImageError>(decoder.into_frames().collect())
-                    })
-                    .into_future()
-                    .await??
-                    .into_iter()
+                    collected
+                        .into_iter()
                     .map(|frame| -> (u128, SafeTexture) {
                         let frame = frame.unwrap();
                         let delay: Duration = frame.delay().into();

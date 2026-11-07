@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import RenderView from '../RenderView.vue';
 import BatchView from '../BatchView.vue';
 import ChartModView from '../ChartModView.vue';
+import ChartEditView from '../ChartEditView.vue';
 import RPEView from '../RPEView.vue';
 import TasksView from '../TasksView.vue';
 import SettingsView from '../SettingsView.vue';
@@ -20,6 +21,8 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'render', component: RenderView },
     { path: '/batch', name: 'batch', component: BatchView },
+    // DPE 的「编辑窗口」：从谱面列表挑谱面，进到编辑界面（目前只有列表本身）。
+    { path: '/chart-edit', name: 'chart-edit', component: ChartEditView },
     // DPE 的「谱面修改」：谱面列表也在这页顶部（批量页开 `listOnly` + `scope: 'dpe'` 的那份嵌进去），
     // 所以不再单独给谱面列表开一条路由。
     { path: '/chart-mod', name: 'chart-mod', component: ChartModView },

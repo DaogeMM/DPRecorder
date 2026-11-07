@@ -20,7 +20,7 @@
  * （卡片收起来时组件根本没挂载，也就没有要校验的东西）；谱面 id 用「当前最大值 + 1」，
  * 它是列表的 key，重复会让 Vue 复用错行。
  */
-import { ref, nextTick, onUnmounted, computed, watch } from 'vue';
+import { ref, nextTick, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useStorage } from '@vueuse/core';
 
 import { useI18n } from 'vue-i18n';
@@ -53,8 +53,29 @@ const { t } = useI18n();
  * `listOnly` 去掉底部的批量操作条（筛选 / 排序 / 融合 / 渲染…），只留谱面列表 ——
  * DPE 的「谱面列表」用这份页面挑要编辑的谱面，不渲染，那条栏在那儿没有用。
  * `scope` 分开两边的存储（见下面的 `storageKey`）。
+ * `stageToEditor`：加载谱面时先让后端把它摊进 `<程序目录>/dpe/editor/charts`（编辑窗口只动那份副本）。
+ * `refreshable`：`listOnly` 操作条右侧多一个「刷新」按钮（磁盘上删掉的谱面从列表里移除）。
+ * `syncFolder`：列表以编辑窗口的谱面文件夹为准 —— `<程序目录>/dpe/editor/charts` 里
+ *   **每个子目录就是一张谱面**，所以同名目录（`名字` 与 `名字 (2)`）各占一张卡片；
+ *   进页面与点「刷新」都重新扫这个目录，多出来的补卡片、没有了的去掉。
+ * `interactive`：卡片可点（编辑窗口用）—— 曲名去渲染页、曲绘进预览、卡片其余部分
+ *   进编辑（发 `edit` 事件，编辑页还没做）。
  */
-const props = defineProps<{ listOnly?: boolean; scope?: string }>();
+const props = defineProps<{
+  listOnly?: boolean;
+  scope?: string;
+  expandAll?: boolean;
+  stageToEditor?: boolean;
+  refreshable?: boolean;
+  syncFolder?: boolean;
+  interactive?: boolean;
+}>();
+
+const emit = defineEmits<{ edit: [chart: RenderChart] }>();
+
+/* `expandAll`：每张卡片只要渲染页「谱面信息」那张卡的抬头 —— 谱面横幅（曲绘 / 曲名 / 难度 /
+   曲师 / 画师 / 谱师 / 路径），不要下面那堆详细字段；没有折叠行，也不能点开 / 收起，一行排两张。
+   与 `listOnly` 一起用：勾选那套照旧（勾选框钉在卡片左边框外面），跳渲染页 / 预览这些入口照旧关掉。 */
 
 /**
  * 存储键前缀：DPR 的「批量」与 DPE 的「谱面列表」各存各的，互不影响。
@@ -79,21 +100,45 @@ function toggleExpanded(id: number) {
   else expandedIds.value.push(id);
 }
 
+/** 这张卡片的「谱面信息」要不要摊开：`expandAll` 时恒开，否则看用户点开过哪些 */
+function isOpen(id: number) {
+  return props.expandAll === true || expandedIds.value.includes(id);
+}
+
 /* 卡片上的三个入口在 `listOnly`（DPE 的谱面列表）里一律不做事：那一份只用来勾选，
-   展开详情、曲名跳渲染页、点曲绘预览都是 DPR 批量页的用法。 */
+   展开详情、曲名跳渲染页、点曲绘预览都是 DPR 批量页的用法。
+   `interactive`（编辑窗口）把这三个入口接回来，但去处不同：曲名 → 渲染页、
+   曲绘 → 预览、卡片其余部分 → 编辑（`edit` 事件，编辑页还没做）。 */
 function onRowClick(chart: RenderChart) {
-  if (props.listOnly) return;
+  if (props.listOnly || props.expandAll) return;
   toggleExpanded(chart.id);
 }
 
 function onNameClick(chart: RenderChart) {
-  if (props.listOnly) return;
+  if (!props.interactive && props.listOnly) return;
   openInRender(chart);
 }
 
 function onCoverClick(chart: RenderChart) {
-  if (props.listOnly) return;
+  if (props.listOnly && !props.interactive) return;
   void previewChart(chart);
+}
+
+/** 横幅整块的点击。编辑窗口的卡片就是这一整块，按落点分成三份：
+ *  曲名去渲染页、曲绘进预览、其余（难度、路径、空白）进编辑。 */
+function onHeroClick(chart: RenderChart, event: MouseEvent) {
+  if (!props.interactive) {
+    onCoverClick(chart);
+    return;
+  }
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('.chart-hero__name')) {
+    openInRender(chart);
+  } else if (target?.closest('.chart-hero__cover')) {
+    onCoverClick(chart);
+  } else {
+    emit('edit', chart);
+  }
 }
 
 /**
@@ -148,6 +193,8 @@ void updatePresets().finally(finishPageLoad);
 const loadingParsingChart = ref(false);
 const loadingPreview = ref(false);
 const loadingPostRender = ref(false);
+/** 「刷新」正在逐条重读谱面 */
+const refreshingCharts = ref(false);
 
 /**
  * 「预设配置」编辑弹窗的宽度 = **内容区宽度的 100%**：配置条目比谱面信息多得多，
@@ -166,12 +213,16 @@ const removeAfterRender = useStorage<boolean>(storageKey('BatchView.removeAfterR
 
 async function loadCharts(files: string[]) {
   loadingParsingChart.value = true;
-  for (let file of files) {
+  for (const file of files) {
     try {
-      let chartInfo: ChartInfo = (await invoke('parse_chart', { path: file }));
+      // 编辑窗口：先摊进 `dpe/editor/charts`（`.pez` 解包成目录），列表里放摊开后的目录路径。
+      const path = props.stageToEditor
+        ? ((await invoke('stage_chart_to_editor', { path: file })) as string)
+        : file;
+      const chartInfo: ChartInfo = (await invoke('parse_chart', { path })) as ChartInfo;
       charts.value.push({
         id: nextChartId(),
-        path: file,
+        path: path,
         isSelect: true,
         taskId: null,
         output: '',
@@ -324,6 +375,70 @@ function removeSelectChart() {
     }
   }
 }
+
+/** 列表里的谱面是加载那一刻记下的，磁盘上的谱面被删掉之后 GUI 不会自己知道。
+ *  这里逐条按当前路径重读：还读得到的顺带刷新一次谱面信息，读不到的从列表里移除。
+ *  `syncFolder`（编辑窗口）反过来以文件夹为准，见 `syncChartsFromFolder`。 */
+async function refreshCharts() {
+  if (props.syncFolder) {
+    await syncChartsFromFolder();
+    return;
+  }
+  if (charts.value.length === 0) return;
+  refreshingCharts.value = true;
+  const kept: RenderChart[] = [];
+  try {
+    for (const chart of charts.value) {
+      try {
+        chart.chartInfo = (await invoke('parse_chart', { path: chart.path })) as ChartInfo;
+        kept.push(chart);
+      } catch {
+        // 文件已经不在了：卡片留着只会让人以为还能用，丢掉
+      }
+    }
+  } finally {
+    refreshingCharts.value = false;
+  }
+  if (kept.length !== charts.value.length) charts.value = kept;
+  applySort();
+}
+
+/** 以 `<程序目录>/dpe/editor/charts` 为准重建列表：每个子目录一张卡片。
+ *  已经在列表里的按路径复用（谱面信息重读一遍，id / 勾选状态都不变），
+ *  目录里多出来的补一张，目录已经没有了的卡片去掉。 */
+async function syncChartsFromFolder() {
+  refreshingCharts.value = true;
+  try {
+    const entries = (await invoke('list_editor_charts')) as { path: string; info: ChartInfo }[];
+    const existed = new Map(charts.value.map((chart) => [chart.path, chart]));
+    let nextId = nextChartId();
+    charts.value = entries.map((entry) => {
+      const kept = existed.get(entry.path);
+      if (kept) {
+        kept.chartInfo = entry.info;
+        return kept;
+      }
+      return {
+        id: nextId++,
+        path: entry.path,
+        isSelect: false,
+        taskId: null,
+        output: '',
+        status: { type: 'null' },
+        chartInfo: entry.info,
+      };
+    });
+    applySort();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    refreshingCharts.value = false;
+  }
+}
+
+onMounted(() => {
+  if (props.syncFolder) void syncChartsFromFolder();
+});
 
 async function previewChart(chart: RenderChart) {
   loadingPreview.value = true;
@@ -574,7 +689,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="batch-view" :class="{ 'batch-view--list': listOnly }">
+  <div class="batch-view" :class="{ 'batch-view--list': listOnly, 'batch-view--detail': expandAll }">
     <!-- 谱面列表：卡片高度随展开变化，所以不用 v-virtual-scroll，整列自己滚 -->
     <div class="batch-view__list">
       <div v-if="charts.length === 0" class="batch-view__empty">
@@ -587,20 +702,23 @@ onUnmounted(() => {
       <template v-else>
         <div v-for="item in filteredCharts" :key="item.id" class="batch-item">
           <!-- 勾选框吊在卡片左边框外面（同任务页），不占行高。它必须留在卡片**外面**：
-               `.v-card` 是 `overflow: hidden`，塞进卡片里会被整块裁掉，连 hover 都露不出来。 -->
+               `.v-card` 是 `overflow: hidden`，塞进卡片里会被整块裁掉，连 hover 都露不出来。
+               `expandAll`（编辑窗口）时左边不再留那一栏，勾选框改挂到卡片右上角内侧
+               （`.batch-item__check--pinned`），同样平时不显示、hover / 已选才露出来。 -->
           <span
-            v-if="!listOnly"
+            v-if="!listOnly || expandAll"
             class="batch-item__check"
-            :class="{ 'batch-item__check--on': item.isSelect }"
+            :class="{ 'batch-item__check--on': item.isSelect, 'batch-item__check--pinned': expandAll }"
             @mousedown.prevent
             @click.stop="item.isSelect = !item.isSelect"
           >
             <v-checkbox-btn :model-value="item.isSelect" density="compact" :ripple="false"></v-checkbox-btn>
           </span>
-          <v-card class="batch-card" :class="{ 'batch-card--open': expandedIds.includes(item.id) }">
+          <v-card class="batch-card" :class="{ 'batch-card--open': isOpen(item.id) }">
             <!-- 整行点击 = 展开 / 收起；曲绘与曲名各自 stop 掉，它们另有去处。
-                 `listOnly`（DPE 的谱面列表）里只有横卡片与勾选框：不展开、不跳渲染页、不预览。 -->
-            <div class="batch-row" :class="{ 'batch-row--static': listOnly }" @click="onRowClick(item)">
+                 `listOnly`（DPE 的谱面列表）里只有横卡片与勾选框：不展开、不跳渲染页、不预览。
+                 `expandAll` 时这一行整个不要 —— 下面摊开的横幅里已经有曲绘、曲名、难度与路径。 -->
+            <div v-if="!expandAll" class="batch-row" :class="{ 'batch-row--static': listOnly }" @click="onRowClick(item)">
               <!-- `listOnly` 里没有卡片外那一栏，勾选框改成排在卡片内最前
                    （见 `.batch-item__check--inline`），否则会跟卡片隔着一截空白。 -->
               <span
@@ -639,13 +757,20 @@ onUnmounted(() => {
             </div>
 
             <v-expand-transition>
-              <div v-if="!listOnly && expandedIds.includes(item.id)" class="batch-detail">
-                <!-- 上半：渲染页顶部那份谱面横幅（点一下同样进预览） -->
-                <div class="batch-hero" :title="t('preview-cover-tip')" @click="previewChart(item)">
-                  <ChartHero :info="item.chartInfo" :path="item.path"></ChartHero>
+              <div v-if="isOpen(item.id)" class="batch-detail">
+                <!-- 上半：渲染页顶部那份谱面横幅（点一下同样进预览；`listOnly` 里不预览）。
+                     `interactive`（编辑窗口）时落点不同：曲名去渲染页、曲绘进预览、其余进编辑。 -->
+                <div
+                  class="batch-hero"
+                  :class="{ 'batch-hero--static': listOnly && !interactive, 'batch-hero--clickable': interactive }"
+                  :title="interactive ? undefined : listOnly ? undefined : t('preview-cover-tip')"
+                  @click="onHeroClick(item, $event)"
+                >
+                  <ChartHero :info="item.chartInfo" :path="item.path" :hide-credits="expandAll" :path-left="expandAll"></ChartHero>
                 </div>
-                <!-- 下半：渲染页那张谱面信息表单，可编辑；每张卡片各有一份 -->
-                <div class="config-root batch-detail__form">
+                <!-- 下半：渲染页那张谱面信息表单，可编辑；每张卡片各有一份。
+                     `expandAll`（编辑窗口）只留上面的横幅，不要这底下那些详细字段。 -->
+                <div v-if="!expandAll" class="config-root batch-detail__form">
                   <ChartInfoForm :ref="(el) => setInfoForm(item.id, el)" :info="item.chartInfo"></ChartInfoForm>
                 </div>
               </div>
@@ -659,11 +784,26 @@ onUnmounted(() => {
          筛选、排序、融合、渲染都属于 DPR 的批量页。 -->
     <div v-if="listOnly" class="batch-view__actions batch-view__actions--list">
       <div class="batch-view__bar batch-view__bar--foot">
+        <!-- 宿主页（编辑窗口）在这条操作条左侧放勾选数，和右边四个按钮同处一排；
+             不传就是空的，谱面修改页那边照旧只有按钮。 -->
+        <slot name="list-actions-leading"></slot>
         <v-spacer />
         <v-btn variant="text" size="small" :disabled="filteredCharts.length === 0" @click="selectAll">{{ t('select-all') }}</v-btn>
         <v-btn variant="text" size="small" :disabled="filteredCharts.length === 0" @click="selectInvert">{{ t('select-invert') }}</v-btn>
         <v-btn variant="text" size="small" :disabled="!hasSelection" @click="removeSelectChart">{{ t('remove-select') }}</v-btn>
         <v-btn variant="text" size="small" :disabled="!hasSelection" @click="cancelSelectTask">{{ t('cancel-select') }}</v-btn>
+        <!-- 宿主页（编辑窗口）在右下角再挂自己的按钮（打开谱面列表文件夹） -->
+        <slot name="list-actions-trailing"></slot>
+        <!-- 刷新：磁盘上的谱面被删掉后 GUI 里还留着卡片，点一下按路径重读、读不到的丢掉 -->
+        <v-btn
+          v-if="refreshable"
+          variant="text"
+          size="small"
+          prepend-icon="mdi-refresh"
+          :loading="refreshingCharts"
+          :title="t('refresh-chart-list-tip')"
+          @click="refreshCharts"
+        >{{ t('refresh-chart-list') }}</v-btn>
       </div>
     </div>
 
@@ -821,6 +961,74 @@ onUnmounted(() => {
   border-radius: var(--phi-radius-lg) !important;
 }
 
+/* `expandAll`（编辑窗口）：一行两张卡，每张只是一条谱面横幅 —— 没有折叠行，也没有下面那些详细字段。
+   勾选框收在卡片自己的右上角（见 `.batch-item__check--pinned`），卡片外面不再留那一栏。 */
+.batch-view--detail .batch-view__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  column-gap: var(--phi-space-5);
+  row-gap: 6px;
+}
+
+/* 网格自己管行距，卡片之间的 `margin-top` 会把它顶歪 */
+.batch-view--detail .batch-item + .batch-item {
+  margin-top: 0;
+}
+
+/* 卡片里没有折叠行，上下都是整卡 ⇒ 四角都圆 */
+.batch-view--detail .batch-card {
+  border-radius: var(--phi-radius-lg) !important;
+}
+
+/* 卡片顶部就是横幅，不再需要「折叠行 / 详情之间那条线」 */
+.batch-view--detail .batch-detail {
+  border-top: 0;
+}
+
+/* 横幅只在批量页点开时进预览，编辑窗口里它是静态的 */
+.batch-hero--static {
+  cursor: default;
+}
+
+/* 编辑窗口的卡片整块可点：曲名与曲绘各自有去处，其余部分进编辑，光标一律给到手型 */
+.batch-hero--clickable {
+  cursor: pointer;
+}
+
+.batch-hero--clickable :deep(.chart-hero__name) {
+  cursor: pointer;
+}
+
+.batch-hero--clickable :deep(.chart-hero__name:hover) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.batch-hero--clickable :deep(.chart-hero__cover) {
+  cursor: pointer;
+}
+
+/* 两列版式：每张卡片只有半宽，横幅里只剩 曲名 + 难度徽章 + 曲绘 + 左侧路径
+   （署名三行由 `ChartHero` 的 `hide-credits` 去掉，路径由 `pathLeft` 挪到文字区），
+   高度也跟着收一档。曲名沿用横幅原本的字号，不在这里放大 / 缩小。 */
+.batch-view--detail .batch-hero :deep(.chart-hero),
+.batch-view--detail .batch-hero :deep(.chart-hero__inner) {
+  height: 168px;
+  min-height: 0;
+  gap: var(--phi-space-4);
+}
+
+.batch-view--detail .batch-hero :deep(.chart-hero__cover) {
+  width: 220px;
+}
+
+/* 右侧只剩曲绘，列宽按内容算就是曲绘那么宽；封顶是为了窄窗口下别把左边文字区吃掉 */
+.batch-view--detail .batch-hero :deep(.chart-hero__side) {
+  max-width: 44%;
+  gap: 4px;
+}
+
 /* 一张谱面 = 一张卡片（版式照任务页 `.task-item` + `.task-card`） */
 .batch-item {
   position: relative;
@@ -860,6 +1068,36 @@ onUnmounted(() => {
   flex: none;
   transform: none;
   opacity: 1;
+}
+
+/* 收进卡片右上角那一版（编辑窗口）：卡片是整块横幅，左边不再留吊勾选框的栏，
+   但 `.v-card` 自己 `overflow: hidden`，塞进去会被裁掉，所以勾选框仍是绝对定位、
+   挂在卡片外面那层 `.batch-item` 上，只是位置挪到右上角、贴着卡片自己的上沿（卡片有 5px 外边距）。
+   右上角沿用卡片那个圆角，再垫一层深色半透明底，看上去就像卡片角落自带的一小块像素。
+   平时不显示，hover / 已选时才露出来。
+   这条要排在基础那条 `opacity: 0` 之后（同特异性、后写的才生效）。 */
+.batch-item__check--pinned {
+  left: auto;
+  right: 0;
+  top: 5px;
+  /* 基础那条是「挂在这一行垂直中线上」的写法（`translateY(-50%)`），这里要贴角，得清掉 */
+  transform: none;
+  width: 28px;
+  height: 28px;
+  z-index: 2;
+  /* 卡片右上角那一小块：不垫任何底色，只让可点区域跟着圆角走；
+     对齐改成靠上靠右，图标才是贴着角放，而不是居中在 28px 的框里 */
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 3px 3px 0 0;
+  border-radius: 0 var(--phi-radius-md) 0 0;
+  background: none;
+}
+
+/* 角上那一块小，勾选框的图标也跟着收一档（基础那条 `:deep(.v-icon)` 写在本规则后面，
+   所以这里叠一个类把特异性提上去，否则会被 22px 覆盖） */
+.batch-item__check.batch-item__check--pinned :deep(.v-icon) {
+  font-size: 18px;
 }
 
 .batch-item__check :deep(.v-selection-control) {
@@ -1038,6 +1276,16 @@ onUnmounted(() => {
   flex: 1;
   align-items: center;
   justify-content: center;
+}
+
+/* `--detail` 那份列表是网格：空列表要占满整行、行高撑满，文字才谈得上水平垂直都居中
+   （网格的行默认按内容高，`min-height: 100%` 只会按那一行算，所以用 `:has` 把行撑成整高） */
+.batch-view--detail .batch-view__list:has(.batch-view__empty) {
+  grid-template-rows: 100%;
+}
+
+.batch-view--detail .batch-view__empty {
+  grid-column: 1 / -1;
 }
 
 .batch-view__empty-title {

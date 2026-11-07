@@ -81,9 +81,264 @@ impl FileSystem for AssetsFileSystem {
     }
 }
 
+/// wasm 侧的内存文件系统：谱面资源由页面调用 `fw_put` 塞进来，`load_file` 直接命中内存。
+///
+/// 没命中时退回 macroquad 的 HTTP 加载（`assets/…`），所以「页面内联资源」与
+/// 「旁边摆一份 assets/ 目录」两种投递方式可以同时工作。
+///
+/// 为什么必须走内存而不是页面回调：引擎的 `load_file` 在 macroquad 的帧循环里被
+/// await，页面侧用 Promise 回调回填会死锁（引擎不回到事件循环），用同步回调回填会
+/// 直接 `RuntimeError: unreachable`。
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+pub struct WasmFileSystem(String);
+
+/// 页面塞进来的资源表。首次 `fw_put` 时建立，之后只增不减。
+#[cfg(target_arch = "wasm32")]
+static WASM_FILES: Mutex<Option<HashMap<String, Vec<u8>>>> = Mutex::new(None);
+
+/// 排查用：`WasmFileSystem::load_file` 依次请求过哪些路径（命中与否）。
+#[cfg(target_arch = "wasm32")]
+static FS_TRACE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[cfg(target_arch = "wasm32")]
+fn trace_load(msg: String) {
+    if let Ok(mut trace) = FS_TRACE.lock() {
+        if trace.len() < 512 {
+            trace.push(msg);
+        }
+    }
+}
+
+/// 排查用：在 `debug_wasm_files()` 的 trace 里插一条标记（wasm 之外是空实现）。
+pub fn wasm_mark(msg: &str) {
+    #[cfg(target_arch = "wasm32")]
+    trace_load(format!("MARK {msg}"));
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = msg;
+}
+/// 页面在 `globalThis.__dprw_files` 上放的那张 `Map<string, Uint8Array>`。
+///
+/// `fw_put` 只能等 wasm 实例化之后调用，而宿主要求「先把谱面资源放好、引擎起来就能读」；
+/// 页面在加载 wasm 之前把同一批字节挂到这个全局 Map 上，这里就能同步取到。
+#[cfg(target_arch = "wasm32")]
+fn js_file(key: &str) -> Option<Vec<u8>> {
+    use wasm_bindgen::JsCast;
+
+    let map = js_sys::Reflect::get(&js_sys::global(), &wasm_bindgen::JsValue::from_str("__dprw_files")).ok()?;
+    // 这张 `Map` 是宿主（父窗口）造的，`dyn_into` 的 `instanceof` 检查跨 realm 一定失败。
+    let map: js_sys::Map = map.unchecked_into();
+    let value = map.get(&wasm_bindgen::JsValue::from_str(key));
+    if value.is_undefined() || value.is_null() {
+        return None;
+    }
+    // 不能 `dyn_into`：宿主的 `Uint8Array` 是父窗口那个 realm 里造的，`instanceof` 在本 realm
+    // 一定为 false（跨 realm 的类型检查都这样），只能用 unchecked 直取。
+    Some(value.unchecked_into::<js_sys::Uint8Array>().to_vec())
+}
+
+/// `globalThis.__dprw_files` 里所有键（只给 `list_root` 用）。
+#[cfg(target_arch = "wasm32")]
+fn js_keys() -> Vec<String> {
+    use wasm_bindgen::JsCast;
+
+    let Ok(map) = js_sys::Reflect::get(&js_sys::global(), &wasm_bindgen::JsValue::from_str("__dprw_files"))
+        .map(|it| it.unchecked_into::<js_sys::Map>())
+    else {
+        return Vec::new();
+    };
+    let Ok(Some(iter)) = js_sys::try_iter(&map) else {
+        return Vec::new();
+    };
+    let mut res = Vec::new();
+    for entry in iter.flatten() {
+        // `Map` 的迭代器给出来的是 `[key, value]` 数组，不是字符串；直接 `as_string()` 永远是 None。
+        let key = if entry.is_array() {
+            js_sys::Array::from(&entry).get(0)
+        } else {
+            entry
+        };
+        if let Some(key) = key.as_string() {
+            res.push(key);
+        }
+    }
+    res
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WasmFileSystem {
+    fn get(&self, path: &str) -> Option<Vec<u8>> {
+        let key = concat_string!(self.0, path);
+        WASM_FILES
+            .lock()
+            .ok()
+            .and_then(|files| files.as_ref()?.get(&key).cloned())
+            .or_else(|| js_file(&key))
+    }
+
+    fn has(&self, path: &str) -> bool {
+        self.get(path).is_some()
+    }
+
+    fn roots(&self) -> Vec<String> {
+        let prefix = self.0.as_str();
+        let mut keys: Vec<String> = WASM_FILES
+            .lock()
+            .ok()
+            .and_then(|files| files.as_ref().map(|it| it.keys().cloned().collect()))
+            .unwrap_or_default();
+        keys.extend(js_keys());
+        let mut res = Vec::new();
+        for key in keys {
+            let Some(rest) = key.strip_prefix(prefix) else {
+                continue;
+            };
+            let name = rest.split('/').next().unwrap_or(rest);
+            if !name.is_empty() && !res.iter().any(|it: &String| it == name) {
+                res.push(name.to_string());
+            }
+        }
+        res
+    }
+}
+
+/// 页面把不存在的路径当成单页应用路由，返回的是 index.html：开头几字节就能认出来。
+#[cfg(target_arch = "wasm32")]
+fn is_html_page(data: &[u8]) -> bool {
+    let head = &data[..data.len().min(15)];
+    head.starts_with(b"<!doctype") || head.starts_with(b"<!DOCTYPE") || head.starts_with(b"<html")
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait]
+impl FileSystem for WasmFileSystem {
+    async fn load_file(&mut self, path: &str) -> Result<Vec<u8>> {
+        if let Some(data) = self.get(path) {
+            trace_load(format!("hit {path}"));
+            return Ok(data);
+        }
+        trace_load(format!("miss {path}"));
+        // 先在带前缀的位置找（`respack/…`），找不到再退回 assets 根：引擎里有一部分音效
+        // （`ending*.ogg`）本来就摆在根上，桌面版靠 `ResourcePack::load` 末尾那句
+        // macroquad `load_file` 兜底。wasm 上那句在文件不存在时不会回调（HTTP 404 之后
+        // future 永远 pending，整个加载就停在那里），所以把这条兜底挪到这里。
+        let mut candidates: Vec<String> = Vec::new();
+        if !self.0.is_empty() {
+            candidates.push(concat_string!(self.0, path));
+        }
+        candidates.push(path.to_string());
+        let mut last_err: Option<anyhow::Error> = None;
+        for candidate in candidates {
+            match load_file(&candidate).await {
+                // 开发服务器（vite）对不存在的路径也会返回 200 + index.html 的 SPA 回退，
+                // 直接拿去当资源用只会在解析阶段炸出「expected struct ChartInfo」这类怪错误。
+                // 这里把 HTML 当成「没有这个文件」，`load_info` 之类多候选的调用才能继续往下试。
+                Ok(data) if !is_html_page(&data) => return Ok(data),
+                Ok(_) => {
+                    trace_load(format!("html {candidate}"));
+                    last_err = Some(anyhow::anyhow!("{} 不是资源文件（页面返回了 HTML）", candidate));
+                }
+                Err(err) => {
+                    trace_load(format!("err {candidate}"));
+                    last_err = Some(anyhow::anyhow!(err));
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("{path} 读不到")))
+    }
+
+    async fn exists(&mut self, path: &str) -> Result<bool> {
+        if self.has(path) {
+            return Ok(true);
+        }
+        let mut candidates: Vec<String> = Vec::new();
+        if !self.0.is_empty() {
+            candidates.push(concat_string!(self.0, path));
+        }
+        candidates.push(path.to_string());
+        for candidate in candidates {
+            if let Ok(data) = load_file(&candidate).await {
+                if !is_html_page(&data) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn list_root(&self) -> Result<Vec<String>> {
+        Ok(self.roots())
+    }
+
+    fn clone_box(&self) -> Box<dyn FileSystem> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// 页面把一份资源字节塞进 wasm 侧内存文件系统。`path` 用相对于 assets 根的名字，
+/// 例如 `SP.json`、`info.txt`、`respack/hit.png`。
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn fw_put(path: &str, data: Vec<u8>) {
+    let mut files = WASM_FILES.lock().expect("wasm 文件表被毒化");
+    files
+        .get_or_insert_with(HashMap::new)
+        .insert(path.to_string(), data);
+}
+
+/// 排查用：wasm 这边看到的资源表键名（`fw_put` 塞的 + `globalThis.__dprw_files` 里的）。
+#[cfg(target_arch = "wasm32")]
+pub fn debug_wasm_files() -> Vec<String> {
+    use wasm_bindgen::{JsCast, JsValue};
+
+    let mut keys: Vec<String> = WASM_FILES
+        .lock()
+        .ok()
+        .and_then(|files| files.as_ref().map(|it| it.keys().cloned().collect()))
+        .unwrap_or_default();
+    keys.extend(js_keys());
+    keys.sort();
+
+    // 在 wasm 侧就地核对全局对象，定位「页面有数据、引擎读不到」的原因。
+    let global = js_sys::global();
+    let probe = js_sys::Reflect::get(&global, &JsValue::from_str("__dprw_files"));
+    let has = js_sys::Reflect::has(&global, &JsValue::from_str("__dprw_files")).unwrap_or(false);
+    let mut deep = String::from("probe: no map");
+    if let Ok(value) = probe {
+        let map: js_sys::Map = value.unchecked_into();
+        let key = JsValue::from_str("info.txt");
+        let plain = map.get(&key);
+        let has_key = map.has(&key);
+        let get_fn = js_sys::Reflect::get(&map, &JsValue::from_str("get")).unwrap_or(JsValue::NULL);
+        let get_fn: js_sys::Function = get_fn.unchecked_into();
+        let called = get_fn.call1(&map, &key).unwrap_or(JsValue::NULL);
+        deep = format!(
+            "size={} has={} get={} call_get={} keys={:?}",
+            map.size(),
+            has_key,
+            plain.js_typeof().as_string().unwrap_or_default(),
+            called.js_typeof().as_string().unwrap_or_default(),
+            js_keys(),
+        );
+    }
+    keys.push(format!(
+        "probe: typeof_global={} has={} {deep}",
+        global.js_typeof().as_string().unwrap_or_default(),
+        has,
+    ));
+    keys.push(format!(
+        "trace: {:?}",
+        FS_TRACE.lock().map(|it| it.clone()).unwrap_or_default()
+    ));
+    keys
+}
+
 #[derive(Clone)]
 pub struct ExternalFileSystem(pub Arc<crate::dir::Dir>);
-
 #[async_trait]
 impl FileSystem for ExternalFileSystem {
     async fn load_file(&mut self, path: &str) -> Result<Vec<u8>> {
@@ -252,6 +507,53 @@ impl FileSystem for ZipFileSystem {
             .filter(|it| it.strip_prefix(&self.1).map_or(false, |it| !it.contains('/')))
             .map(str::to_owned)
             .collect())
+    }
+
+    fn clone_box(&self) -> Box<dyn FileSystem> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// 单个普通文件当成只有一项的文件系统。
+///
+/// 谱面可以只有一个 json（散装素材：一个谱面文件 + 任意音频 + 任意曲绘，各自在一条轨道上），
+/// 这时 `load_info` 的 `fix_info` 会从这个 json 的 META 里认出曲名、难度与作者；
+/// 音频与曲绘由调用方另外提供，不在这个文件系统里。
+#[derive(Clone)]
+pub struct SingleFileSystem {
+    name: String,
+    bytes: Arc<Vec<u8>>,
+}
+
+impl SingleFileSystem {
+    pub fn new(name: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            name: name.into(),
+            bytes: Arc::new(bytes),
+        }
+    }
+}
+
+#[async_trait]
+impl FileSystem for SingleFileSystem {
+    async fn load_file(&mut self, path: &str) -> Result<Vec<u8>> {
+        if path == self.name {
+            Ok(self.bytes.as_ref().clone())
+        } else {
+            bail!("Failed to find {path}: only {} is available", self.name)
+        }
+    }
+
+    async fn exists(&mut self, path: &str) -> Result<bool> {
+        Ok(path == self.name)
+    }
+
+    fn list_root(&self) -> Result<Vec<String>> {
+        Ok(vec![self.name.clone()])
     }
 
     fn clone_box(&self) -> Box<dyn FileSystem> {
@@ -576,14 +878,46 @@ pub fn fs_from_file(path: &Path) -> Result<Box<dyn FileSystem + Send + Sync + 's
     let meta = fs::metadata(path)?;
     Ok(if meta.is_file() {
         let bytes = fs::read(path).with_context(|| format!("failed to read from {}", path.display()))?;
-        Box::new(ZipFileSystem::new(bytes).with_context(|| format!("cannot open {} as zip archive", path.display()))?)
+        // `.pez` / `.zip` 必须是合法包；其余单文件（散装谱面的 `chart.json`）当成只有一项的
+        // 文件系统，`load_info` 的 `fix_info` 才能从它里面认出谱面。
+        if is_archive_name(path) {
+            Box::new(ZipFileSystem::new(bytes).with_context(|| format!("cannot open {} as zip archive", path.display()))?)
+        } else {
+            match ZipFileSystem::new(bytes.clone()) {
+                Ok(zip) => Box::new(zip),
+                Err(_) => Box::new(SingleFileSystem::new(file_name(path), bytes)),
+            }
+        }
     } else {
         Box::new(ExternalFileSystem(Arc::new(crate::dir::Dir::new(path)?)))
     })
 }
 
+/// 文件名（不含目录），空路径给空串。
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|it| it.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// 扩展名是 `.pez` / `.zip` 的必须按包解析，读不开就报错，不退回单文件。
+fn is_archive_name(path: &Path) -> bool {
+    path.extension()
+        .map(|it| it.to_string_lossy().to_ascii_lowercase())
+        .is_some_and(|it| it == "pez" || it == "zip")
+}
+
+/// 按名字取 assets 根下的文件系统。wasm 下返回内存实现（页面用 `fw_put` 填，
+/// 没填的路径仍退回 HTTP），桌面下返回 `AssetsFileSystem`。
 pub fn fs_from_assets(name: impl Into<String>) -> Result<Box<dyn FileSystem + Send + Sync + 'static>> {
-    Ok(Box::new(AssetsFileSystem(name.into())))
+    #[cfg(target_arch = "wasm32")]
+    {
+        Ok(Box::new(WasmFileSystem(name.into())))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(Box::new(AssetsFileSystem(name.into())))
+    }
 }
 
 #[cfg(test)]
@@ -611,3 +945,4 @@ mod tests {
         assert_eq!(info.difficulty, "15.6");
     }
 }
+

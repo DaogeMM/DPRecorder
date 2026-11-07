@@ -1,12 +1,14 @@
 import './design/tokens.css';
 import './design/config.css';
+import './design/dialog.css';
 import './assets/main.css';
 import '@mdi/font/css/materialdesignicons.css';
 
-import { createApp } from 'vue';
+import { createApp, type Component } from 'vue';
 import { createI18n } from 'vue-i18n';
 
 import App from './App.vue';
+import EditorWindow from './editor/EditorWindow.vue';
 import router from './router';
 
 import { createVuetify } from 'vuetify';
@@ -93,8 +95,15 @@ const vuetify = createVuetify({
   },
 });
 
-const app = createApp(App);
-app.use(i18n).use(router).use(vuetify);
+// 编辑窗口是同一份前端在另一个 webview 里打开的：URL 上带 `editor=1`
+// （窗口由 Rust 的 `open_editor_window` 建）。它只挂编辑器的根组件 ——
+// 不装路由，也不渲染主界面那套左栏外壳。
+const isEditorWindow = new URLSearchParams(window.location.search).has('editor');
+
+const app = createApp((isEditorWindow ? EditorWindow : App) as Component);
+app.use(i18n).use(vuetify);
+
+if (!isEditorWindow) app.use(router);
 
 app.mount('#app');
 

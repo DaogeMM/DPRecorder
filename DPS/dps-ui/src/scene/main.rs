@@ -399,10 +399,12 @@ impl Scene for MainScene {
         // 2. page
         if s.fader.transiting() {
             let pos = self.pages.len() - 2;
+            ui.text_scale = self.pages[pos].text_scale();
             self.pages[pos].render(ui, s)?;
         }
         s.fader.sub = true;
         s.fader.reset();
+        ui.text_scale = self.pages.last().unwrap().text_scale();
         self.pages.last_mut().unwrap().render(ui, s)?;
         s.fader.sub = false;
 

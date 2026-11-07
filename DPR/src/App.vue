@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 
 import { VSonner } from 'vuetify-sonner';
 import { invoke,   } from '@tauri-apps/api/core';
-import * as os from "@tauri-apps/plugin-os"
+import { listen } from '@tauri-apps/api/event';
 // 打开外部链接一律走 `./common` 的 `openExternal`（它转给 Rust 的 `open_external`）。
 // 不再用 `@tauri-apps/plugin-opener` 的 `openUrl`：它在 Windows 上从 Tauri 命令线程调
 // ShellExecuteExW 时缺 `SEE_MASK_NOASYNC`，启动请求被静默丢弃 ——
@@ -39,7 +39,6 @@ export default {
 
 <script setup lang="ts">
 import { fetch } from '@tauri-apps/plugin-http';
-import type { Release, Assets, Task } from './model';
 import { open } from '@tauri-apps/plugin-shell';
 import { useTheme } from 'vuetify';
 import { getCurrentWindow, ProgressBarStatus } from '@tauri-apps/api/window';
@@ -349,73 +348,120 @@ theme.global.name.value = 'DeepDark';
 applyPhiTheme();
 
 // FFmpeg
-const platform = os.family();
-const isWindows = String(platform) === 'windows';
-const isLinux = String(platform) === 'linux';
-const ffmpegGetNewVersionLoding = ref(false);
 const ffmpegDialog = ref(false);
 const ffmpegDialogFilter = ref(false);
+/** 自动下载的弹窗：真正下载 ffmpeg 的整个过程中一直开着，`persistent` 不让点外面关掉 */
+const ffmpegDownloading = ref(false);
+/** 下载阶段：`download` 在拉 zip，`extract` 在解出 ffmpeg.exe */
+const ffmpegDlStage = ref<'download' | 'extract'>('download');
+const ffmpegDlDone = ref(0);
+const ffmpegDlTotal = ref(0);
+/** 进度条百分比；服务器没给长度（或已经在解压）时是 `null`，界面画不确定进度 */
+const ffmpegDlPercent = computed(() => {
+  if (ffmpegDlStage.value === 'extract') return 100;
+  if (ffmpegDlTotal.value <= 0) return null;
+  return Math.min(100, Math.round((ffmpegDlDone.value / ffmpegDlTotal.value) * 100));
+});
 
-async function getNewVersion() {
-  //dialog_download.value = true;
-  ffmpegGetNewVersionLoding.value = true;
+/** 点过「取消」还没收尾的那一小段时间：按钮转圈、不让人连点 */
+const ffmpegCancelling = ref(false);
+
+/**
+ * 自动下一份 FFmpeg 并放到程序目录。
+ *
+ * 成功返回 `true`；失败或用户取消返回 `false`，由调用方退回手动下载的窗口。
+ * 进度不在这里读，走 `ffmpeg-download` 事件（见 `onMounted` 里的监听）。
+ */
+async function downloadFFmpeg() {
+  ffmpegDownloading.value = true;
+  ffmpegDlStage.value = 'download';
+  ffmpegDlDone.value = 0;
+  ffmpegDlTotal.value = 0;
   try {
-    const response = await fetch('https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest', {
-      method: 'GET',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'DPR',
-        'X-GitHub-Api-Version': '2022-11-28'
-      }
-    });
-    const release = await response.json() as Release;
-    if (!release) {
-      throw new Error('No tags found');
-    }
-
-    const assets = release.assets as Assets[];
-    if (assets.length === 0) {
-      throw new Error('No assets found');
-    }
-    const asset = assets.find((asset) => {
-      if (isWindows) {
-        return asset.name.includes('ffmpeg-master-latest-win64-gpl.zip');
-      } else if (isLinux) {
-        return asset.name.includes('ffmpeg-master-latest-linux64-gpl.tar.xz');
-      }
-      return false;
-    })
-
-    const link = (asset as Assets).browser_download_url;
-    console.log(link);
-    await openExternal(link);
-    
+    await invoke('download_ffmpeg');
+    return true;
   } catch (error) {
-    console.error('Error fetching tags:', error);
-    await openExternal("https://github.com/BtbN/FFmpeg-Builds/releases");
+    // 具体原因 Rust 侧已经写进日志，界面上只需要退回手动下载
+    console.error('Error downloading ffmpeg:', error);
+    return false;
   } finally {
-    ffmpegGetNewVersionLoding.value = false;
+    ffmpegDownloading.value = false;
+    ffmpegCancelling.value = false;
   }
+}
+
+/**
+ * 取消下载。只给 Rust 侧置个开关，下载循环读到就把 `.part` 删掉退出；
+ * 弹窗要等那个 `invoke` 返回才会自己关（`downloadFFmpeg` 的 `finally`）。
+ */
+async function cancelFFmpegDownload() {
+  ffmpegCancelling.value = true;
+  try {
+    await invoke('cancel_ffmpeg_download');
+  } catch (error) {
+    console.error('Error cancelling ffmpeg download:', error);
+    ffmpegCancelling.value = false;
+  }
+}
+
+/** 查一遍滤镜够不够用（`aresample`/`alimiter`/`volume` 那些），缺了就弹提示窗口 */
+async function checkFFmpegFilter() {
+  try {
+    ffmpegDialogFilter.value = !(await invoke('check_ffmpeg_filter', { path: null }));
+  } catch (error) {
+    console.error('Error running check_ffmpeg_filter:', error);
+  }
+}
+
+/**
+ * 启动时确认 FFmpeg：本机已经有就只查滤镜；没有就弹提示窗口，等用户点「尝试下载」再下 ——
+ * 一进来就闷头拉 190 MB 太越界，网络受限的用户会以为程序卡死了。
+ */
+async function ensureFFmpeg() {
+  let found = false;
+  try {
+    found = (await invoke('check_ffmpeg')) as boolean;
+  } catch (error) {
+    console.error('Error running check_ffmpeg:', error);
+  }
+  if (!found) {
+    ffmpegDialog.value = true;
+    return;
+  }
+  await checkFFmpegFilter();
+}
+
+/** 手动窗口里的「尝试下载」：自动下好就直接关窗往下走 */
+async function retryDownloadFFmpeg() {
+  if (!(await downloadFFmpeg())) {
+    return;
+  }
+  ffmpegDialog.value = false;
+  await checkFFmpegFilter();
 }
 
 async function openAppFolder() {
   await invoke('open_app_folder');
 }
 
-async function checkFFmpegFilter() {
-  try {
-    if (!(await invoke('check_ffmpeg'))) {
-      ffmpegDialog.value = true;
-      return false;
-    }
-    ffmpegDialogFilter.value = !(await invoke("check_ffmpeg_filter", { path: null }));
-    } catch (error) {
-      console.error('Error running check_ffmpeg_filter:', error);
-    }
-}
-
 onMounted(async () => {
-  checkFFmpegFilter();
+  // 监听要先挂上再开始下载，否则前几个进度事件会漏掉
+  await listen<{ stage: 'download' | 'extract' | 'done'; downloaded: number; total: number | null }>(
+    'ffmpeg-download',
+    (event) => {
+      const { stage, downloaded, total } = event.payload;
+      if (stage === 'extract') {
+        ffmpegDlStage.value = 'extract';
+        return;
+      }
+      if (stage === 'download') {
+        ffmpegDlStage.value = 'download';
+        ffmpegDlDone.value = downloaded;
+        ffmpegDlTotal.value = total ?? 0;
+      }
+    }
+  );
+  ensureFFmpeg();
   try {
     appVersion.value = await getVersion();
   } catch (error) {
@@ -621,6 +667,32 @@ onUnmounted(() => {
              DPE 那边原来还有一条「已选几首 + 曲绘」的悬浮条，谱面列表折进「谱面修改」页之后就去掉了。 -->
         <TaskStrip v-if="part === 'dpr'" />
     </div>
+    <!-- 自动下载 FFmpeg：没装过的机器第一次启动就会看到这一层，下完自己关掉。
+         `persistent` 是故意的 —— 点旁边不算数，要退出就点「取消」，让下载循环把半截文件收掉。 -->
+    <v-dialog v-model="ffmpegDownloading" width="auto" min-width="400px" persistent class="log-card-bg">
+      <v-card class="log-card-window">
+        <v-card-title v-t="t('ffmpeg-downloading')"> </v-card-title>
+        <v-card-text>
+          <div class="block whitespace-pre overflow-auto log-card-msg log-card-msg-ui select wrap" style="max-height: 60vh; white-space: pre-wrap">
+            {{ ffmpegDlStage === 'extract' ? t('ffmpeg-download-extract') : t('ffmpeg-downloading-detail') }}
+          </div>
+          <div class="mt-4">
+            <v-progress-linear
+              :model-value="ffmpegDlPercent ?? 0"
+              :indeterminate="ffmpegDlPercent === null"
+              height="6"
+              color="btn"
+            />
+          </div>
+          <div v-if="ffmpegDlStage === 'download' && ffmpegDlTotal > 0" class="mt-2 text-caption">
+            {{ (ffmpegDlDone / 1048576).toFixed(1) }} / {{ (ffmpegDlTotal / 1048576).toFixed(1) }} MB
+          </div>
+        </v-card-text>
+        <v-card-actions class="justify-end">
+          <v-btn variant="text" :loading="ffmpegCancelling" :disabled="ffmpegCancelling" @click="cancelFFmpegDownload" v-t="t('cancel')"></v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
     <v-dialog v-model="ffmpegDialog" width="auto" min-width="400px" class="log-card-bg">
       <v-card class="log-card-window">
         <v-card-title v-t="t('ffmpeg-not-found')"> </v-card-title>
@@ -628,7 +700,7 @@ onUnmounted(() => {
           <div class="block whitespace-pre overflow-auto log-card-msg select wrap" style="max-height: 60vh; white-space: pre-wrap">{{ t('ffmpeg-not-found-detail') }}</div>
         </v-card-text>
         <v-card-actions class="justify-end">
-          <v-btn variant="text" @click="getNewVersion" :loading="ffmpegGetNewVersionLoding" v-t="t('try-download')"></v-btn>
+          <v-btn variant="text" @click="retryDownloadFFmpeg" :loading="ffmpegDownloading" v-t="t('try-download')"></v-btn>
           <v-btn variant="text" @click="openExternal('https://github.com/BtbN/FFmpeg-Builds/releases')" v-t="t('open-download')"></v-btn>
           <v-btn variant="text" @click="openAppFolder" v-t="t('open-app-folder')"></v-btn>
           <v-btn color="btn" class="hover-scale" variant="text" @click="ffmpegDialog = false" v-t="t('confirm')"></v-btn>
@@ -658,6 +730,15 @@ onUnmounted(() => {
 
 *[data-tauri-drag-region] {
   app-region: drag;
+  -webkit-app-region: drag;
+}
+
+/* 拖拽区里的按钮要单独标成 no-drag：整条标题栏是拖拽区，落在里面的
+   Render / Editor 切换与最小化 / 最大化 / 关闭不标就点不动（点上去等于抓标题栏拖窗口）。 */
+.phi-parts,
+.phi-titlebar__controls {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 html {
@@ -1117,55 +1198,8 @@ html {
   border-radius: 0;
 }
 
-/* 弹窗遮罩（v-dialog / v-overlay 的变暗层）：
-   Vuetify 的 .v-overlay__scrim 用的是 `rgb(var(--v-theme-on-surface))`，而深色主题的
-   on-surface 是**白色** —— 于是弹窗一开，整页不是变暗而是被「洗白」一遍。
-   这里统一改成半透明黑，和界面其余部分（深底 + 淡描边）一致。 */
-.v-overlay__scrim {
-  background: rgb(0 0 0 / 32%) !important;
-  opacity: 1 !important;
-}
-
-/* ===== 全局弹窗基底（所有弹窗统一成「齿轮配置窗体」那套外观）=====
-   这两条是应用里每个 `v-dialog` 卡片共用的底：`.log-card-window`（日志/详情类弹窗）、
-   `.log-card-only-window`（确认框与配置类弹窗）—— 两个类只出现在 `v-dialog` 里，所以改这里
-   就等于全局改。取值与 `design/config.css:411-445` 的 `.phi-config-dialog` 那套共用皮肤一致：
-   内容区底色（`#151517` = `rgb(21 21 23)`）再留 88% 不透明、直角、白字。带明确像素宽的弹窗
-   （齿轮、文件名格式、批量页两个配置窗、设置页重置框）仍在 `config.css` 里叠
-   `.phi-config-dialog`（它另给卡片写 `width: 100%`），两处重叠的只有背景与圆角，值相同。 */
-.log-card-window,
-.log-card-only-window {
-  --phi-config-dialog-alpha: 88%;
-  background: rgb(21 21 23 / var(--phi-config-dialog-alpha)) !important;
-  border: 1px solid var(--phi-border-l2);
-  border-radius: 0 !important;
-  color: var(--phi-static-bluish-00);
-}
-
-/* 弹窗标题行：与齿轮弹窗的 `.phi-config-dialog__title` 一模一样（居中、1.5rem、不加粗、纯白）。
-   标题元素是 Vuetify 的 `v-card-title`（字号 / 字重 / 左对齐都是它自带的），这里统一覆盖。
-   只用 `>` 命中弹窗卡片的直接子标题 —— RPEView 列表卡片里那个 `v-card-title` 不受影响。 */
-.log-card-window > .v-card-title,
-.log-card-only-window > .v-card-title {
-  padding: calc(var(--phi-space-3) + var(--phi-space-2)) calc(var(--phi-space-3) * 2.2) var(--phi-space-2);
-  text-align: center;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  font-size: 1.5rem;
-  font-weight: 400;
-  line-height: 1.3;
-  color: var(--phi-static-bluish-00);
-}
-
-/* 正文与操作按钮也统一成纯白：界面其余地方的 `.v-btn` 用的是下面那条
-   `.v-btn { color: var(--phi-label-primary) }`，`v-card-text` 用的是 Vuetify 的 on-surface，
-   弹窗里两者都拉齐到标题的白色。`!important` 是为了压过 Vuetify 给带 `color="…"` 的按钮写的颜色。 */
-.log-card-window .v-card-text,
-.log-card-only-window .v-card-text,
-.log-card-window .v-card-actions .v-btn,
-.log-card-only-window .v-card-actions .v-btn {
-  color: var(--phi-static-bluish-00) !important;
-}
+/* 弹窗遮罩与 `.log-card-*` 那套弹窗基底在 `design/dialog.css`：主界面与编辑窗口都要用，
+   跟着组件样式走会有一边拿不到。 */
 
 /* 日志/详情卡片里的等宽文本块 */
 .log-card-msg {
@@ -1176,6 +1210,13 @@ html {
   border-radius: var(--phi-radius-md) !important;
   user-select: text;
   white-space: pre;
+}
+
+/* 同样一块底色，但正文用界面字体：这条是给人读的说明文字，不是日志。
+   等宽那套（`--phi-font-family-code`）没有中文字形，中文会掉到 monospace 的宋体上。 */
+.log-card-msg.log-card-msg-ui {
+  font-family: var(--phi-font-family) !important;
+  line-height: 1.6;
 }
 
 .v-btn {

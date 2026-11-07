@@ -941,3 +941,76 @@ export interface FileDropEvent {
   paths: string[];
   position: { x: number; y: number };
 }
+
+/** 编辑窗口里一条轨道能放的素材种类。 */
+export type DraftMediaKind = 'chart' | 'music' | 'cover';
+
+/**
+ * 草稿里的一项素材：就是磁盘上的某个文件（目录型谱面则是那个目录）。
+ *
+ * 草稿只记路径，不复制文件 —— 原文件被挪走时这一项会显示成缺失，草稿本身不会坏。
+ */
+export interface DraftMedia {
+  path: string;
+  /** 显示名（文件名或目录名）。 */
+  name: string;
+  kind: DraftMediaKind;
+  /** 归在素材库的哪个文件夹里；空着就是摊在根上。 */
+  folder?: string | null;
+}
+
+/** 素材库里的一个文件夹：导入一个谱面包时按包名建一个，也可以自己新建来归类。 */
+export interface DraftFolder {
+  id: string;
+  name: string;
+  /** 上级文件夹的 id；空着就是「全部素材」底下那一层。 */
+  parent?: string | null;
+}
+
+/** 素材库最多几级文件夹：「导入素材 → 选文件夹」按真实目录建，再深就摊在第三十一级里。 */
+export const MAX_FOLDER_DEPTH = 31;
+
+/**
+ * 导入回来的一项素材：素材本身 + 它在选中的目录 / 压缩包里的相对目录。
+ *
+ * 压缩包（`.pez` / `.zip`）不按文件出现：解开后第一段目录就是包名（去掉扩展名）。
+ */
+export interface MediaInDir {
+  /** 相对目录（`/` 分隔）：空串是根上，其余形如 `专辑/曲目`。 */
+  dir: string;
+  media: DraftMedia;
+}
+
+/**
+ * 草稿自己填的谱面信息（曲名 / 难度 / 谱师 / 曲师），由用户自己写。
+ *
+ * 谱面里自带的那份（`info.txt`、谱面 json 的 META）只当兜底；草稿里填了就以草稿为准，
+ * 预览时按这份内容拼一份 `info.txt` 交给引擎。
+ */
+export interface DraftInfo {
+  name: string;
+  /** 形如 `IN Lv.15`，引擎会从中拆出难度标签与定数。 */
+  difficulty: string;
+  charter: string;
+  composer: string;
+}
+
+/** 一份草稿（剪映那样的项目）：三条轨道 + 素材库，落在 `<程序目录>/dpe/editor/drafts/<id>/draft.json`。 */
+export interface EditorDraft {
+  id: string;
+  name: string;
+  /** Unix 毫秒。 */
+  created: number;
+  updated: number;
+  /** 谱面信息，用户自己填。 */
+  info: DraftInfo;
+  /** 草稿目录的绝对路径，只给界面显示用。 */
+  dir: string;
+  chart: DraftMedia | null;
+  music: DraftMedia | null;
+  cover: DraftMedia | null;
+  /** 导入过的全部素材（素材库），轨道上那三项是这里的引用。 */
+  media: DraftMedia[];
+  /** 素材库里的文件夹（只分组，素材仍在原处）。 */
+  folders: DraftFolder[];
+}

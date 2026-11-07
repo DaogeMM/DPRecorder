@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -274,6 +274,15 @@ pub const DPE_NOISE_DIR: &str = "noisePlayer";
 /// 谱面修改的产物目录：`<dpe>/modify`。
 pub const DPE_MODIFY_DIR: &str = "modify";
 
+/// 编辑窗口的工作目录：`<dpe>/editor`。
+///
+/// 编辑窗口加载本地谱面时先复制一份到它下面的 [`EDITOR_CHARTS_DIR`]，之后的编辑只动副本，
+/// 原文件保持不动。
+pub const DPE_EDITOR_DIR: &str = "editor";
+
+/// 编辑窗口的谱面目录：`<dpe>/editor/charts`，加载进来的谱面摊在这里。
+pub const EDITOR_CHARTS_DIR: &str = "charts";
+
 /// DPE 的输出根（没有就建）。
 pub fn dpe_output_root() -> Result<PathBuf> {
     let exe_dir = exe_dir().ok_or_else(|| anyhow!("failed to locate exe dir"))?;
@@ -290,6 +299,187 @@ pub fn dpe_output_dir(sub: &str) -> Result<PathBuf> {
 /// 它是 DPE 的产物（谱面 `.pez`，不是渲染视频），所以放在 `<程序目录>/dpe` 之下。
 pub fn noise_player_dir() -> Result<PathBuf> {
     dpe_output_dir(DPE_NOISE_DIR)
+}
+
+/// 编辑窗口的工作目录：**`<dpe>/editor`**（没有就建）。
+pub fn editor_dir() -> Result<PathBuf> {
+    dpe_output_dir(DPE_EDITOR_DIR)
+}
+
+/// 编辑窗口的谱面目录：**`<dpe>/editor/charts`**（没有就建）。
+///
+/// 加载进来的谱面摊在这里；`editor/` 底下留给编辑过程自己的东西（中间产物、
+/// 导出草稿之类），不和用户看得到的那份谱面列表混在一层。
+pub fn editor_charts_dir() -> Result<PathBuf> {
+    ensure_subdir(editor_dir()?.join(EDITOR_CHARTS_DIR))
+}
+
+/// 导出目录的目录名：草稿导出的 `.pez` 就落在 `<dpe>/editor/output`。
+pub const EDITOR_OUTPUT_DIR: &str = "output";
+
+/// 编辑窗口的导出目录：**`<dpe>/editor/output`**（没有就建）。
+pub fn editor_output_dir() -> Result<PathBuf> {
+    ensure_subdir(editor_dir()?.join(EDITOR_OUTPUT_DIR))
+}
+
+/// 把一份谱面摊进编辑窗口的谱面目录，返回解包后目录的绝对路径。
+///
+/// 编辑窗口要动的是摊开的文件（谱面 + 曲绘 + 音频），所以这里**总是落在目录上**：
+/// 源是目录就整棵复制，源是 `.pez`（zip 包）就解压成去掉扩展名的同名目录。
+/// 重名时另起名字（`名字 (2)`），不覆盖已经存在的目录。
+pub fn stage_chart_in_editor(src: &Path) -> Result<PathBuf> {
+    let dir = editor_charts_dir()?;
+    stage_chart_into(src, &dir)
+}
+
+/// 把一份谱面摊进 `dir`（[`stage_chart_in_editor`] 的落点由调用方给，测试用）。
+pub fn stage_chart_into(src: &Path, dir: &Path) -> Result<PathBuf> {
+    if !src.exists() {
+        bail!("{} does not exist", src.display());
+    }
+    let name = src
+        .file_name()
+        .ok_or_else(|| anyhow!("cannot stage {}: no file name", src.display()))?;
+    if src.is_dir() {
+        let dest = unique_path(dir, Path::new(name), true);
+        copy_dir_all(src, &dest)?;
+        return Ok(dest);
+    }
+    // 文件：按 zip 解包。`.pez` 就是 zip，解出来的目录名与包名去掉 `.pez` 后一致，
+    // 引擎那边认目录也认包，两种取到的是同一份谱面。
+    let stem = src
+        .file_stem()
+        .ok_or_else(|| anyhow!("cannot stage {}: no file stem", src.display()))?;
+    let dest = unique_path(dir, Path::new(stem), true);
+    extract_zip(src, &dest)?;
+    Ok(dest)
+}
+
+/// 把 zip 整个解到 `to`。包里的绝对路径与 `..` 由 `enclosed_name` 挡掉。
+fn extract_zip(from: &Path, to: &Path) -> Result<()> {
+    let file =
+        std::fs::File::open(from).with_context(|| format!("打不开谱面 {}", from.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("{} 不是合法的谱面包", from.display()))?;
+    std::fs::create_dir_all(to)?;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let Some(rel) = entry.enclosed_name() else {
+            continue;
+        };
+        let dest = to.join(rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&dest)?;
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = std::fs::File::create(&dest)?;
+        std::io::copy(&mut entry, &mut out)?;
+    }
+    Ok(())
+}
+
+/// 编辑窗口解包出来的谱面包：`<dpe>/editor/unpacked`。
+///
+/// 素材库把 `.pez` / `.zip` 按包里的层级摊成文件夹，摊出来的文件就得有个落脚处：这里只是
+/// 缓存，删掉不丢原包（重新导入会再解一次），素材库里记的也是这里的路径。
+pub const EDITOR_UNPACKED_DIR: &str = "unpacked";
+
+/// 解包缓存目录（没有就建）。
+pub fn editor_unpacked_dir() -> Result<PathBuf> {
+    ensure_subdir(editor_dir()?.join(EDITOR_UNPACKED_DIR))
+}
+
+/// 把 `.pez` / `.zip` 解到 [`editor_unpacked_dir`]，返回解出来的那个目录。
+///
+/// 目录名是「包名 + 路径哈希」：同名的包放在不同目录里不会互相盖掉，同一个包重复导入则总
+/// 落到同一个目录 —— 素材库里记的就是这里的路径，重导一次等于刷新内容。
+pub fn unpack_editor_archive(archive: &Path) -> Result<PathBuf> {
+    let stem = archive
+        .file_stem()
+        .map(|it| it.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let dest = editor_unpacked_dir()?
+        .join(format!("{}-{:08x}", safe_file_name(&stem), path_hash(archive)));
+    if dest.exists() {
+        // 包可能换过内容：整棵重解，免得旧条目留在缓存里
+        std::fs::remove_dir_all(&dest)
+            .with_context(|| format!("清空解包缓存失败：{}", dest.display()))?;
+    }
+    extract_zip(archive, &dest)?;
+    Ok(dest)
+}
+
+/// 文件名里不能出现的字符（Windows 的 `\/:*?"<>|` 与控制字符）换成 `_`，再去掉结尾的点和空格。
+pub fn safe_file_name(name: &str) -> String {
+    let mut out: String = name
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if (c as u32) < 0x20 => '_',
+            c => c,
+        })
+        .collect();
+    let len = out.trim_end_matches(['.', ' ']).len();
+    out.truncate(len);
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
+}
+
+/// 路径的 FNV-1a 哈希：只用来给解包目录起名，换个位置就是另一个目录，够用。
+fn path_hash(path: &Path) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for byte in path.to_string_lossy().to_lowercase().bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+/// `dir/name`；已经有同名文件（或目录）时换成 `dir/名字 (2).ext`、`(3)` ……
+fn unique_path(dir: &Path, name: &Path, is_dir: bool) -> PathBuf {
+    let candidate = dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let (stem, ext) = if is_dir {
+        (name.to_string_lossy().to_string(), String::new())
+    } else {
+        (
+            name.file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            name.extension()
+                .map(|ext| format!(".{}", ext.to_string_lossy()))
+                .unwrap_or_default(),
+        )
+    };
+    for n in 2..1000 {
+        let candidate = dir.join(format!("{stem} ({n}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(name)
+}
+
+fn copy_dir_all(from: &Path, to: &Path) -> Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        if src.is_dir() {
+            copy_dir_all(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn test_output_dir(dir: PathBuf) -> Result<()> {
@@ -730,7 +920,7 @@ pub fn collect_chart_files(
 
 /// 已经是压缩格式的后缀：再 deflate 一遍体积几乎不变，只是白烧 CPU（几十 MB 的谱面包里
 /// 音频与图片占大头，跳过它们能省下打包时间的大半）。
-fn zip_method_of(path: &Path) -> CompressionMethod {
+pub(crate) fn zip_method_of(path: &Path) -> CompressionMethod {
     let extension = path
         .extension()
         .map(|it| it.to_string_lossy().to_ascii_lowercase())
@@ -991,5 +1181,67 @@ mod tests {
             back["全默认"].chart_mod_copy_times,
             RenderConfig::default().chart_mod_copy_times
         );
+    }
+
+    /// 摊进编辑窗口：源是目录就整棵复制，重名时另起名字且不动已有的那份。
+    #[test]
+    fn stage_chart_into_copies_dirs() {
+        let base = std::env::temp_dir().join("dpr-stage-dir-test");
+        let _ = std::fs::remove_dir_all(&base);
+        let (from, to) = (base.join("from"), base.join("editor"));
+        std::fs::create_dir_all(from.join("sub")).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(from.join("a.txt"), "a").unwrap();
+        std::fs::write(from.join("sub/b.txt"), "b").unwrap();
+
+        let first = stage_chart_into(&from, &to).unwrap();
+        assert_eq!(first, to.join("from"));
+        assert_eq!(std::fs::read_to_string(first.join("sub/b.txt")).unwrap(), "b");
+
+        // 再摊一次：名字带序号，第一份的内容不被覆盖
+        std::fs::write(from.join("a.txt"), "changed").unwrap();
+        let second = stage_chart_into(&from, &to).unwrap();
+        assert_eq!(second, to.join("from (2)"));
+        assert_eq!(std::fs::read_to_string(to.join("from/a.txt")).unwrap(), "a");
+        assert_eq!(std::fs::read_to_string(second.join("a.txt")).unwrap(), "changed");
+    }
+
+    /// 摊进编辑窗口：`.pez` 解成去掉扩展名的同名目录，重名另起一个、不覆盖已有的目录。
+    #[test]
+    fn stage_chart_into_unpacks_pez() {
+        let base = std::env::temp_dir().join("dpr-stage-chart-test");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let (dir, source) = (base.join("editor"), base.join("Song.artist.0.AT.pez"));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 造一个 `.pez`（zip 包）
+        {
+            let file = std::fs::File::create(&source).unwrap();
+            let mut writer = ZipWriter::new(file);
+            let options = FileOptions::<()>::default();
+            for (name, body) in [("chart.json", "{}"), ("illustration.png", "png")] {
+                writer.start_file(name, options).unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+
+        let first = stage_chart_into(&source, &dir).unwrap();
+        assert_eq!(first, dir.join("Song.artist.0.AT"));
+        assert!(first.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(first.join("chart.json")).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(first.join("illustration.png")).unwrap(),
+            "png"
+        );
+
+        // 再摊一次：另起名字，第一份留着
+        let second = stage_chart_into(&source, &dir).unwrap();
+        assert_eq!(second, dir.join("Song.artist.0.AT (2)"));
+        assert!(first.join("chart.json").is_file());
     }
 }

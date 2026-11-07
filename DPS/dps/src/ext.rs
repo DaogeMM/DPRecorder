@@ -451,7 +451,68 @@ pub fn audio_silent() -> bool {
     AUDIO_SILENT.load(Ordering::SeqCst)
 }
 
+/// wasm 上最终用的是不是浏览器的 WebAudio 后端。
+///
+/// 页面侧的音效桥（用 `wm_take_hitsounds()` 取名字再用 WebAudio 播）只在引擎自己
+/// 出不了声时才该打开，否则同一批按键音会被播两遍（引擎一次、页面一次）。
+#[cfg(target_arch = "wasm32")]
+static WASM_AUDIO_NATIVE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_audio_native() -> bool {
+    WASM_AUDIO_NATIVE.load(Ordering::SeqCst)
+}
+
+/// 浏览器端没有可以驱动的音频设备时，这里给 sasa 一个空后端。
+///
+/// 混音命令留在队列里没人消费，而谱面时间来自 `TimeManager` 的
+/// `performance.now()`，所以静音不影响判定、动画与进度。
+/// 只有在拿不到 WebAudio 设备（`create_audio_manger` 里的 cpal 分支失败）时才会用到它。
+#[cfg(target_arch = "wasm32")]
+mod wasm_audio {
+    use sasa::backend::{Backend, BackendSetup};
+
+    struct SilentBackend;
+
+    impl Backend for SilentBackend {
+        fn setup(&mut self, _setup: BackendSetup) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn start(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn consume_broken(&self) -> bool {
+            false
+        }
+    }
+
+    pub fn create_audio_manger() -> sasa::AudioManager {
+        sasa::AudioManager::new(SilentBackend).expect("wasm 空音频后端不该失败")
+    }
+}
+
 pub fn create_audio_manger(config: &Config) -> Result<AudioManager> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // 浏览器里用 cpal 的 WebAudio 后端：cpal 自己建 AudioContext、自己喂 `AudioBufferSourceNode`，
+        // 混音与出声都交给浏览器，不需要我们再写 worklet。只有拿不到音频设备时才退回静音后端。
+        use sasa::backend::cpal::*;
+        let settings = CpalSettings {
+            buffer_size: config.audio_buffer_size,
+        };
+        return match AudioManager::new(CpalBackend::new(settings)) {
+            Ok(audio) => {
+                WASM_AUDIO_NATIVE.store(true, Ordering::SeqCst);
+                Ok(audio)
+            }
+            Err(err) => {
+                tracing::warn!("[audio] wasm 上拿不到音频设备，退回静音：{err:?}");
+                Ok(wasm_audio::create_audio_manger())
+            }
+        };
+    }
     #[cfg(target_os = "android")]
     {
         use sasa::backend::oboe::*;
@@ -555,6 +616,12 @@ pub fn open_url(url: &str) -> Result<()> {
                 let url: ObjcId = msg_send![class!(NSURL), URLWithString: str_to_ns(url)];
                 let _: () = msg_send![application, openURL: url];
             }
+        } else if #[cfg(target_arch = "wasm32")] {
+            // wasm 里没有 shell，开链接只能用浏览器自己那一套
+            web_sys::window()
+                .ok_or_else(|| anyhow::anyhow!("open_url: no window"))?
+                .open_with_url(url)
+                .map_err(|err| anyhow::anyhow!("open_url: {err:?}"))?;
         } else {
             open::that(url)?;
         }

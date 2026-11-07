@@ -69,10 +69,10 @@ colored = { version = "2.0.0", optional = true }
 
 prpr-avc = { path = "../prpr-avc", optional = true }
 lazy_static = "1.5.0"
-open = "5.3.2"
 rustc-hash = "2.1.2"
 
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# wasm 上取文件走浏览器自己的 `<input type=file>`，没有 rfd 的位置
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))'.dependencies]
 rfd = { version = "0.15.3", default-features = false, features = ["gtk3"] }
 
 # 控制台准备（UTF-8 代码页、ANSI 转义）用，见 `log::init_console`。
@@ -93,6 +93,8 @@ sasa = { git = "https://github.com/2278535805/sasa" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["rt-multi-thread", "fs"] }
+# 打开外部链接：wasm 上走 `window.open`，见 `ext::open_url`
+open = "5.3.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = "1.23"
@@ -105,6 +107,12 @@ web-sys = { version = "0.3", features = [
 js-sys = "^0.3.85"
 wasm-bindgen = "*"
 wasm-bindgen-futures = "0.4"
+# getrandom 0.3（rand 0.9 带进来）在 wasm32-unknown-unknown 上要显式打开 wasm_js 后端，
+# 配合编译参数 `--cfg getrandom_backend="wasm_js"` 才能编过。
+getrandom = { version = "0.3", features = ["wasm_js"] }
+# cpal 的 WebAudio 后端只在 `wasm-bindgen` 这个隐式 feature 下编译，不开它就是 `host::null`
+# （能编过但不出声）。这里显式打开，声音就交给浏览器自己的 AudioContext。
+cpal = { version = "0.16.0", features = ["wasm-bindgen"] }
 
 [build-dependencies]
 walkdir = "2.3.2"

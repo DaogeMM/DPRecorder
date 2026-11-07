@@ -33,8 +33,20 @@ import type { ChartInfo } from '../model';
  * `assetPath` 是「按包内相对路径去读曲绘」时用的读取根，默认跟 `path` 一样。
  * 单独给它的理由：单张 `.mc` 谱面本身不是压缩包，读不出里面的文件，
  * 只能把它所在的文件夹当根（见 `fs::fs_from_file`）。
+ *
+ * `hideCredits` 去掉 曲师 / 画师 / 谱师 三行，只留 曲名 + 难度徽章 + 曲绘 + 路径：
+ * 半宽的卡片里排不下这三个署名，留着会被挤成两行。
+ *
+ * `pathLeft` 把谱面路径从右侧曲绘底下挪到左侧文字区最下面：右侧那条只留曲绘。
  */
-const props = defineProps<{ info?: Partial<ChartInfo>; path?: string; coverPath?: string; assetPath?: string }>();
+const props = defineProps<{
+  info?: Partial<ChartInfo>;
+  path?: string;
+  coverPath?: string;
+  assetPath?: string;
+  hideCredits?: boolean;
+  pathLeft?: boolean;
+}>();
 
 const { t } = useI18n();
 
@@ -157,7 +169,7 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
     <div v-if="cover" class="chart-hero__scrim" aria-hidden="true"></div>
 
     <div class="chart-hero__inner">
-      <div class="chart-hero__meta">
+      <div class="chart-hero__meta" :class="{ 'chart-hero__meta--split': pathLeft }">
         <template v-if="info">
           <!-- 第一行：曲名 -->
           <div class="chart-hero__head">
@@ -173,17 +185,22 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
           </div>
 
           <!-- 第三行：曲师（曲师、谱师、画师各自独占一行） -->
-          <div v-if="info.composer" class="chart-hero__line">
-            <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.composer') }}</span>{{ info.composer }}</span>
-          </div>
+          <template v-if="!hideCredits">
+            <div v-if="info.composer" class="chart-hero__line">
+              <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.composer') }}</span>{{ info.composer }}</span>
+            </div>
 
-          <!-- 第四、五行：画师 / 谱师（各自独占一行） -->
-          <div v-if="info.illustrator" class="chart-hero__line">
-            <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.illustrator') }}</span>{{ info.illustrator }}</span>
-          </div>
-          <div v-if="info.charter" class="chart-hero__line">
-            <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.charter') }}</span>{{ info.charter }}</span>
-          </div>
+            <!-- 第四、五行：画师 / 谱师（各自独占一行） -->
+            <div v-if="info.illustrator" class="chart-hero__line">
+              <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.illustrator') }}</span>{{ info.illustrator }}</span>
+            </div>
+            <div v-if="info.charter" class="chart-hero__line">
+              <span class="chart-hero__pair"><span class="chart-hero__k">{{ t('info.charter') }}</span>{{ info.charter }}</span>
+            </div>
+          </template>
+
+          <!-- 谱面文件的磁盘路径：默认在右侧曲绘底下（半宽卡片里挪到左边，见 `pathLeft`） -->
+          <div v-if="path && pathLeft" class="chart-hero__path chart-hero__path--meta" :title="path">{{ path }}</div>
         </template>
 
         <div v-else class="chart-hero__empty">{{ t('choose.can-also-drop') }}</div>
@@ -195,7 +212,7 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
           <img v-if="cover" :src="cover" alt="" @error="onCoverError" />
           <v-icon v-else size="30">mdi-image-outline</v-icon>
         </div>
-        <div v-if="path" class="chart-hero__path" :title="path">{{ path }}</div>
+        <div v-if="path && !pathLeft" class="chart-hero__path" :title="path">{{ path }}</div>
       </div>
     </div>
   </div>
@@ -265,6 +282,23 @@ const lvlText = computed(() => formatLvl(props.info?.lvl));
   color: var(--phi-label-caption);
   /* 路径可选中，方便直接复制 */
   user-select: text;
+}
+
+/* 路径挪到左侧文字区时改成左对齐，并贴在这一栏最下面（`pathLeft`，见 `.chart-hero__meta--split`） */
+.chart-hero__path--meta {
+  padding-top: 6px;
+  text-align: left;
+}
+
+/* 路径在左侧时文字区撑满横幅：曲名 / 难度贴顶，路径贴底（默认整块是垂直居中的） */
+.chart-hero__meta--split {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-hero__meta--split .chart-hero__path--meta {
+  margin-top: auto;
 }
 
 .chart-hero__cover {

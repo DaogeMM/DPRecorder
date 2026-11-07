@@ -42,6 +42,11 @@ logs/
 Thumbs.db
 desktop.ini
 
+# ── 网页版引擎的构建产物（wasm 与 assets 副本，用 DPR/public/player/build.ps1 重建）──
+DPR/public/player/wasm/dps_player.js
+DPR/public/player/wasm/dps_player_bg.wasm
+DPR/public/player/assets/
+
 # ── 静态库（体积大、可重建）────────────────────────────────────────────────
 static-lib/
 *.tsbuildinfo

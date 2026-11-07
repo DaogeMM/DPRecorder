@@ -203,7 +203,13 @@ impl Effect {
             uniform.apply(&self.material);
         }
         self.material.set_uniform("time", self.t as f32);
-        let target = res.chart_target.as_mut().unwrap();
+        // 拖影下不建 `chart_target`（谱面走 `keep_target` 那张累积缓冲）。
+        // 这套演出 shader 靠 `swap()` 拿「上一帧」的画面当输入，而累积缓冲的乒乓
+        // 留给整帧的残影用；在它上面 swap 会把本帧已经画好的内容换成上一帧，
+        // 所以拖影下这套演出直接跳过。
+        let Some(target) = res.chart_target.as_mut() else {
+            return;
+        };
         target.swap();
         let tex = target.old().texture;
         self.material.set_texture("screenTexture", tex);

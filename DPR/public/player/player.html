@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>web (DPR_W) — Message SP</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+  #glcanvas { display: block; width: 100vw; height: 100vh; outline: none; }
+  #fail { position: fixed; left: 16px; top: 16px; color: #f88; font: 14px/1.5 monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<!-- miniquad 的 JS 胶水在载入时就要 #glcanvas，所以脚本必须放在 canvas 之后。 -->
+<script>
+  // 调试用：把控制台输出留在页面里，自动化脚本（CDP）读 window.__logs 就能看到引擎日志。
+  window.__logs = [];
+  for (const level of ["log", "warn", "error"]) {
+    const orig = console[level].bind(console);
+    console[level] = (...args) => {
+      try { window.__logs.push(level + ": " + args.map(String).join(" ")); } catch (e) {}
+      orig(...args);
+    };
+  }
+  window.addEventListener("error", (e) => window.__logs.push("uncaught: " + e.message));
+</script><canvas id="glcanvas" tabindex="1"></canvas>
+<pre id="fail"></pre>
+<script>
+  // 宿主（编辑窗口）在 iframe 起来之前把谱面文件挂在它自己的 `__dprwPendingChart` 上：
+  // `Record<相对路径, Uint8Array>`。引擎的 wasm 内存文件系统直接读本页 `__dprw_files` 这张
+  // Map（`dps::fs::js_file`），所以必须在这里挂好——`fw_put` 只有实例化之后才存在。
+  (() => {
+    const files = new Map();
+    try {
+      const pending = window.parent !== window ? window.parent.__dprwPendingChart : null;
+      if (pending) for (const name of Object.keys(pending)) files.set(name, pending[name]);
+    } catch (e) {
+      console.warn("[dps-wasm] 读不到宿主的谱面资源:", e);
+    }
+    window.__dprw_files = files;
+  })();
+</script>
+<script>
+  // gl.js 载入时就用 `canvas.getContext("webgl")` 建上下文（见 gl.js:14），拿不到绘图缓冲属性，
+  // 于是浏览器每次合成后都会清掉绘图缓冲：DevTools / 自动化截图（tools/shot.mjs 走
+  // `Page.captureScreenshot`）会随机抓到「已经清空」的那一帧，表现是整屏纯黑，而控制台里引擎
+  // 仍在正常推进帧、也没有任何 GL 错误。噪域每帧要把整屏 `readPixels` 出来再上传（WebGL1 没有
+  // `blitFramebuffer`，见下面的 glShims），这段空窗被拉长到几乎必现，所以必须在 gl.js 之前
+  // 截获 getContext，给 WebGL 上下文补上 `preserveDrawingBuffer`。
+  // 想看关掉的效果可以给页面加 `?nopreserve`（会恢复成截图随机黑屏）。
+  (() => {
+    if (/[?&]nopreserve(?:[=&]|$)/.test(location.search)) return;
+    const createContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+      if (type === "webgl" || type === "experimental-webgl" || type === "webgl2") {
+        attrs = Object.assign({ preserveDrawingBuffer: true }, attrs || {});
+      }
+      return createContext.call(this, type, attrs);
+    };
+  })();
+</script>
+<script>
+  // `?diag=1`：把页面里建过的 AudioContext 记到 `window.__wmCtxs`，便于确认引擎的 WebAudio
+  // 后端到底起没起来、跑没跑（`state` / `currentTime`）。平时不装，免得动到音频对象。
+  (() => {
+    if (!/[?&]diag(?:[=&]|$)/.test(location.search)) return;
+    const Native = window.AudioContext || window.webkitAudioContext;
+    if (!Native) return;
+    window.__wmCtxs = [];
+    // 原型级计数：不管上下文是什么时候、由谁建的，只要有人往里塞音频缓冲就记一笔。
+    const proto = Native.prototype;
+    if (!proto.__wmPatched) {
+      const realCreate = proto.createBufferSource;
+      proto.createBufferSource = function (...args) {
+        window.__wmSources = (window.__wmSources || 0) + 1;
+        window.__wmCtxs.forEach((c) => {
+          if (c === this) c.__sources = (c.__sources || 0) + 1;
+        });
+        return realCreate.apply(this, args);
+      };
+      proto.__wmPatched = true;
+    }
+    // 顺便量一下送进去的采样有多大：全是 0 说明有上下文、有排期，但确实是静音。
+    const AB = window.AudioBuffer;
+    if (AB && !AB.prototype.__wmPeakPatched) {
+      const realCopy = AB.prototype.copyToChannel;
+      AB.prototype.copyToChannel = function (src, channel, offset) {
+        try {
+          let peak = 0;
+          const n = Math.min(src.length || 0, 4096);
+          for (let i = 0; i < n; i++) {
+            const v = src[i] < 0 ? -src[i] : src[i];
+            if (v > peak) peak = v;
+          }
+          if (peak > (window.__wmPeak || 0)) window.__wmPeak = peak;
+        } catch (e) {}
+        return realCopy.call(this, src, channel, offset);
+      };
+      AB.prototype.__wmPeakPatched = true;
+    }
+    const Wrapped = function (...args) {
+      const ctx = new Native(...args);
+      window.__wmCtxs.push(ctx);
+      return ctx;
+    };
+    Wrapped.prototype = Native.prototype;
+    window.AudioContext = Wrapped;
+    window.webkitAudioContext = Wrapped;
+  })();
+</script>
+<script src="./gl.js"></script>
+<script type="module" src="./player-api.js"></script>
+<script type="module">
+  import init, { wm_status, wm_take_hitsounds, wm_debug_files, wm_time, wm_paused, wm_toggle_pause, wm_audio_native } from "./wasm/dps_player.js";
+
+  // gl.js 顶层的 importObject.env 就是 wasm 的 env 导入表（canvas_width / glGenBuffers / ...）。
+  // 打过 patch 的 wasm-bindgen 胶水不再自己提供 env，改成从这个全局对象取。
+  globalThis.__mq_env = importObject.env;
+
+  // 引擎里 `scene/game.rs:196` 的 extern 直接调全局 on_game_start（游戏场景第一次出画面时），
+  // dps 自己的页面在 `DPS/build_wasm.sh:155` 里定义它，这里给个等价的。
+  globalThis.on_game_start = () => console.log("[dps-wasm] game scene entered");
+
+  // 这份 gl.js 比 wasm 里的 miniquad 旧，缺几个 GL 函数（gl.js 自己只在 load() 里补 stub，
+  // 而 patch 过的胶水不调 load）。这里按 build_wasm.sh 里那段 GL 补丁的做法，在实例化前把
+  // 它们挂到 env 上。`GL` / `_glGenObject` / `getArray` 都是 gl.js 顶层的全局，直接可用。
+  //
+  // 上下文类型必须跟 gl.js 一致：`gl.js:14` 在页面载入时就要了 WebGL1，一个 canvas 只有一份
+  // 上下文，这里再要 webgl2 只会拿到 null。这份 gl.js 的枚举表与 `_webglGet` 的对象分支也是
+  // 按 WebGL1 + 扩展写的，换成 WebGL2 后 blockArea 取 `READ_FRAMEBUFFER_BINDING(0x8CAA)`
+  // 会掉进 «GL_INVALID_ENUM … and it returns null» 那条分支、画面整屏出噪点。缺的 blit 下面自己补。
+  const glCtx =
+    document.querySelector("#glcanvas").getContext("webgl") ||
+    document.querySelector("#glcanvas").getContext("experimental-webgl");
+
+  // 这份 gl.js 内部调 GL.recordError 却没实现它，_webglGet 走到错误分支时会抛 TypeError。
+  // 先补一个只打印的空实现兜住。
+  if (typeof GL.recordError !== "function") {
+    GL.recordError = (err) => {
+      if (err) console.warn("[dps-wasm] GL error 0x" + err.toString(16));
+    };
+  }
+
+  // ---- blockArea 的 scene copy：WebGL1 没有 blitFramebuffer ----------------------------------
+  // 引擎 `core/block_area/native/shader.rs` 的 `copy_scene` 按 WebGL2 写：先用
+  // `glGetIntegerv(READ_FRAMEBUFFER_BINDING / DRAW_FRAMEBUFFER_BINDING)` 存下当前绑定，再分别
+  // `glBindFramebuffer(READ / DRAW, …)` 挑源和目标，`glBlitFramebuffer` 把同尺寸矩形搬过去，最后
+  // 按存下的 id 还原。WebGL1 只有一份 FRAMEBUFFER 绑定、也没有 blit，所以这里补三件事：
+  //   1. 用 `fbRead` / `fbDraw` 记 WebGL2 语义的读/写绑定，真实绑定一律走 FRAMEBUFFER；
+  //   2. `glBindFramebuffer` 只认 0x8CA8 / 0x8CA9 / 0x8D40，折成唯一那份真实绑定；
+  //   3. `glBlitFramebuffer` 用 `readPixels` + `texSubImage2D` 落到目标 FBO 的纹理附件上。
+  // 第 3 条不能用 `copyTexSubImage2D`：WebGL1 要求目标纹理的 internalFormat 与读缓冲的格式
+  // 对得上，而引擎这边是 RGB8 的谱面 target（`MSRenderTarget` 在 wasm 上就是 RGB8）拷进 RGBA8
+  // 的场景纹理（`uScene`），实测每帧 `INVALID_OPERATION: glCopyTexSubImage2D: Invalid format.`，
+  // 纹理里一个像素都没拷进去 —— 噪域中间那块矩形于是显示未初始化的垃圾纹理。
+  // 引擎还原的顺序是 READ 再 DRAW，所以「最后一次绑定生效」正好落在 DRAW 上，跟 WebGL2 一致。
+  const GL_FRAMEBUFFER = 0x8d40;
+  const GL_READ_FRAMEBUFFER = 0x8ca8;
+  const GL_DRAW_FRAMEBUFFER = 0x8ca9;
+  const GL_FRAMEBUFFER_BINDING = 0x8ca6; // 与 DRAW_FRAMEBUFFER_BINDING 同值
+  const GL_READ_FRAMEBUFFER_BINDING = 0x8caa;
+  const GL_COLOR_BUFFER_BIT = 0x4000;
+  const GL_COLOR_ATTACHMENT0 = 0x8ce0;
+  const GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE = 0x8cd0;
+  const GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME = 0x8cd1;
+  const GL_FRAMEBUFFER_COMPLETE = 0x8cd5;
+  const GL_TEXTURE = 0x1702;
+
+  let fbRead = 0;
+  let fbDraw = 0;
+  // miniquad 拿到的 framebuffer id 是 gl.js `_glGenObject` 发的序号（不是 GL 名字），
+  // 真实对象在 `GL.framebuffers[id]` 里；0 / 未登记 = 默认帧缓冲（canvas）。
+  const fbObject = (id) => (id && GL.framebuffers[id]) || null;
+  const glImportGetIntegerv = importObject.env.glGetIntegerv;
+  const blitWarned = new Set();
+  const blitWarn = (key, msg) => {
+    if (blitWarned.has(key)) return;
+    blitWarned.add(key);
+    console.warn("[dps-wasm] blit: " + msg);
+  };
+  // 读回的像素复用一块缓冲，只在尺寸变化时重新分配（每帧 ~3.5 MB，别再叠一份分配开销）。
+  let blitPixels = null;
+  const blitBuffer = (n) => {
+    if (!blitPixels || blitPixels.length !== n) blitPixels = new Uint8Array(n);
+    return blitPixels;
+  };
+  // 源帧缓冲完整与否是静态的：每个 id 只查一次，省掉每帧一次驱动调用。
+  const blitChecked = new Map();
+
+  // 全局函数表：名字 -> 实现。没在里面的走空实现兜底。
+  const glShims = {
+    glGetError: () => (glCtx && glCtx.getError ? glCtx.getError() : 0),
+    glGenerateMipmap: (target) => {
+      if (glCtx && glCtx.generateMipmap) glCtx.generateMipmap(target);
+    },
+    clearColorStencil: () => 0,
+    glGenRenderbuffers: (n, ids) => {
+      _glGenObject(n, ids, "createRenderbuffer", GL.renderbuffers, "glGenRenderbuffers");
+    },
+    glBindRenderbuffer: (target, rb) => {
+      GL.validateGLObjectID(GL.renderbuffers, rb, "glBindRenderbuffer", "renderbuffer");
+      glCtx.bindRenderbuffer(target, GL.renderbuffers[rb] || null);
+    },
+    glRenderbufferStorageMultisample: (target, samples, fmt, w, h) => {
+      if (!glCtx.renderbufferStorageMultisample) return;
+      glCtx.renderbufferStorageMultisample(target, samples, fmt, w, h);
+    },
+    glFramebufferRenderbuffer: (target, att, rbTarget, rb) => {
+      glCtx.framebufferRenderbuffer(target, att, rbTarget, GL.renderbuffers[rb] || null);
+    },
+    glDeleteRenderbuffers: (n, ids) => {
+      for (let i = 0; i < n; i++) {
+        const id = getArray(ids + i * 4, Uint32Array, 1)[0];
+        const rb = GL.renderbuffers[id];
+        if (!rb) continue;
+        glCtx.deleteRenderbuffer(rb);
+        GL.renderbuffers[id] = null;
+      }
+    },
+    // gl.js 自己也有这个，但它在 WebGL1 下把 READ/DRAW target 原样交给
+    // `gl.bindFramebuffer`，会直接吃 INVALID_ENUM；所以下面两个是「覆盖」不是「补缺」。
+    glBindFramebuffer: (target, fb) => {
+      if (target === GL_FRAMEBUFFER) {
+        fbRead = fb;
+        fbDraw = fb;
+      } else if (target === GL_READ_FRAMEBUFFER) {
+        fbRead = fb;
+      } else if (target === GL_DRAW_FRAMEBUFFER) {
+        fbDraw = fb;
+      } else {
+        return;
+      }
+      glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, fbObject(fb));
+    },
+    glGetIntegerv: (name, p) => {
+      // 0x8CA6 与 DRAW_FRAMEBUFFER_BINDING 同值，一个分支就够。
+      if (name === GL_FRAMEBUFFER_BINDING) {
+        getArray(p, Int32Array, 1)[0] = fbDraw;
+        return;
+      }
+      if (name === GL_READ_FRAMEBUFFER_BINDING) {
+        getArray(p, Int32Array, 1)[0] = fbRead;
+        return;
+      }
+      glImportGetIntegerv(name, p);
+    },
+    glBlitFramebuffer: (sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter) => {
+      if (glCtx.blitFramebuffer) {
+        glCtx.blitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter);
+        return;
+      }
+      // 只搬颜色，且只搬同尺寸的矩形（这条路径不做缩放；引擎这边两个矩形一直等大）。
+      if (mask !== GL_COLOR_BUFFER_BIT) return;
+      const sw = sx1 - sx0, sh = sy1 - sy0, dw = dx1 - dx0, dh = dy1 - dy0;
+      if (sw <= 0 || sh <= 0 || sw !== dw || sh !== dh) {
+        blitWarn("size", "scale/dirty rect unsupported, src " + sw + "x" + sh + " dst " + dw + "x" + dh);
+        return;
+      }
+      const srcFb = fbObject(fbRead);
+      const dstFb = fbObject(fbDraw);
+      if (!dstFb) {
+        blitWarn("dst", "destination is the default framebuffer, cannot copy into a texture");
+        return;
+      }
+      if (srcFb === dstFb) {
+        blitWarn("same", "source and destination are the same framebuffer");
+        return;
+      }
+      // 目标纹理只能从 FBO 的 COLOR_ATTACHMENT0 反查（miniquad 不给纹理 id）。
+      glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, dstFb);
+      const type = glCtx.getFramebufferAttachmentParameter(
+        glCtx.FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
+      if (type !== GL_TEXTURE) {
+        blitWarn("attach", "COLOR_ATTACHMENT0 is not a texture, attachment type " + type);
+        glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, dstFb);
+        return;
+      }
+      const dstTex = glCtx.getFramebufferAttachmentParameter(
+        glCtx.FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+      // 源帧缓冲不完整的话 `readPixels` 每帧刷 INVALID_OPERATION，静态状态只查一次。
+      const checkKey = fbRead | 0;
+      if (!blitChecked.has(checkKey)) {
+        glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, srcFb);
+        const status = glCtx.checkFramebufferStatus(glCtx.FRAMEBUFFER);
+        blitChecked.set(checkKey, status);
+        if (status !== GL_FRAMEBUFFER_COMPLETE) {
+          blitWarn("incomplete", "source framebuffer " + fbRead + " incomplete, status 0x" + status.toString(16));
+        }
+      }
+      if (blitChecked.get(checkKey) !== GL_FRAMEBUFFER_COMPLETE) {
+        glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, dstFb);
+        return;
+      }
+      // WebGL1 只有一份绑定：把源 FBO 绑上当作读源（0 = canvas）。
+      glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, srcFb);
+      // readPixels 的窗口原点也在左下，和 blit 的源矩形同一套坐标，所以不翻 y。
+      // 统一读成 RGBA/UNSIGNED_BYTE —— 这是 WebGL1 保底支持的组合（RGB8 的附件读出来 alpha=255）。
+      const px = blitBuffer(sw * sh * 4);
+      glCtx.readPixels(sx0, sy0, sw, sh, glCtx.RGBA, glCtx.UNSIGNED_BYTE, px);
+      // 上传前必须解绑目标帧缓冲：目标纹理就挂在它的 COLOR_ATTACHMENT0 上，绑着它往上写
+      // 等于「采样 / 上传回环」，驱动行为不确定（实测会偶发整屏黑帧）。绑 0 是默认帧缓冲，
+      // 和这次上传无关，也不用还原——本函数末尾会把 DRAW 再绑回去。
+      glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, null);
+      // 目标纹理的 level 0 已由 miniquad 的 `Texture::new` 建好
+      //（`glTexImage2D` 传 null 分配），所以 `texSubImage2D` 够用，不用先建层。
+      // 写完必须把纹理绑定还原：miniquad 的 `Context::cache` 认为槽位绑定没变，
+      // 实际绑定就必须没变，否则后面按缓存跳过 `glBindTexture` 时采到的是这张目标纹理。
+      const prevTex = glCtx.getParameter(glCtx.TEXTURE_BINDING_2D);
+      glCtx.bindTexture(glCtx.TEXTURE_2D, dstTex);
+      // (dx0, dy0) 是目标纹理里的偏移，同样左下原点，直接当 texSubImage2D 的起点。
+      glCtx.texSubImage2D(glCtx.TEXTURE_2D, 0, dx0, dy0, sw, sh, glCtx.RGBA, glCtx.UNSIGNED_BYTE, px);
+      glCtx.bindTexture(glCtx.TEXTURE_2D, prevTex);
+      // blit 本身不改绑定：还原成逻辑上的 DRAW（引擎随后还会各自再绑一次）。
+      glCtx.bindFramebuffer(glCtx.FRAMEBUFFER, dstFb);
+    },
+    glDrawBuffers: (len, bufs) => {
+      if (!glCtx.drawBuffers) return;
+      glCtx.drawBuffers(bufs ? getArray(bufs, Int32Array, len) : null);
+    },
+  };
+
+  const missWarned = new Set();
+  const stub = (name) => {
+    if (glShims[name]) return glShims[name];
+    return () => {
+      if (missWarned.has(name)) return 0;
+      missWarned.add(name);
+      console.warn("[dps-wasm] stubbed missing GL import:", name);
+      return 0;
+    };
+  };
+
+  // 排查用：包一层，看是哪几个调用把 GL 打进错误态（WebGL2 上下文下 miniquad 的枚举表
+  // 是按 WebGL1 组织的，个别格式枚举会被判成 INVALID_ENUM）。只在 ?gldebug 时启用。
+  if (glCtx && /[?&]gldebug\b/.test(location.search)) {
+    const seen = new Set();
+    for (const k of Object.keys(glShims)) {
+      const fn = glShims[k];
+      glShims[k] = (...a) => {
+        const r = fn(...a);
+        const e = glCtx.getError();
+        if (e && !seen.has(k)) {
+          seen.add(k);
+          console.warn("[dps-wasm] " + k + " -> GL error 0x" + e.toString(16));
+        }
+        return r;
+      };
+    }
+  }
+
+  let last = null;
+  const poll = () => {
+    try {
+      const s = wm_status();
+      if (s && s !== last) {
+        last = s;
+        console.log("[dps-wasm] status:", s);
+        document.title = "web (DPR_W) — " + s;
+      }
+    } catch (e) {
+      // 实例化还没结束时调用不到导出的函数，忽略。
+    }
+  };
+
+  // 按键音效：引擎在浏览器里拿不到 WebAudio 设备时才把该响的音效名投进
+  // dps::judge::wasm_sfx 的队列，这里每帧取一次、用 WebAudio 播 assets/<名字>.ogg。
+  // 引擎自己能用 WebAudio 出声时（`wm_audio_native()` 为真）这一整条桥都不跑，免得同一个音播两遍。
+  const sfx = { ctx: null, gain: null, buf: {} };
+  // 音效主增益：player-api.js 的 `setVolume` 通过这个全局改它，不必逐个音去调节点。
+  let sfxGain = 0.4;
+  globalThis.__dprwSetSfxVolume = (value) => {
+    const num = Number(value);
+    if (Number.isFinite(num)) sfxGain = Math.min(1, Math.max(0, num));
+    if (sfx.gain) sfx.gain.gain.value = sfxGain;
+  };
+  const audioNative = () => {
+    try {
+      return wm_audio_native();
+    } catch (e) {
+      return false;
+    }
+  };
+  // 页面侧（player-api.js 的 BGM 桥）也要问这个，见文件末尾挂的全局。
+  globalThis.__wmAudioNative = audioNative;
+  const b64ToBuf = (b64) => {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8.buffer;
+  };
+  const loadSfx = async (ctx, name) => {
+    const key = "assets/" + name + ".ogg";
+    const inl = window.FW_FILES && window.FW_FILES[key];
+    const raw = inl
+      ? b64ToBuf(String(inl).slice(String(inl).indexOf(",") + 1))
+      : await fetch((window.DPRW_ASSET_ROOT || "./assets/") + name + ".ogg").then((r) => r.arrayBuffer());
+    sfx.buf[name] = await ctx.decodeAudioData(raw);
+  };
+  // 音效上下文只在真的需要播第一个音时才建：引擎自己能用 WebAudio 出声时整条桥都不该起，
+  // 否则页面里会多出一个 44.1k 的 AudioContext（和引擎那个 48k 的并存）。
+  let sfxInit = null;
+  const ensureSfx = () => {
+    if (sfxInit) return sfxInit;
+    sfxInit = (async () => {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = (sfx.ctx = new Ctx());
+      const gain = ctx.createGain();
+      gain.gain.value = sfxGain;
+      gain.connect(ctx.destination);
+      sfx.gain = gain;
+      await Promise.all(["click", "drag", "flick"].map((n) => loadSfx(ctx, n).catch(() => {})));
+      const resume = () => {
+        if (sfx.ctx.state === "suspended") sfx.ctx.resume().catch(() => {});
+      };
+      window.addEventListener("pointerdown", resume);
+      window.addEventListener("keydown", resume);
+    })();
+    return sfxInit;
+  };
+  const startSfx = () => {
+    const tick = async () => {
+      requestAnimationFrame(tick);
+      if (audioNative()) return;
+      let names = "";
+      try {
+        names = wm_take_hitsounds();
+      } catch (e) {
+        return;
+      }
+      if (!names) return;
+      await ensureSfx();
+      const ctx = sfx.ctx;
+      if (!ctx) return;
+      for (const name of names.split(",")) {
+        const buf = sfx.buf[name];
+        if (!buf) continue;
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(sfx.gain || ctx.destination);
+        src.start();
+      }
+    };
+    tick();
+  };
+
+  try {
+    const bytes = await fetch("./wasm/dps_player_bg.wasm").then((r) => r.arrayBuffer());
+    const mod = await WebAssembly.compile(bytes);
+    const missing = [];
+    for (const imp of WebAssembly.Module.imports(mod)) {
+      if (imp.module !== "env") continue;
+      if (typeof importObject.env[imp.name] === "function") continue;
+      importObject.env[imp.name] = stub(imp.name);
+      missing.push(imp.name);
+    }
+    if (missing.length) console.log("[dps-wasm] filled missing env imports:", missing.join(", "));
+
+    // gl.js 自己也有 glBindFramebuffer / glGetIntegerv，上面那个补缺循环会跳过它们，但 WebGL1 下
+    // 这两个必须换成上面的实现（READ/DRAW 目标、WebGL2 才有的 pname），所以单独点名覆盖。
+    for (const name of ["glBindFramebuffer", "glGetIntegerv", "glBlitFramebuffer"]) {
+      if (glShims[name]) importObject.env[name] = glShims[name];
+    }
+
+    // init() 里由 wasm-bindgen 实例化，并且会在实例化结束时（打过 patch 之后）直接拉起 rust 的
+    // main()，所以 miniquad 需要的 wasm_memory / wasm_exports 由 patch 在那一行之前填好。
+    // 事件监听不在 load() 里装：那些挂在 run_animation_loop 上，由 rust 侧启动时调。
+    await init(mod);
+    // `?paused=1`：编辑器预览默认停住。wm_toggle_pause 只往队列里塞一条请求，由引擎主循环的
+    // 第一轮应用 —— 那时时钟刚起跑、一帧都还没走，所以停在 0 秒，也不会先漏出一小段 BGM。
+    if (/[?&]paused(?:[=&]|$)/.test(location.search)) wm_toggle_pause();
+    window.__wmDebugFiles = wm_debug_files;
+    window.__wm = { status: wm_status, hits: wm_take_hitsounds, time: wm_time, paused: wm_paused };
+    poll();
+    setInterval(poll, 400);
+    startSfx();
+  } catch (e) {
+    console.error("[dps-wasm] init failed:", e);
+    document.getElementById("fail").textContent = "init failed: " + (e && e.stack ? e.stack : e);
+    document.title = "FAILED";
+  }
+</script>
+</body>
+</html>

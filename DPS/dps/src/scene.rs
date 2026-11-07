@@ -197,6 +197,12 @@ pub fn request_input_full(id: impl Into<String>, #[allow(unused_variables)] text
                     completion: 0 as ObjcId
                 ];
             }
+        } else if #[cfg(target_arch = "wasm32")] {
+            // 浏览器里没有原生输入框，用 `prompt`：取消返回 `None`，与其它端的「取消」一致
+            let entered = web_sys::window()
+                .and_then(|window| window.prompt_with_message_and_default(title, text).ok())
+                .flatten();
+            INPUT_TEXT.lock().unwrap().1 = entered;
         } else {
             // 桌面端：弹一个键盘输入框，而不是把剪贴板当结果直接返回。
             // 用 request id 去重：`Ui::input` 每帧都会调 `request_input`，重复入队会让框里的内容被不断重置。
@@ -721,6 +727,12 @@ impl Main {
     /// 当前播放时刻（游戏内时间，秒）。
     pub fn time(&self) -> f64 {
         self.tm.now()
+    }
+
+    /// 主循环或场景时间轴是否处于暂停态（wasm 播放页据此暂停页面侧的音频）。
+    /// 窗口失焦走 `pause` / `resume`，游戏内按空格走的是场景的 `foucus_pause`，两者都要算。
+    pub fn paused(&self) -> bool {
+        self.paused || self.tm.paused()
     }
 
     /// 把播放时刻拨到 `time`：分屏的副窗口靠它跟着主窗口走。
