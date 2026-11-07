@@ -1344,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "dpr"
-version = "1.1.7"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1382,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "dps"
-version = "1.1.7"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1457,14 +1457,14 @@ dependencies = [
 
 [[package]]
 name = "dps-main"
-version = "1.1.7"
+version = "1.2.0"
 dependencies = [
  "dps-ui",
 ]
 
 [[package]]
 name = "dps-ui"
-version = "1.1.7"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "arc-swap",

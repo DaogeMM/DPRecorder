@@ -20,7 +20,7 @@ members = [
 # repository 同时供「设置 → 关于」页的文件链接使用。
 # version 也只有这一份：DPS 与 DPR 一起发布，版本号写两处迟早对不上。
 [workspace.package]
-version = "1.1.7"
+version = "1.2.0"
 license = "GPL-3.0-only"
 authors = ["HLMC", "Mivik", "DaogeMM"]
 repository = "https://github.com/DaogeMM/DPRecorder"
