@@ -16,6 +16,9 @@ pub use shading::*;
 mod shadow;
 pub use shadow::*;
 
+pub mod icon;
+pub mod theme;
+
 mod text;
 pub use text::{DrawText, TextPainter};
 
@@ -33,7 +36,7 @@ use lyon::{
         StrokeVertexConstructor, VertexBuffers,
     },
     math as lm,
-    path::{LineCap, Path, PathEvent},
+    path::{builder::BorderRadii, LineCap, Path, PathEvent, Winding},
 };
 use macroquad::prelude::*;
 use miniquad::PassAction;
@@ -250,16 +253,40 @@ impl DRectButton {
         let oh = r.h;
         let (r, path) = self.build(ui, t, r);
         let ct = r.center();
-        ui.fill_path(&path, if chosen { semi_white(alpha) } else { semi_black(alpha * 0.4) });
+        // 选中态用抬一层的面板配强调色文字，未选中是压暗的控件底配次级文字。
+        ui.fill_path(&path, theme::with_alpha(if chosen { theme::SURFACE_2 } else { theme::INPUT }, alpha));
+        ui.border(r, self.config.radius, alpha);
         ui.text(text)
             .pos(ct.x, ct.y)
             .anchor(0.5, 0.5)
             .no_baseline()
             .size(size * (1. - (1. - r.h / oh).powf(1.3)))
             .max_width(r.w)
-            .color(if chosen { Color::new(0.3, 0.3, 0.3, alpha) } else { semi_white(alpha) })
+            .color(theme::with_alpha(if chosen { theme::ACCENT } else { theme::TEXT_SECONDARY }, alpha))
             .draw();
         (r, path)
+    }
+
+    /// 侧栏导航项：无边框的整行，选中时铺一层 `NAV_ACTIVE`，文字按选中与否换色。
+    pub fn render_nav<'a>(&mut self, ui: &mut Ui, r: Rect, t: f32, alpha: f32, text: impl Into<Cow<'a, str>>, chosen: bool) {
+        let (r, _) = self.build(ui, t, r);
+        if chosen {
+            ui.fill_path(&r.rounded(theme::RADIUS_SM), theme::with_alpha(theme::NAV_ACTIVE, alpha));
+        }
+        ui.text(text)
+            .pos(r.x + 0.012, r.center().y)
+            .anchor(0., 0.5)
+            .no_baseline()
+            .size(0.32)
+            .max_width(r.w - 0.024)
+            .color(theme::with_alpha(if chosen { theme::TEXT } else { theme::TEXT_TERTIARY }, alpha))
+            .draw();
+    }
+
+    /// 把按钮当开关用：位置和按压反馈仍旧走按钮，画面交给 [`Ui::switch`]。
+    pub fn render_switch(&mut self, ui: &mut Ui, r: Rect, t: f32, alpha: f32, on: bool) {
+        let (r, _) = self.build(ui, t, r);
+        ui.switch(r, on, alpha);
     }
 
     pub fn render_text_left<'a>(
@@ -274,14 +301,16 @@ impl DRectButton {
     ) -> (Rect, Path) {
         let oh = r.h;
         let (r, path) = self.build(ui, t, r);
-        ui.fill_path(&path, if chosen { semi_white(alpha) } else { semi_black(alpha * 0.4) });
+        // 选中态用抬一层的面板配强调色文字，未选中是压暗的控件底配次级文字。
+        ui.fill_path(&path, theme::with_alpha(if chosen { theme::SURFACE_2 } else { theme::INPUT }, alpha));
+        ui.border(r, self.config.radius, alpha);
         ui.text(text)
             .pos(r.x + 0.02, r.center().y)
             .anchor(0., 0.5)
             .max_width(r.w - 0.04)
             .no_baseline()
             .size(size * r.h / oh)
-            .color(if chosen { Color::new(0.3, 0.3, 0.3, alpha) } else { semi_white(alpha) })
+            .color(theme::with_alpha(if chosen { theme::ACCENT } else { theme::TEXT_SECONDARY }, alpha))
             .draw();
         (r, path)
     }
@@ -369,16 +398,12 @@ pub struct Slider {
     range: Range<f32>,
     step: f32,
 
-    btn_dec: DRectButton,
-    btn_inc: DRectButton,
-
     touch: Option<(u64, f32, bool)>,
     rect: Rect,
     pos: f32,
 }
 
 impl Slider {
-    const RADIUS: f32 = 0.028;
     const THRESHOLD: f32 = 0.05;
 
     pub fn new(range: Range<f32>, step: f32) -> Self {
@@ -386,26 +411,13 @@ impl Slider {
             range,
             step,
 
-            btn_dec: DRectButton::new().with_delta(-0.002),
-            btn_inc: DRectButton::new().with_delta(-0.002),
-
             touch: None,
             rect: Rect::default(),
             pos: f32::INFINITY,
         }
     }
 
-    pub fn touch(&mut self, touch: &Touch, t: f32, dst: &mut f32) -> Option<bool> {
-        if self.btn_dec.touch(touch, t) {
-            let val = (*dst - self.step).max(self.range.start);
-            *dst = round_to_step(val, self.step);
-            return Some(true);
-        }
-        if self.btn_inc.touch(touch, t) {
-            let val = (*dst + self.step).min(self.range.end);
-            *dst = round_to_step(val, self.step);
-            return Some(true);
-        }
+    pub fn touch(&mut self, touch: &Touch, _t: f32, dst: &mut f32) -> Option<bool> {
         if let Some((id, start_pos, unlocked)) = &mut self.touch {
             if touch.id == *id {
                 match touch.phase {
@@ -430,7 +442,7 @@ impl Slider {
             }
         } else if touch.phase == TouchPhase::Started {
             let pos = (self.pos, self.rect.center().y);
-            if (touch.position.x - pos.0).hypot(touch.position.y - pos.1) <= Self::RADIUS {
+            if (touch.position.x - pos.0).hypot(touch.position.y - pos.1) <= 0.03 {
                 self.touch = Some((touch.id, touch.position.x, false));
                 return Some(false);
             }
@@ -438,66 +450,29 @@ impl Slider {
         None
     }
 
-    pub fn render(&mut self, ui: &mut Ui, mut r: Rect, t: f32, c: Color, p: f32, text: String) {
-        r.x -= 0.1;
-        r.x -= r.w * 0.2;
-        r.w *= 1.2;
-        let pad = 0.04;
-        let size = 0.026;
+    pub fn render(&mut self, ui: &mut Ui, r: Rect, _t: f32, c: Color, p: f32, text: String) {
+        // DPR 的滑条：方形轨道（已拉过的部分是灰的，其余透明）+ 方形滑块，数值贴在控件右边。
+        let vw = 0.1;
         let cy = r.center().y;
-        self.btn_dec
-            .render_text(ui, Rect::new(r.x - pad - size, cy, 0., 0.).feather(size), t, c.a, "-", 0.7, true);
-        self.btn_inc
-            .render_text(ui, Rect::new(r.right() + pad + size, cy, 0., 0.).feather(size), t, c.a, "+", 0.7, true);
-        self.rect = ui.rect_to_global(r);
         ui.text(text)
-            .pos(r.x - (pad + size) * 2., cy)
+            .pos(r.right(), cy)
             .anchor(1., 0.5)
             .no_baseline()
             .color(c)
-            .size(0.6)
+            .size(0.5)
             .draw();
-        let p = (p - self.range.start) / (self.range.end - self.range.start);
-        let pos = (r.x + r.w * p, cy);
-        self.pos = ui.to_global(pos).0;
-        use lyon::math::point;
-        ui.stroke_options = ui.stroke_options.with_line_cap(LineCap::Round);
-        ui.stroke_path(
-            &{
-                let mut p = Path::builder();
-                p.begin(point(r.x, cy));
-                p.line_to(point(pos.0, cy));
-                p.end(false);
-                p.build()
-            },
-            0.02,
-            Color {
-                a: c.a * 0.8,
-                ..ui.background()
-            },
+        let track = Rect::new(r.x, cy - 0.0025, (r.w - vw - 0.02).max(0.02), 0.005);
+        let p = ((p - self.range.start) / (self.range.end - self.range.start)).clamp(0., 1.);
+        let pos = track.x + track.w * p;
+        self.rect = ui.rect_to_global(track);
+        self.pos = ui.to_global((pos, cy)).0;
+        // 没拉过的那段不填色（DPR 的滑条轨道是透明的），只画出已拉过的一段。
+        ui.fill_rect(Rect::new(track.x, track.y, track.w * p, track.h), theme::with_alpha(theme::TRACK_FILL, c.a));
+        let s = 0.016;
+        ui.fill_rect(
+            Rect::new(pos - s / 2., cy - s / 2., s, s),
+            theme::with_alpha(theme::TRACK_THUMB, c.a),
         );
-        ui.stroke_path(
-            &{
-                let mut p = Path::builder();
-                p.begin(point(pos.0, cy));
-                p.line_to(point(r.right(), cy));
-                p.end(false);
-                p.build()
-            },
-            0.02,
-            Color { a: c.a * 0.8, ..c },
-        );
-        ui.stroke_options = ui.stroke_options.with_line_cap(LineCap::Square);
-        rounded_rect_shadow(
-            ui,
-            Rect::new(pos.0, pos.1, 0., 0.).feather(Self::RADIUS),
-            &ShadowConfig {
-                radius: Self::RADIUS,
-                base: 0.7 * c.a,
-                ..Default::default()
-            },
-        );
-        ui.fill_circle(pos.0, pos.1, Self::RADIUS, c);
     }
 }
 
@@ -660,6 +635,53 @@ impl<'a> Ui<'a> {
             .tessellate_path(path, &self.stroke_options, &mut BuffersBuilder::new(&mut self.vertex_buffers, shaded))
             .unwrap();
         self.emit_lyon(tex);
+    }
+
+    /// 画一块 DPR 风格的面板：`SURFACE_1` 底、1 px `BORDER_2` 边框、圆角。
+    ///
+    /// 返回路径，调用方要在面板上再画东西（列表项、分隔线）时直接用。
+    pub fn panel(&mut self, r: Rect, radius: f32, alpha: f32) -> Path {
+        let path = r.rounded(radius);
+        self.fill_path(&path, theme::with_alpha(theme::SURFACE_1, alpha));
+        self.border(r, radius, alpha);
+        path
+    }
+
+    /// 给一块圆角矩形画 1 px 边框。
+    ///
+    /// 边框用「外圈减内圈」两道路径填充，不走描边：lyon 的描边在闭合的圆角矩形路径上
+    /// 会往画面外拉出贯穿整屏的退化线段，填充没有这个问题。
+    pub fn border(&mut self, r: Rect, radius: f32, alpha: f32) {
+        self.outline(r, radius, theme::HAIRLINE, theme::with_alpha(theme::BORDER_2, alpha));
+    }
+
+    /// 同 [`Ui::border`]，但线宽与颜色由调用方给。
+    pub fn outline(&mut self, r: Rect, radius: f32, w: f32, color: Color) {
+        let inner = r.feather(-w);
+        let mut builder = Path::builder();
+        builder.add_rounded_rectangle(&r.to_euclid(), &BorderRadii::new(radius), Winding::Positive);
+        builder.add_rounded_rectangle(&inner.to_euclid(), &BorderRadii::new((radius - w).max(0.)), Winding::Negative);
+        self.fill_path(&builder.build(), color);
+    }
+
+    /// 画一个 DPR 那种方形开关：直角外框、左右各半格，选中那半填灰、记号上语义色。
+    ///
+    /// 只负责画；点击还是由调用方的 `DRectButton` 管，开关状态存在配置里。
+    pub fn switch(&mut self, r: Rect, on: bool, alpha: f32) {
+        let w = theme::HAIRLINE;
+        let half = r.w / 2.;
+        let left = Rect::new(r.x, r.y, half, r.h);
+        let right = Rect::new(r.x + half, r.y, half, r.h);
+        let cy = r.center().y;
+        self.fill_rect(if on { left } else { right }, theme::with_alpha(theme::ACTIVE, alpha));
+        self.fill_rect(Rect::new(r.x + half - w / 2., r.y, w, r.h), theme::with_alpha(theme::BORDER_2, alpha));
+        self.outline(r, 0., w, theme::with_alpha(theme::BORDER_3, alpha));
+        let s = r.h * 0.16;
+        let mark = |ui: &mut Ui, cx: f32, color: Color, cross: bool| {
+            glyph(ui, cx, cy, s, color, cross);
+        };
+        mark(self, left.center().x, theme::with_alpha(if on { theme::SUCCESS } else { theme::TEXT_CAPTION }, alpha), false);
+        mark(self, right.center().x, theme::with_alpha(if on { theme::TEXT_CAPTION } else { theme::DANGER }, alpha), true);
     }
 
     fn emit_lyon(&mut self, texture: Option<Texture2D>) {
@@ -837,11 +859,11 @@ impl<'a> Ui<'a> {
     }
 
     pub fn accent(&self) -> Color {
-        Color::new(0.85, 0.85, 0.85, 1.0)
+        theme::ACCENT
     }
 
     pub fn background(&self) -> Color {
-        Color::new(0.13, 0.13, 0.13, 1.0)
+        theme::SURFACE_1
     }
 
     pub fn button(&mut self, id: &str, rect: Rect, text: impl Into<String>) -> bool {
@@ -850,7 +872,7 @@ impl<'a> Ui<'a> {
             let mut state = state.borrow_mut();
             let entry = state.entry(id.to_owned()).or_default();
             self.fill_path(
-                &rect.rounded(0.00),
+                &rect.rounded(theme::RADIUS_SM),
                 Color {
                     a: if entry.is_some() { 0.5 } else { 1. },
                     ..self.background()
@@ -862,7 +884,7 @@ impl<'a> Ui<'a> {
                 .anchor(0.5, 0.5)
                 .max_width(rect.w)
                 .size(0.42)
-                .color(WHITE)
+                .color(theme::TEXT)
                 .no_baseline()
                 .draw();
             self.clicked(rect, entry)
@@ -925,10 +947,11 @@ impl<'a> Ui<'a> {
             let tr = self.text(format!("{text}: {value:.3}")).size(0.4).draw();
             let cy = tr.h + 0.03;
             let r = Rect::new(0., cy - s, len, s * 2.);
-            self.fill_rect(r, WHITE);
             let p = (*value - range.start) / (range.end - range.start);
             let p = p.clamp(0., 1.);
-            self.fill_circle(len * p, cy, 0.015, self.accent());
+            self.fill_path(&r.rounded(s), theme::SURFACE_2);
+            self.fill_path(&Rect::new(r.x, r.y, len * p, r.h).rounded(s), self.accent());
+            self.fill_circle(len * p, cy, 0.015, theme::TEXT);
             let r = r.feather(0.015 - s);
             let r = self.rect_to_global(r);
             self.ensure_touches();
@@ -957,7 +980,7 @@ impl<'a> Ui<'a> {
                 .pos(r.center().x, r.center().y)
                 .anchor(0.5, 0.5)
                 .size(0.4)
-                .color(WHITE)
+                .color(theme::TEXT)
                 .no_baseline()
                 .draw();
             if self.clicked(r, state.entry(format!("{text}:-")).or_default()) {
@@ -970,7 +993,7 @@ impl<'a> Ui<'a> {
                 .pos(r.center().x, r.center().y)
                 .anchor(0.5, 0.5)
                 .size(0.4)
-                .color(WHITE)
+                .color(theme::TEXT)
                 .no_baseline()
                 .draw();
             if self.clicked(r, state.entry(format!("{text}:+")).or_default()) {
@@ -1086,32 +1109,42 @@ impl<'a> Ui<'a> {
 
     #[inline]
     pub fn back_rect(&self) -> Rect {
-        Rect::new(-0.97, -self.top + 0.04, 0.1, 0.1)
+        Rect::new(-0.965, -self.top + 0.03, 0.07, 0.07)
     }
 
     #[inline]
     pub fn tab_rects<'b>(&mut self, c: Color, t: f32, it: impl IntoIterator<Item = (&'b mut DRectButton, Cow<'b, str>, bool)>) {
-        let mut r = Rect::new(-0.92, -self.top + 0.15, 0.2, 0.11);
-        for (btn, text, chosen) in it {
-            btn.render_text(self, r, t, c.a, text, 0.5, chosen);
-            r.y += 0.125;
+        // 左侧导航栏：比页面底色暗一档，右边一条 1 px 分界（DPR 的侧栏就是这个层次）。
+        let rail = Rect::new(-1., -self.top, 0.3, self.top * 2.);
+        self.fill_rect(rail, theme::with_alpha(theme::NAV, c.a));
+        self.fill_rect(Rect::new(rail.right() - theme::HAIRLINE, rail.y, theme::HAIRLINE, rail.h), theme::with_alpha(theme::BORDER_1, c.a));
+        // 整组按钮竖向居中，不贴着顶部排。
+        let items: Vec<_> = it.into_iter().collect();
+        const H: f32 = 0.032;
+        const GAP: f32 = 0.002;
+        let total = items.len() as f32 * H + items.len().saturating_sub(1) as f32 * GAP;
+        let mut y = -total / 2.;
+        for (btn, text, chosen) in items {
+            btn.render_nav(self, Rect::new(-0.98, y, 0.26, H), t, c.a, text, chosen);
+            y += H + GAP;
         }
     }
 
     #[inline]
+    /// 内容面板：非主页不画大标题，直接占满导航栏右侧的整块屏幕。
     pub fn content_rect(&self) -> Rect {
-        Rect::new(-0.7, -self.top + 0.15, 1.67, self.top * 2. - 0.18)
+        Rect::new(-0.7, -self.top, 1.7, self.top * 2.)
     }
 
     pub fn full_loading<'b>(&mut self, text: impl Into<Cow<'b, str>>, t: f32) {
-        self.fill_rect(self.screen_rect(), semi_black(0.6));
-        self.loading(0., -0.03, t, WHITE, ());
-        self.text(text.into()).pos(0., 0.05).anchor(0.5, 0.).size(0.6).draw();
+        self.fill_rect(self.screen_rect(), theme::with_alpha(theme::BG_BASE, 0.72));
+        self.loading(0., -0.03, t, theme::ACCENT, ());
+        self.text(text.into()).pos(0., 0.05).anchor(0.5, 0.).size(0.6).color(theme::TEXT).draw();
     }
 
     pub fn full_loading_simple(&mut self, t: f32) {
-        self.fill_rect(self.screen_rect(), semi_black(0.6));
-        self.loading(0., 0., t, WHITE, ());
+        self.fill_rect(self.screen_rect(), theme::with_alpha(theme::BG_BASE, 0.72));
+        self.loading(0., 0., t, theme::ACCENT, ());
     }
 
     pub fn main_sub_colors(use_black: bool, alpha: f32) -> (Color, Color) {
@@ -1210,6 +1243,26 @@ pub fn button_hit_large() {
             let _ = sfx.play(PlaySfxParams::default());
         }
     });
+}
+
+/// 在 `(cx, cy)` 处画一个勾或叉，`s` 是半个笔画的跨度。
+fn glyph(ui: &mut Ui, cx: f32, cy: f32, s: f32, color: Color, cross: bool) {
+    use lyon::math::point;
+    let mut b = Path::builder();
+    if cross {
+        b.begin(point(cx - s, cy - s));
+        b.line_to(point(cx + s, cy + s));
+        b.end(false);
+        b.begin(point(cx + s, cy - s));
+        b.line_to(point(cx - s, cy + s));
+        b.end(false);
+    } else {
+        b.begin(point(cx - s, cy));
+        b.line_to(point(cx - s * 0.3, cy + s * 0.7));
+        b.line_to(point(cx + s, cy - s * 0.65));
+        b.end(false);
+    }
+    ui.stroke_path(&b.build(), s * 0.42, color);
 }
 
 pub fn list_switch() {

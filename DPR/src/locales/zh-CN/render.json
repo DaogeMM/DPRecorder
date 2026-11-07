@@ -63,6 +63,7 @@
     },
     "width": "宽",
     "height": "高",
+    "width-height-tip": "成片画幅就是这个比例: 改这里会把上面的分辨率一起换成同比例的一档 (高度不变)\n改分辨率时这里跟着它走\n预览窗口也按这个比例开\n谱面自带 config.toml 里写了 resolution 时以它为准",
     "tweakoffset": "调整延时",
     "more": "更多",
     "phira-info": "Phira 谱面信息",

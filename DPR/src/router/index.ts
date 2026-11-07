@@ -3,12 +3,12 @@ import { createRouter, createWebHistory } from 'vue-router';
 
 import RenderView from '../RenderView.vue';
 import BatchView from '../BatchView.vue';
-import ChartModView from '@dpe/ChartModView.vue';
+import ChartModView from '../ChartModView.vue';
 import RPEView from '../RPEView.vue';
 import TasksView from '../TasksView.vue';
 import SettingsView from '../SettingsView.vue';
-import VideoNoiseView from '@dpe/VideoNoiseView.vue';
-import MalodyImportView from '@dpe/MalodyImportView.vue';
+import VideoNoiseView from '../VideoNoiseView.vue';
+import MalodyImportView from '../MalodyImportView.vue';
 
 import { useOnLoaded } from '../App.vue';
 import { beginPageLoad } from '../pageLoad';

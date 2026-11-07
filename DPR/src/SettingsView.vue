@@ -571,7 +571,7 @@ const stripWidth = useStorage<number>('TaskStrip.width', STRIP_WIDTH_DEFAULT);
 // 仓库地址（与 `Cargo.toml` 的 `repository` 字段一致）。三个文件链接都走默认分支 main。
 const REPO_URL = 'https://github.com/DaogeMM/DPRecorder';
 const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
-const LICENSES_URL = `${REPO_URL}/blob/main/LICENSES/README.md`;
+const LICENSES_URL = `${REPO_URL}/tree/main/LICENSES`;
 const NOTICE_URL = `${REPO_URL}/blob/main/NOTICE`;
 // 作者 B 站空间（https://space.bilibili.com/521730845）
 // —— 贴在「关于」页脚那排入口的最后。

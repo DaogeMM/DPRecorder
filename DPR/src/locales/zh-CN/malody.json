@@ -1,25 +1,23 @@
 {
-  "malody-import": "Malody 转谱",
+  "malody-import": "Malody 转 Phigros",
 
   "md-loading": "读取谱面…",
   "md-converting": "转换中…",
   "md-no-charts": "这个输入里没有能转的谱面",
   "md-not-malody": "只能拖入 `.mc` / `.mcz` 谱面，或者一个谱面文件夹",
 
+  "md-col-mode": "模式",
   "md-col-version": "难度",
-  "md-col-keys": "轨道数",
-  "md-col-notes": "按键",
-  "md-col-holds": "长按",
-  "md-col-duration": "时长",
-  "md-col-bpm": "BPM",
   "md-col-file": "文件",
 
   "md-config": "配置",
-  "md-layout": "多K模式",
+  "md-layout": "排布",
   "md-line-y": "判定线高度",
   "md-line-y-tip": "判定线在屏幕上的高度",
   "md-gap": "轨道间距",
-  "md-gap-tip": "相邻两条轨道的横向间距",
+  "md-gap-tip": "相邻两条轨道的横向间距（只有 Key 模式用得上）",
+  "md-width": "按键宽度",
+  "md-width-tip": "Slide 横条的宽度先按「一个轨道宽 = 1」折算，再乘这个倍率（只有 Slide 用得上）",
   "md-speed": "下落速度",
   "md-speed-tip": "音符每秒下落的屏幕高度",
 

@@ -14,10 +14,10 @@ use crate::{
 use anyhow::{anyhow, Result};
 use macroquad::prelude::*;
 use dps::{
-    ext::{semi_black, JoinToString, RectExt, SafeTexture, ScaleType},
+    ext::{JoinToString, RectExt, SafeTexture, ScaleType},
     scene::{request_file, request_input, return_input, show_error, show_message, take_input, NextScene},
     task::Task,
-    ui::{button_hit, DRectButton, RectButton, Ui},
+    ui::{button_hit, theme, DRectButton, RectButton, Ui},
 };
 use std::{
     any::Any,
@@ -145,6 +145,10 @@ impl LibraryPage {
     }
 
     pub fn load_online(&mut self) {
+        // 联网功能暂时关掉：在线列表一个请求都不发，也要防止别处把界面切到在线分类。
+        if !crate::ONLINE {
+            return;
+        }
         if get_data().config.offline_mode {
             show_message(tl!("offline-mode")).error();
             return;
@@ -234,6 +238,7 @@ impl LibraryPage {
                 self.sync_local(s);
             } else {
                 self.charts_view.can_refresh = true;
+                self.charts_view.set_empty_hint(None);
                 self.load_online();
             }
         }
@@ -242,6 +247,8 @@ impl LibraryPage {
     fn sync_local(&mut self, s: &SharedState) {
         if self.chosen == ChartListType::Local {
             self.charts_view.can_refresh = false;
+            self.charts_view
+                .set_empty_hint(if s.charts_local.is_empty() { Some(tl!("empty-hint").into()) } else { None });
             self.charts_view
                 .set(s.t, s.charts_local.iter().map(|it| ChartDisplayItem::new(it.clone(), None)).collect());
         }
@@ -291,7 +298,7 @@ impl Page for LibraryPage {
             (&mut self.btn_popular, ChartListType::Popular),
         ]
         .into_iter()
-        .filter_map(|it| if it.0.touch(touch, t) { Some(it.1) } else { None })
+        .filter_map(|it| if crate::ONLINE && it.0.touch(touch, t) { Some(it.1) } else { None })
         .next();
         if let Some(typ) = to_type {
             if self.chosen != typ {
@@ -301,7 +308,7 @@ impl Page for LibraryPage {
             }
             return Ok(true);
         }
-        if !matches!(self.chosen, ChartListType::Local) && self.online_task.is_none() {
+        if crate::ONLINE && !matches!(self.chosen, ChartListType::Local) && self.online_task.is_none() {
             if self.prev_page_btn.touch(touch, t) {
                 if self.current_page != 0 {
                     self.current_page -= 1;
@@ -422,43 +429,41 @@ impl Page for LibraryPage {
     fn render(&mut self, ui: &mut Ui, s: &mut SharedState) -> Result<()> {
         let t = s.t;
         s.render_fader(ui, |ui, c| {
-            ui.tab_rects(
-                c,
-                t,
-                [
-                    (&mut self.btn_local, tl!("local"), ChartListType::Local),
+            // 联网功能暂时关掉：导航只留「本地」，在线分类的标签不画。
+            let mut tabs = vec![(&mut self.btn_local, tl!("local"), ChartListType::Local)];
+            if crate::ONLINE {
+                tabs.extend([
                     (&mut self.btn_ranked, ttl!("chart-ranked"), ChartListType::Ranked),
                     (&mut self.btn_special, ttl!("chart-special"), ChartListType::Special),
                     (&mut self.btn_unstable, ttl!("chart-unstable"), ChartListType::Unstable),
                     (&mut self.btn_popular, tl!("popular"), ChartListType::Popular),
-                ]
-                .into_iter()
-                .map(|(btn, text, ty)| (btn, text, ty == self.chosen)),
+                ]);
+            }
+            ui.tab_rects(
+                c,
+                t,
+                tabs.into_iter().map(|(btn, text, ty)| (btn, text, ty == self.chosen)),
             );
         });
         let mut r = ui.content_rect();
-        if !matches!(self.chosen, ChartListType::Local) {
+        if crate::ONLINE && !matches!(self.chosen, ChartListType::Local) {
             r.h -= 0.08;
         }
         match self.chosen {
-            ChartListType::Local => {
-                s.render_fader(ui, |ui, c| {
-                    let w = 0.24;
-                    let r = Rect::new(r.right() - w, -ui.top + 0.04, w, r.y + ui.top - 0.06);
-                    self.import_btn.render_text(ui, r, t, c.a, tl!("import"), 0.6, false);
-                });
-            }
+            // 导入按钮在面板之后画：它压在列表面板的上沿，先画会被面板盖住。
+            ChartListType::Local => {}
             ChartListType::Ranked | ChartListType::Special | ChartListType::Unstable => {
                 s.render_fader(ui, |ui, c| {
                     let empty = self.search_str.is_empty();
                     let w = 0.53;
-                    let mut r = Rect::new(r.right() - w, -ui.top + 0.04, w, r.y + ui.top - 0.06);
+                    let mut r = Rect::new(r.right() - w, r.y + 0.03, w, 0.1);
                     if empty {
                         r.x += r.h;
                         r.w -= r.h;
                     }
                     let rt = r.right();
-                    self.search_btn.render_shadow(ui, r, t, c.a, |_| semi_black(0.4 * c.a));
+                    let (_, _) = self.search_btn.render_shadow(ui, r, t, c.a, |_| theme::with_alpha(theme::SURFACE_1, c.a));
+                    ui.border(r, theme::RADIUS_MD, c.a);
                     let mut r = r.feather(-0.01);
                     r.w = r.h;
                     if !empty {
@@ -480,7 +485,8 @@ impl Page for LibraryPage {
                     if empty {
                         r.x += r.w;
                     }
-                    let (cr, _) = self.order_btn.render_shadow(ui, r, t, c.a, |_| semi_black(0.4 * c.a));
+                    let (cr, _) = self.order_btn.render_shadow(ui, r, t, c.a, |_| theme::with_alpha(theme::SURFACE_1, c.a));
+                    ui.border(cr, theme::RADIUS_MD, c.a);
                     ui.fill_rect(cr, (*self.icons.order, cr, ScaleType::Fit, c));
                     if self.need_show_order_menu {
                         self.need_show_order_menu = false;
@@ -489,7 +495,8 @@ impl Page for LibraryPage {
                         self.order_menu.show(ui, t, Rect::new(r.x, r.bottom() + 0.02, 0.3, 0.4));
                     }
                     r.x -= r.w + 0.02;
-                    let (cr, _) = self.filter_btn.render_shadow(ui, r, t, c.a, |_| semi_black(0.4 * c.a));
+                    let (cr, _) = self.filter_btn.render_shadow(ui, r, t, c.a, |_| theme::with_alpha(theme::SURFACE_1, c.a));
+                    ui.border(cr, theme::RADIUS_MD, c.a);
                     let cr = cr.feather(-0.005);
                     ui.fill_rect(cr, (*self.icons.filter, cr, ScaleType::Fit, c));
                 });
@@ -497,11 +504,23 @@ impl Page for LibraryPage {
             ChartListType::Popular => {}
         }
         s.fader.render(ui, t, |ui, c| {
-            let path = r.rounded(0.00);
-            ui.fill_path(&path, semi_black(0.4 * c.a));
-            self.render_charts(ui, c, s.t, r.feather(-0.01));
+            ui.panel(r, theme::RADIUS_MD, c.a);
+            // 本地页顶上留一条给导入按钮，别压在卡片上。
+            let cr = if matches!(self.chosen, ChartListType::Local) {
+                Rect::new(r.x, r.y + 0.14, r.w, r.h - 0.14)
+            } else {
+                r
+            };
+            self.render_charts(ui, c, s.t, cr.feather(-0.01));
         });
-        if !matches!(self.chosen, ChartListType::Local) {
+        if matches!(self.chosen, ChartListType::Local) {
+            s.render_fader(ui, |ui, c| {
+                let w = 0.24;
+                let r = Rect::new(r.right() - w - 0.03, r.y + 0.03, w, 0.1);
+                self.import_btn.render_text(ui, r, t, c.a, tl!("import"), 0.6, false);
+            });
+        }
+        if crate::ONLINE && !matches!(self.chosen, ChartListType::Local) {
             let total_page = self.total_page(s);
             s.render_fader(ui, |ui, c| {
                 let cx = r.center().x;

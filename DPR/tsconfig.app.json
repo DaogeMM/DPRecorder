@@ -4,9 +4,7 @@
     "env.d.ts",
     "src/**/*",
     "src/**/*.vue",
-    "src/**/*.json",
-    "../DPE/ui/**/*",
-    "../DPE/ui/**/*.vue"
+    "src/**/*.json"
   ],
   "exclude": [
     "src/**/__tests__/*"
@@ -17,9 +15,6 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "@dpe/*": [
-        "../DPE/ui/*"
       ]
     },
   }

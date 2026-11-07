@@ -34,6 +34,7 @@ import { formatLvl, useLvlField } from './lvl';
 import type { AppConfig, ChartInfo, FileDropEvent, RenderConfig } from './model';
 import type { WorkingState } from './config/types';
 import { chartModMarker, chartSideOf } from './config/chartSide';
+import { alignResolution } from './config/resolution';
 import { readChartConfig, withChartConfig } from './chartConfig';
 import { jumpToFirstError } from './formError';
 
@@ -358,6 +359,9 @@ async function buildParams() {
   // 谱面自带的 `config.toml`：盖在工作配置上 —— 谱面要求怎么画就怎么画（它不许改的分辨率 /
   // 编码器之类不在白名单里，见后端的 chart_config.rs）。渲染 / 试玩 / 预览都走这里。
   config = withChartConfig(config, chartForcedConfig.value);
+  // 谱面自己写了 `resolution` 就以它为准；否则按比值对齐分辨率（谱面可能只改了 `aspectRatio`，
+  // 那样成片仍是原分辨率的画幅、四周留黑边，见 `alignResolution`）。
+  if (!chartForcedConfig.value?.resolution) config = alignResolution(config);
   if (!(await checkAppendants(config))) return null;
   // 谱面侧渲染参数（宽高比 / 强制宽高比 / 折叠式入场 / 判定线长度 / 总分 / 预览起止 / 偏移 /
   // 背景压暗 …）现在是配置项：**以配置为准**，所以展开在谱面信息**之后**覆盖同名键。

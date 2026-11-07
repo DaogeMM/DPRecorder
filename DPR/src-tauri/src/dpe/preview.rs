@@ -19,7 +19,7 @@ use dps::{
 };
 use macroquad::prelude::*;
 
-use crate::{
+use super::{
     cmd::Args,
     protocol::{self, Command},
 };
@@ -83,7 +83,7 @@ pub async fn run(args: Args) -> Result<()> {
     }
     protocol::emit_ready(
         &args.input.to_string_lossy(),
-        &crate::temp::dir().to_string_lossy(),
+        &super::temp::dir().to_string_lossy(),
     );
 
     let loading = LoadingScene::new(None, GameMode::Exercise, info.clone(), &config, files, None, None, None)

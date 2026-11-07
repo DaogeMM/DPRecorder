@@ -33,7 +33,7 @@
   "baoying-sp-group": "Retribution ~ Cycle of Redemption ~",
   "baoying-sp-group-tip": "报应SP 的界面贴图参数（由文件名开启，取 RetriSP 包）",
   "resolution": "分辨率",
-  "resolution-tip": "成片分辨率，渲染耗时基本与像素数成正比",
+  "resolution-tip": "成片分辨率，渲染耗时基本与像素数成正比\n画幅就是它: 改这里时「宽 : 高」跟着走，改「宽 : 高」时高度不变、宽度按比例换",
   "ffmpeg-preset": "编码器预设",
   "fps": "FPS",
   "fps-tip": "成片帧率，越高越流畅也越慢",

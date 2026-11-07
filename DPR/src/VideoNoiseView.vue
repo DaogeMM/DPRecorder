@@ -5,7 +5,7 @@
  * 视频逐格取色后写成一张**全程只有噪域**的谱面，默认打包成一个 `.pez`
  * （`chart.json` + `info.yml` + `song.mp3` + `background.png` 平铺在包根上），
  * 在「渲染」页导入就能预览 / 渲染。抽帧、合成音频与打谱面都在 Rust 侧
- * （`src-tauri/src/noise_player.rs` 与 `DPE/src/noise_player.rs`），这一页只负责参数与输出列表。
+ * （`src-tauri/src/noise_player.rs` 与 `src-tauri/src/dpe/noise_player.rs`），这一页只负责参数与输出列表。
  *
  * 版式与「渲染」页一致：整页滚动 + 贴底操作条（`.render-view` 那三件套），
  * 参数用 `PhiGroup` + `PhiSection` + `.cfg-grid` + `CfgField`，不另起一套卡片样式。

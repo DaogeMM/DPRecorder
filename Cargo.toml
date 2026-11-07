@@ -13,13 +13,14 @@ members = [
 	"DPS/prpr-avc",
 	"DPS/prpr-pbc",
 	"DPR/src-tauri",
-	"DPE",
 ]
 
 # 各 member 的公共元数据在这里统一下发，member 里写 `license.workspace = true`
 # 这种写法继承。license 统一 GPL-3.0-only（与仓库根的 `LICENSE` 全文一致）；
 # repository 同时供「设置 → 关于」页的文件链接使用。
+# version 也只有这一份：DPS 与 DPR 一起发布，版本号写两处迟早对不上。
 [workspace.package]
+version = "1.1.7"
 license = "GPL-3.0-only"
 authors = ["HLMC", "Mivik", "DaogeMM"]
 repository = "https://github.com/DaogeMM/DPRecorder"

@@ -5,7 +5,7 @@
 //! 所以这里与 DPR 那条线看到的是同一个根，只是各用根下的一层子目录：
 //! DPR 用 `DPR`（`DPR/src-tauri/src/common.rs` 的 `get_temp_dir`），DPE 用 `DPE`。
 //!
-//! 单独从命令行起 `dpe.exe`（没有外壳传环境变量）时按 `<程序目录>/tmp` 处理，
+//! 从命令行直接起 `dpr dpe-preview`（没有外壳传环境变量）时按 `<程序目录>/tmp` 处理，
 //! 那里也写不进去才退回系统临时目录。
 
 use std::path::PathBuf;

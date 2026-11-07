@@ -68,7 +68,7 @@ pub(super) struct TouchMask {
 /// 官方 `TouchHover.png`（`Round10_Blur4`）不在 `Phira-Pro-main` 的备份里，仓库里也找不到；
 /// 而它被 `include_bytes!` 引用，缺文件连编译都过不去，所以
 /// `assets/blockarea/TouchHover.png` 里放了一份**我们自己生成的近似替身**
-///（44x44 白色径向衰减，见 `assets/blockarea/README.md`）。拿到官方素材直接覆盖该文件即可。
+///（44x44 白色径向衰减）。拿到官方素材直接覆盖该文件即可。
 ///
 /// 注意：「噪域打击效果」由 [`crate::core::chart::Chart::render_block_area`] 侧传入命中点驱动，
 /// 不依赖真实触摸输入；这份贴图决定光晕长什么样。

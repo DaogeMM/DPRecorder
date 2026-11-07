@@ -3,12 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufWriter, IsTerminal, Read, Write},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        OnceLock,
-    },
+    sync::OnceLock,
 };
 use tracing::info;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
@@ -20,37 +17,10 @@ pub static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// 是否往控制台打日志（「输出日志到控制台」开关，落在 `AppConfig::print_stderr`）。
 ///
-/// 它管的是**人看的那个终端**：信息与调试不打，警告与错误照打（见 `dps::log`）。
-/// 日志文件与「输出」面板不受影响 —— 那两路由渲染子进程的 stderr 另走一份。
-static CONSOLE_LOG: AtomicBool = AtomicBool::new(false);
-
-/// 设置「输出日志到控制台」，同时把日志层的终端那一路一起切过去。
+/// 开关本身在 `dps::log` 里（日志层的终端那一路也用同一个），这里只转调一下，
+/// 免得「日志宏打不打」和「`console!` 打不打」两边不同步。
 pub fn set_console_log(enabled: bool) {
-    CONSOLE_LOG.store(enabled, Ordering::Relaxed);
     dps::log::set_console_enabled(enabled);
-}
-
-/// 控制台日志现在开着没有。
-pub fn console_log() -> bool {
-    CONSOLE_LOG.load(Ordering::Relaxed)
-}
-
-/// 打印一行到控制台，受「输出日志到控制台」开关控制。
-///
-/// 日志宏（`info!` 等）在 `dps::log` 里已经按同一个开关拦掉了；这个宏给那些不走日志层的
-/// 提示（启动早期的诊断、子进程 stderr 的转发）用，免得控制台一半有一半没有。
-/// `warn,` / `error,` 这两种语气带颜色，且开关关着也照打。
-#[macro_export]
-macro_rules! console {
-    (warn, $($arg:tt)*) => {
-        $crate::common::console_line($crate::common::Tone::Warn, format_args!($($arg)*))
-    };
-    (error, $($arg:tt)*) => {
-        $crate::common::console_line($crate::common::Tone::Error, format_args!($($arg)*))
-    };
-    ($($arg:tt)*) => {
-        $crate::common::console_line($crate::common::Tone::Info, format_args!($($arg)*))
-    };
 }
 
 /// 把 anyhow 的错误链压成一行：`外层：内层：最底层原因`。
@@ -68,116 +38,24 @@ pub fn error_chain(err: &anyhow::Error) -> String {
     out
 }
 
-/// 控制台一行的语气：决定颜色，也决定开关关掉之后还打不打。
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tone {
-    /// 普通进度与提示 —— 受「输出日志到控制台」控制。
-    Info,
-    /// 警告（黄）：环境不对、配置退回默认之类，但程序还能跑 —— 开关关着也打。
-    Warn,
-    /// 错误（红）：这一步失败了 —— 开关关着也打。
-    Error,
-}
-
-/// 控制台认不认 ANSI 转义序列（`init_console` 里探一次）。
-static CONSOLE_VT: AtomicBool = AtomicBool::new(false);
-
-/// 启动时准备控制台：切到 UTF-8 代码页、打开 ANSI 转义处理。
-///
-/// 代码页不设成 65001 的话，中文在 936（GBK）的 cmd 窗口里是乱码；ANSI 转义在旧版
-/// Windows 控制台里不认，所以先试着打开，打不开就整场不打颜色码。
+/// 启动时准备控制台：切到 UTF-8 代码页、打开 ANSI 转义处理（实现在 `dps::log`）。
 pub fn init_console() {
-    #[cfg(windows)]
-    {
-        use winapi::um::consoleapi::{GetConsoleMode, SetConsoleMode};
-        use winapi::um::processenv::GetStdHandle;
-        use winapi::um::wincon::{SetConsoleOutputCP, ENABLE_VIRTUAL_TERMINAL_PROCESSING};
-
-        // 控制台的标准句柄号（winbase.h 里的常量）。
-        const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
-        const STD_ERROR_HANDLE: u32 = -12i32 as u32;
-
-        // 只影响输出；输入代码页留给控制台自己管。
-        unsafe { SetConsoleOutputCP(65001) };
-        let mut vt = true;
-        for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            unsafe {
-                let handle = GetStdHandle(which);
-                let mut mode = 0;
-                if handle.is_null()
-                    || GetConsoleMode(handle, &mut mode) == 0
-                    || SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) == 0
-                {
-                    vt = false;
-                }
-            }
-        }
-        CONSOLE_VT.store(vt, Ordering::Relaxed);
-    }
+    dps::log::init_console();
 }
 
-/// 这一行要不要带颜色码：接在终端上就带；渲染子进程的 stderr 被父进程收进「输出」面板，
-/// 面板按 ANSI 上色，所以父进程起子进程时会塞一个 `DPR_CONSOLE_ANSI` 让它也带上。
-fn wants_color() -> bool {
-    std::env::var_os("DPR_CONSOLE_ANSI").is_some()
-        || (CONSOLE_VT.load(Ordering::Relaxed) && std::io::stderr().is_terminal())
-}
-
-/// 打一行到控制台；`Tone::Info` 受开关控制，警告与错误不论开关都打。
-pub fn console_line(tone: Tone, args: std::fmt::Arguments) {
-    if tone == Tone::Info && !console_log() {
-        return;
-    }
-    let text = args.to_string();
-    let code = match tone {
-        Tone::Info => "",
-        Tone::Warn => "\x1b[33m",
-        Tone::Error => "\x1b[31m",
-    };
-    if code.is_empty() || !wants_color() {
-        eprintln!("{text}");
-    } else {
-        eprintln!("{code}{text}\x1b[0m");
-    }
-}
-
-/// 原地刷新一行进度：回车回到行首、清掉这一行，不换行。
-///
-/// 只在真的接在终端上时这么做 —— 输出被重定向或管道接走时，一堆 `\r` 只会把文件搞花。
+/// 原地刷新一行进度：回车回到行首、清掉这一行，不换行（只在真的接在终端上时动）。
 pub fn console_progress(text: &str) {
-    if !console_log() || !std::io::stderr().is_terminal() {
-        return;
-    }
-    // 认得转义序列就顺手清掉这一行（新内容比旧的短时不留尾巴），不认就只回行首。
-    if CONSOLE_VT.load(Ordering::Relaxed) {
-        eprint!("\r\x1b[2K{text}");
-    } else {
-        eprint!("\r{text}");
-    }
+    dps::log::console_progress(text);
 }
 
 /// 进度打完之后收尾换行，免得后面的日志接在同一行尾巴上。
 pub fn console_progress_done() {
-    if !console_log() || !std::io::stderr().is_terminal() {
-        return;
-    }
-    eprintln!();
+    dps::log::console_progress_done();
 }
 
 /// 改控制台窗口标题（最小化后任务栏上也能看到进度）。没有控制台时什么也不做。
 pub fn set_console_title(title: &str) {
-    #[cfg(windows)]
-    unsafe {
-        use winapi::um::wincon::{GetConsoleWindow, SetConsoleTitleW};
-
-        if GetConsoleWindow().is_null() {
-            return;
-        }
-        let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-        SetConsoleTitleW(wide.as_ptr());
-    }
-    #[cfg(not(windows))]
-    let _ = title;
+    dps::log::set_console_title(title);
 }
 
 pub fn parse_args(
@@ -281,74 +159,20 @@ pub fn logs_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// 这次运行写的那份日志文件（`init_log_file` 设的）。
-static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
-
 /// 打开这次运行的日志文件：**按天一份**（`logs/dpr-YYYY-MM-DD.log`），追加写。
 ///
 /// 同一个进程只做一次，返回文件路径。失败（目录不可写、文件被占住）不致命 ——
 /// 那就只打终端，程序照常跑。
 pub fn init_log_file() -> Result<PathBuf> {
-    let path = logs_dir()?.join(format!("dpr-{}.log", chrono::Local::now().format("%Y-%m-%d")));
-    // 立刻真开一次：目录不可写、文件被别的进程独占时在这里就报错，别等到写第一行才发现
-    append_log(&path, "")?;
-    dps::log::set_log_file_path(path.clone());
-    let _ = LOG_PATH.set(path.clone());
-    Ok(path)
+    Ok(dps::log::init_log_file(&logs_dir()?, "dpr")?)
 }
 
 /// 往日志文件里追加一行（没初始化成功就什么也不做）。
-///
-/// 行尾换行去掉，ANSI 颜色码剥掉 —— 这份文件是要给人看、给 issue 贴的纯文本。
 pub fn log_line(line: &str) {
-    let Some(path) = LOG_PATH.get() else {
-        return;
-    };
-    let _ = append_log(path, line);
+    dps::log::log_line(line);
 }
 
-/// 追加一行（末尾补换行）。
-///
-/// 写完就关句柄：长期占着写句柄会把文件锁住，用户就没法在程序运行时打开、拷走日志。
-/// 日志量不大，多开的这几下开销可以忽略。
-fn append_log(path: &Path, line: &str) -> Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.share_mode(0x0000_0007); // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
-    }
-    let mut file = options.open(path)?;
-    let line = strip_ansi(line);
-    let line = line.trim_end_matches(['\r', '\n']);
-    if !line.is_empty() {
-        file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
-    }
-    Ok(())
-}
-
-/// 去掉 `colored` 留下的 ANSI 转义序列（CSI：`ESC [` 之后直到某个终止字节）。
-pub fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\x1b' {
-            out.push(c);
-            continue;
-        }
-        if chars.peek() == Some(&'[') {
-            chars.next();
-            for c in chars.by_ref() {
-                if ('@'..='~').contains(&c) {
-                    break;
-                }
-            }
-        }
-    }
-    out
-}
+pub use dps::log::strip_ansi;
 
 pub fn default_output_dir() -> Result<PathBuf> {
     let dir = if let Some(set_output_dir) = read_config()?.output_dir {
@@ -1012,9 +836,43 @@ pub async fn create_zip(output_path: PathBuf, files: HashMap<String, PathBuf>) -
     pack.finish()
 }
 
+/// 预览窗口的初始尺寸（逻辑像素）：把成片的画幅（`RenderConfig::resolution`）等比缩进
+/// 1280×720 的框里，取最大的一档。
+///
+/// 预览窗口画的就是成片那块画布。窗口固定成 1280×720（16:9）时，自定义比例的谱面在窗口里
+/// 四周是一圈黑边，看着跟成片对不上；按比例开窗口，引擎（`Resource::update_size`）摆出来的
+/// 画面才正好铺满。分辨率填得再大也只缩到这个框，不跟着放大。
+pub fn preview_window_size(resolution: (u32, u32)) -> (f32, f32) {
+    const BOX_W: f32 = 1280.;
+    const BOX_H: f32 = 720.;
+    // 谱面自带的 config.toml 允许 `resolution = [0, 0]`（只校验非负），这种值按 16:9 兜底
+    let (w, h) = match resolution {
+        (w, h) if w > 0 && h > 0 => (w as f32, h as f32),
+        _ => (BOX_W, BOX_H),
+    };
+    let scale = (BOX_W / w).min(BOX_H / h);
+    ((w * scale).round().max(2.), (h * scale).round().max(2.))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 预览窗口取成片画幅的比例，并且永远塞在 1280×720 的框里。
+    #[test]
+    fn preview_window_follows_resolution_ratio() {
+        // 16:9 就是原来那个默认尺寸
+        assert_eq!(preview_window_size((1920, 1080)), (1280., 720.));
+        // 自定义比例：框里最长的一边顶满
+        assert_eq!(preview_window_size((1440, 1080)), (960., 720.));
+        assert_eq!(preview_window_size((1080, 1080)), (720., 720.));
+        assert_eq!(preview_window_size((1080, 1920)), (405., 720.));
+        assert_eq!(preview_window_size((2560, 1080)), (1280., 540.));
+        // 小分辨率也放大到框里，窗口不至于小得看不清
+        assert_eq!(preview_window_size((640, 360)), (1280., 720.));
+        // 填了 0 这种不合法的值也不能除出 NaN
+        assert_eq!(preview_window_size((0, 0)), (1280., 720.));
+    }
 
     /// 与默认值相同的字段不落盘，读回来按 `Default` 补齐 —— 即「写改动」与「写全字段」等价。
     #[test]

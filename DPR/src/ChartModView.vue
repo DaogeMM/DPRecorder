@@ -160,7 +160,7 @@ async function refreshOutputs() {
   }
 }
 
-/** 预览：直接起预览窗口（`dpe.exe --input <谱面>`），不绕去渲染页。 */
+/** 预览：直接起预览窗口（主程序带 `dpe-preview` 参数），不绕去渲染页。 */
 function openOutput(row: { path: string }) {
   // 把界面上的这份渲染配置一起给过去，预览窗口的画面才跟 DPR 自己的预览一致
   const config = workingConfig.value?.config ?? DEFAULT_RENDER_CONFIG;

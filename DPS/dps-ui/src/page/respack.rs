@@ -11,9 +11,9 @@ use anyhow::Result;
 use macroquad::prelude::*;
 use dps::{
     core::{NoteStyle, ParticleEmitter, ResPackInfo, ResourcePack},
-    ext::{create_audio_manger, poll_future, semi_black, LocalTask, RectExt, SafeTexture, ScaleType},
+    ext::{create_audio_manger, poll_future, LocalTask, RectExt, SafeTexture, ScaleType},
     scene::{request_file, show_error, show_message},
-    ui::{DRectButton, Dialog, Scroll, Ui},
+    ui::{theme, DRectButton, Dialog, Scroll, Ui},
 };
 use sasa::{AudioManager, PlaySfxParams, Sfx};
 use std::{
@@ -205,12 +205,17 @@ impl Page for ResPackPage {
     fn render(&mut self, ui: &mut Ui, s: &mut SharedState) -> Result<()> {
         let t = s.t;
         let mut cr = ui.content_rect();
-        let d = 0.29;
+        let d = 0.25;
         cr.x += d;
         cr.w -= d;
-        let r = Rect::new(-0.92, cr.y, 0.47, cr.h);
+        let r = Rect::new(-0.92, cr.y, cr.x + 0.92, cr.h);
         s.render_fader(ui, |ui, c| {
-            ui.fill_path(&r.rounded(0.00), semi_black(c.a * 0.4));
+            // 左右两块并成一张卡片，用一条分隔线断开：原来的两面板之间有一道空隙。
+            ui.panel(Rect::new(r.x, cr.y, 1. - r.x, cr.h), theme::RADIUS_MD, c.a);
+            ui.fill_rect(
+                Rect::new(cr.x - theme::HAIRLINE * 0.5, cr.y, theme::HAIRLINE, cr.h),
+                theme::with_alpha(theme::BORDER_1, c.a),
+            );
             let pad = 0.02;
             self.btns_scroll.size((r.w, r.h - pad));
             ui.dx(r.x);
@@ -231,7 +236,6 @@ impl Page for ResPackPage {
             });
         });
         s.render_fader(ui, |ui, c| {
-            ui.fill_path(&cr.rounded(0.00), semi_black(c.a * 0.4));
             let item = &self.items[self.index];
             if let Some(res_pack) = &item.loaded {
                 let width = 0.16;
@@ -356,23 +360,25 @@ impl Page for ResPackPage {
                     self.last_round = irnd;
                 }
                 ui.text(&item.name)
-                    .pos(x, cr.bottom() - 0.05)
+                    .pos(x, cr.bottom() - 0.04)
                     .anchor(0., 1.)
                     .max_width(cr.right() - x - 0.05)
-                    .size(1.2)
+                    .size(0.95)
                     .draw();
             } else {
                 let ct = cr.center();
                 ui.loading(ct.x, ct.y, t, c, ());
             }
-            let s = 0.12;
-            let mut tr = Rect::new(cr.right() - 0.04 - s, cr.bottom() - 0.04 - s, s, s);
-            let (r, _) = self.delete_btn.render_shadow(ui, tr, t, c.a, |_| semi_black(0.2 * c.a));
-            let r = r.feather(-0.02);
+            let s = 0.09;
+            let mut tr = Rect::new(cr.right() - 0.03 - s, cr.bottom() - 0.03 - s, s, s);
+            let (r, _) = self.delete_btn.render_shadow(ui, tr, t, c.a, |_| theme::with_alpha(theme::SURFACE_2, c.a));
+            ui.border(r, theme::RADIUS_MD, c.a);
+            let r = r.feather(-0.016);
             ui.fill_rect(r, (*self.icons.delete, r, ScaleType::Fit, c));
             if item.loaded.is_some() {
-                tr.x -= tr.w + 0.02;
-                let (r, _) = self.info_btn.render_shadow(ui, tr, t, c.a, |_| semi_black(0.2 * c.a));
+                tr.x -= tr.w + 0.016;
+                let (r, _) = self.info_btn.render_shadow(ui, tr, t, c.a, |_| theme::with_alpha(theme::SURFACE_2, c.a));
+                ui.border(r, theme::RADIUS_MD, c.a);
                 let r = r.feather(-0.02);
                 ui.fill_rect(r, (*self.icons.info, r, ScaleType::Fit, c));
             }

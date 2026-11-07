@@ -106,7 +106,14 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
             macroquad::window::set_fullscreen(false);
             crate::split::place_window(role.secondary);
         }
-        None => macroquad::window::set_fullscreen(preview_fullscreen),
+        None => {
+            // 窗口按成片的画幅开（见 `common::preview_window_size`）：固定 1280×720 时，
+            // 自定义比例的谱面在窗口里四周是一圈黑边，看着跟成片对不上。窗口是在读到
+            // 渲染参数之前就建好的（`lib.rs::build_conf`），所以这里只能改尺寸。
+            let (w, h) = crate::common::preview_window_size(config.resolution);
+            request_new_screen_size(w, h);
+            macroquad::window::set_fullscreen(preview_fullscreen);
+        }
     }
 
     let font = FontArc::try_from_vec(load_file("font.ttf").await?)?;

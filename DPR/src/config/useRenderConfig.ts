@@ -19,6 +19,7 @@ import { DEFAULT_RENDER_CONFIG, type RenderConfig } from '../model';
 import { RENDER_FIELDS } from './fields';
 import { defaultConfigValue, defaultUiValue } from './convert';
 import type { FieldContext, FieldSpec, RespackItem, UiState } from './types';
+import { alignResolution } from './resolution';
 
 export { DEFAULT_RGB, hexToRgb, rgbToHex } from './convert';
 
@@ -221,7 +222,9 @@ export function useRenderConfig() {
     for (const [k, field] of FIELD_ENTRIES) {
       out[k] = field.toConfig ? field.toConfig(ui, ctx) : uiToConfig(k as Key, field, ui[field.uiKey ?? k]);
     }
-    return out as unknown as RenderConfig;
+    // 从界面收上来的这份也要过一遍：界面槽位可能是别处塞进来的（预设 / 工作配置 / 查询串），
+    // 不保证「比例与分辨率对得上」。
+    return alignResolution(out as unknown as RenderConfig);
   }
 
   /* --------------------------- applyConfig ------------------------ */
@@ -243,17 +246,34 @@ export function useRenderConfig() {
       }
     }
     syncUiOnly(config);
+    // 旧配置（旧版本的预设 / 工作配置 / 各处 config.toml）里比值与分辨率可能对不上：
+    // 读进来就按比值重算分辨率，否则界面上写着 4 : 3、成片却还是 16 : 9 的画幅加黑边。
+    syncResolutionToAspect();
   }
 
-  /* --------------------------- 分辨率换算 ------------------------- */
+  /* --------------------------- 分辨率换算 -------------------------
+   * 分辨率就是成片的画幅：宽高比改了，分辨率要跟着换成同一个比例，否则成片仍是原来的
+   * 比例、画面按 `aspectRatio` 居中摆完四周留黑边（见 `dps` 的 `Resource::update_size`）。
+   * 换算保留当前的**高度**（垂直分辨率不动，只改宽），竖屏比例（9 : 16）也照这个来；
+   * 宽取偶数：编码器要偶数边长，奇数只有 RGBA 读回那条慢路（`render.rs` 的 `gpu_yuv`）。 */
   function applyAspectRatio(aspectRatio: number) {
-    const h = parseInt(String(ui.resolution).split('x')[1]!);
-    if (aspectRatio <= 1.0) {
-      ui.resolution = `${h}x${h}`;
-    } else {
-      const w = Math.floor(h * aspectRatio);
-      ui.resolution = `${w}x${h}`;
-    }
+    const h = parseInt(String(ui.resolution).split(/[xX]/)[1] ?? '');
+    if (!Number.isFinite(aspectRatio) || aspectRatio <= 0 || !Number.isFinite(h) || h <= 0) return;
+    const w = Math.max(2, Math.round((h * aspectRatio) / 2) * 2);
+    ui.resolution = `${w}x${h}`;
+  }
+
+  /** 比例与分辨率对不上时按比例重算分辨率；已经对得上就一个像素都不动
+   *  （免得 `Math.round` 把 2844×1600 这种尺寸挪掉一两像素）。 */
+  function syncResolutionToAspect() {
+    const parts = String(ui.resolution).split(/[xX]/g);
+    const w = parseInt(parts[0] ?? '');
+    const h = parseInt(parts[1] ?? '');
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
+    const aspectRatio = Number(ui.aspectRatio);
+    if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) return;
+    if (Math.abs(w / h - aspectRatio) <= 1e-3) return;
+    applyAspectRatio(aspectRatio);
   }
 
   function applyResolution(w?: number, h?: number) {

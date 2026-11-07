@@ -2,7 +2,7 @@
 /**
  * Malody 转谱页：把一份 Malody 键位谱（`.mc` / `.mcz` / 谱面文件夹）转成 Phigros 谱面包（`.pez`）。
  *
- * 转换在 Rust 侧做（`DPE/src/malody.rs`，由 DPR 的命令层按路径引用），这一页只负责三件事：
+ * 转换在 Rust 侧做（`src-tauri/src/dpe/malody.rs`，由 DPR 的命令层按路径引用），这一页只负责三件事：
  * 挑输入、选要转的那张谱面、给三个排版参数；产物落进 `<程序目录>/dpe/malody/`，
  * 与「谱面修改」的产物分开放，找东西时按页面就能定位。
  *
@@ -30,12 +30,12 @@ const { t } = useI18n();
 const router = useRouter();
 
 /**
- * 三个排版量：含义与 DPR「多K模式」的三个同名参数一致（`fixed_lane_line_y` /
+ * 三个排版量：含义与 DPR「定轨谱面」的三个同名参数一致（`fixed_lane_line_y` /
  * `fixed_lane_gap` / `fixed_lane_speed`），取一组常用的定轨排布当默认值。
  */
-const options = useStorage('MalodyImportView.Options', { lineY: 0.12, gap: 0.18, speed: 2.7 });
+const options = useStorage('MalodyImportView.Options', { lineY: 0.12, gap: 0.18, speed: 2.7, width: 1 });
 
-/** 包内的一张谱面（字段与 `DPE/src/malody.rs` 的 `Entry` 一一对应） */
+/** 包内的一张谱面（字段与 `src-tauri/src/dpe/malody.rs` 的 `Entry` 一一对应） */
 interface MalodyEntry {
   index: number;
   file: string;
@@ -43,6 +43,10 @@ interface MalodyEntry {
   artist: string;
   charter: string;
   version: string;
+  /** Malody 的 `meta.mode`：0 是 Key，其余模式只展示、不转 */
+  mode: number;
+  /** 模式名（`Key` / `Catch` / `Pad` / `Taiko` / `Ring` / `Slide`） */
+  mode_name: string;
   column: number;
   notes: number;
   holds: number;
@@ -91,11 +95,22 @@ const outputs = ref<ToolOutput[]>([]);
 const outputDir = ref('');
 
 const chart = computed(() => probe.value?.charts.find((it) => it.index === selected.value) ?? null);
+/**
+ * 当前只放 Key（`mode: 0`，固定轨道）进来转。
+ * Slide（`mode: 7`，一排可长可短的横条）的转换已经写在 `src-tauri/src/dpe/malody.rs` 里（PEC + 宽度 + 斜长条），
+ * 只是先不开放：这里把它当「不支持」列出来，要开放时把 `mode === 7` 加回来即可。
+ */
+function convertibleMode(mode: number) {
+  return mode === 0;
+}
+const isKey = computed(() => chart.value?.mode === 0);
+const isSlide = computed(() => chart.value?.mode === 7);
+const convertible = computed(() => !!chart.value && convertibleMode(chart.value.mode));
 const statusText = computed(() => (probing.value ? t('md-loading') : converting.value ? t('md-converting') : ''));
 /**
  * 喂给横幅的谱面信息。Malody 的元数据只有曲名 / 曲师 / 谱师 / 难度串（形如 `4K HD Lv.22`），
- * 所以定数从难度串里拆、档位是去掉结尾 `Lv.x` 的那一段；曲绘优先用谱面自己指定的那张，
- * 没指定就退回包里找到的第一张图。
+ * 难度串前面按转换口径补上模式（`Key 4K HD Lv.22`），定数从难度串里拆。
+ * 曲绘优先用谱面自己指定的那张，没指定就退回包里找到的第一张图。
  */
 const heroInfo = computed<Partial<ChartInfo> | undefined>(() => {
   const entry = chart.value;
@@ -105,8 +120,8 @@ const heroInfo = computed<Partial<ChartInfo> | undefined>(() => {
     name: entry.title,
     composer: entry.artist,
     charter: entry.charter,
-    difficulty: entry.version,
-    diff: entry.version.replace(/\s*lv\.?\s*[\d.]+$/i, '').trim(),
+    difficulty: `${entry.mode_name} ${entry.version}`.trim(),
+    diff: entry.mode_name,
     lvl: lvl ? Number(lvl) : 0,
     illustration: entry.illustration ?? probe.value?.illustration[0] ?? '',
   };
@@ -160,6 +175,7 @@ async function convert() {
         line_y: Number(options.value.lineY),
         gap: Number(options.value.gap),
         speed: Number(options.value.speed),
+        width: Number(options.value.width ?? 1),
       },
     });
     toast(t('md-done', { notes: result.notes }), 'success');
@@ -282,12 +298,8 @@ onUnmounted(() => {
           <v-table v-if="probe?.charts.length" class="md-table" density="compact">
             <thead>
               <tr>
+                <th class="md-col-mode">{{ t('md-col-mode') }}</th>
                 <th class="md-col-version">{{ t('md-col-version') }}</th>
-                <th class="md-col-num">{{ t('md-col-keys') }}</th>
-                <th class="md-col-num">{{ t('md-col-notes') }}</th>
-                <th class="md-col-num">{{ t('md-col-holds') }}</th>
-                <th class="md-col-num">{{ t('md-col-duration') }}</th>
-                <th class="md-col-num">{{ t('md-col-bpm') }}</th>
                 <th>{{ t('md-col-file') }}</th>
               </tr>
             </thead>
@@ -296,15 +308,13 @@ onUnmounted(() => {
                 v-for="row in probe.charts"
                 :key="row.file"
                 class="md-row"
-                :class="{ 'md-row--active': row.index === selected }"
+                :class="{ 'md-row--active': row.index === selected, 'md-row--off': !convertibleMode(row.mode) }"
                 @click="selected = row.index"
               >
+                <td class="md-col-mode">
+                  <span :class="{ 'md-mode--off': !convertibleMode(row.mode) }">{{ row.mode_name }}</span>
+                </td>
                 <td class="md-col-version">{{ row.version || '-' }}</td>
-                <td class="md-col-num">{{ row.column }}</td>
-                <td class="md-col-num">{{ row.notes }}</td>
-                <td class="md-col-num">{{ row.holds }}</td>
-                <td class="md-col-num">{{ row.duration.toFixed(2) }} s</td>
-                <td class="md-col-num">{{ row.bpm }}</td>
                 <td class="md-path" :title="row.file">{{ row.file }}</td>
               </tr>
             </tbody>
@@ -325,7 +335,7 @@ onUnmounted(() => {
                   v-model.number="options.lineY"
                 ></v-text-field>
               </CfgField>
-              <CfgField :label="t('md-gap')" :tip="t('md-gap-tip')">
+              <CfgField v-if="isKey" :label="t('md-gap')" :tip="t('md-gap-tip')">
                 <v-text-field
                   density="compact"
                   hide-details="auto"
@@ -334,6 +344,17 @@ onUnmounted(() => {
                   :max="0.5"
                   :step="0.01"
                   v-model.number="options.gap"
+                ></v-text-field>
+              </CfgField>
+              <CfgField v-if="isSlide && convertible" :label="t('md-width')" :tip="t('md-width-tip')">
+                <v-text-field
+                  density="compact"
+                  hide-details="auto"
+                  type="number"
+                  :min="0.2"
+                  :max="3"
+                  :step="0.05"
+                  v-model.number="options.width"
                 ></v-text-field>
               </CfgField>
               <CfgField :label="t('md-speed')" :tip="t('md-speed-tip')">
@@ -400,7 +421,7 @@ onUnmounted(() => {
         variant="tonal"
         class="gradient-primary"
         :loading="converting"
-        :disabled="!probe"
+        :disabled="!probe || !convertible"
         @click="convert"
       >
         {{ t('md-convert') }}
@@ -475,18 +496,22 @@ onUnmounted(() => {
   background: var(--phi-interactive-hover);
 }
 
-/* 谱面列表：难度一列宽一点，数值列靠右对齐 */
+/* 谱面列表：难度一列宽一点 */
 .md-col-version {
   width: 30%;
 }
 
-.md-col-num {
-  width: 92px;
-  text-align: right;
+/* 模式列：能转的（Key / Slide）用正常色，其余模式的整行压暗 */
+.md-col-mode {
+  width: 96px;
 }
 
-.md-table :deep(.md-col-num) {
-  text-align: right;
+.md-mode--off {
+  color: var(--phi-label-caption);
+}
+
+.md-table :deep(.md-row--off) {
+  opacity: 0.62;
 }
 
 /* 产物列表：名字一列、操作列定宽居中 */

@@ -40,7 +40,8 @@ impl Default for ShadowConfig {
     fn default() -> Self {
         Self {
             elevation: 0.000,
-            radius: 0.00,
+            // 圆角在这里统一给，控件就不用每个都写一遍（DPR 的控件圆角是 12 px）。
+            radius: crate::ui::theme::RADIUS_MD,
             base: 0.7,
         }
     }
@@ -56,9 +57,11 @@ impl ShadowConfig {
         ]
     }
 
-    pub fn apply(&self, mat: &Material) {
+    /// 圆角按**像素**给 shader：`rect` uniform 用的是 `rect_to_global` 的像素坐标，
+    /// 而 `radius` 字段是世界坐标（1 单位 = 1280 px），不换算的话圆角恒为 0。
+    pub fn apply(&self, mat: &Material, scale: f32) {
         mat.set_uniform("elevation", self.elevation);
-        mat.set_uniform("radius", self.radius);
+        mat.set_uniform("radius", self.radius * scale);
         mat.set_uniform("base", self.base);
     }
 }
@@ -68,7 +71,7 @@ pub fn rounded_rect_shadow(ui: &mut Ui, r: Rect, config: &ShadowConfig) {
     let mat = *SHADOW_MATERIAL;
     let gr = ui.rect_to_global(r);
     mat.set_uniform("rect", vec4(gr.x, gr.y, gr.right(), gr.bottom()));
-    config.apply(&mat);
+    config.apply(&mat, ui.vec_to_global((1., 0.)).0);
     gl_use_material(mat);
     let r3 = config.elevation * 3.0;
     draw_rectangle(gr.x - r3, gr.y - r3, gr.w + r3 * 2., gr.h + r3 * 2., WHITE);
@@ -80,7 +83,7 @@ pub fn rounded_rect<R>(ui: &mut Ui, r: Rect, radius: f32, f: impl FnOnce(&mut Ui
     let mat = *RR_MATERIAL;
     let gr = ui.rect_to_global(r);
     mat.set_uniform("rect", vec4(gr.x, gr.y, gr.right(), gr.bottom()));
-    mat.set_uniform("radius", radius);
+    mat.set_uniform("radius", radius * ui.vec_to_global((1., 0.)).0);
     gl_use_material(mat);
     let res = f(ui);
     gl_use_default_material();

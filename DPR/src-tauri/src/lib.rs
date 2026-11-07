@@ -5,6 +5,7 @@ dps::tl_file!("main" mtl);
 
 mod chart_config;
 mod common;
+mod dpe;
 mod icon;
 mod ipc;
 mod malody_convert;
@@ -49,6 +50,10 @@ use tokio::{
     process::Command,
 };
 use tracing::{error, info, warn};
+
+/// 控制台行宏来自 `dps`（与 DPSimulator 共用同一份实现），导出到 crate 根，
+/// 让各处 `crate::console!(...)` 的写法照旧能用。
+pub use dps::console;
 
 static ASSET_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -499,27 +504,17 @@ pub fn run() -> Result<()> {
         // 启动横幅：一行说清版本和三个别人会去翻的目录。从 .bat 起的时候，控制台里至少能
         // 看出跑的是哪一份程序、配置与输出落在哪儿。它不受「输出日志到控制台」开关管 ——
         // 那个开关默认关着，否则启动时控制台一行都没有，看着像没起来。
-        eprintln!(
-            "dpr {} · 配置 {} · 输出 {} · 日志 {}",
-            env!("CARGO_PKG_VERSION"),
-            CONFIG_DIR
-                .get()
-                .map(|dir| dir.display().to_string())
-                .unwrap_or_default(),
-            common::default_output_dir()
-                .map(|dir| dir.display().to_string())
-                .unwrap_or_default(),
-            common::logs_dir()
-                .map(|dir| dir.display().to_string())
-                .unwrap_or_default(),
-        );
+        let config_dir = CONFIG_DIR.get().map(|dir| dir.display().to_string()).unwrap_or_default();
+        let output = common::default_output_dir().map(|dir| dir.display().to_string()).unwrap_or_default();
+        let logs = common::logs_dir().map(|dir| dir.display().to_string()).unwrap_or_default();
+        log::startup_banner("DPRecorder", &[("配置", &config_dir), ("输出", &output), ("日志", &logs)]);
     }
 
     if std::env::args().len() > 1 {
         match std::env::args().nth(1).as_deref().unwrap_or_default() {
             "help" | "--help" | "-help" | "/help" | "-h" | "?" | "--?" | "-?" | "/?" => {
-                println!("用法: dpr --render --input <谱面文件> [选项]");
-                println!("      dpr --preview --input <谱面文件> [选项]");
+                println!("用法: DPRecorder --render --input <谱面文件> [选项]");
+                println!("      DPRecorder --preview --input <谱面文件> [选项]");
                 println!("选项:");
                 println!("  --input   -i    <文件/路径>   谱面文件");
                 println!("  --output  -o    <文件/路径>   输出文件");
@@ -529,7 +524,7 @@ pub fn run() -> Result<()> {
                 exit_program(0);
             }
             "version" | "--version" | "-V" | "-v" => {
-                println!("dpr {}", env!("CARGO_PKG_VERSION"));
+                println!("DPRecorder {}", env!("CARGO_PKG_VERSION"));
                 exit_program(0);
             }
             "render" => {
@@ -555,6 +550,10 @@ pub fn run() -> Result<()> {
             }
             "--tweakoffset" | "-t" => {
                 run_wrapped(preview::main(true, true, true), false);
+            }
+            // 编辑器那一半的预览窗口：同一个程序、另一个入口（不单独出 exe）。
+            "dpe-preview" => {
+                dpe::run(std::env::args().skip(2));
             }
             cmd => {
                 info!("[预览] 命令：{cmd:?}");
@@ -815,7 +814,7 @@ fn open_output_folder() -> Result<(), InvokeError> {
 /// 三条都起不来才把错误回给前端（红色 toast）。日志写在
 /// `<exe 目录>/tmp/dpr-open-external.log`，排查「点了打不开」时先看这个文件。
 ///
-/// **坑**：从 `dpr.exe` 里调 `ShellExecuteExW` 会**返回 TRUE 却什么都
+/// **坑**：从 `DPRecorder.exe` 里调 `ShellExecuteExW` 会**返回 TRUE 却什么都
 /// 不发生**（日志里连着十来次 `ShellExecuteExW: ok`，而 Edge 的 User Data 一个字节都没动、
 /// `msedge.exe` 进程数始终是 0）。所以它只能当兜底，绝不能放在 `cmd /c start` 前面 —— 放前面
 /// 时它那句「成功」会直接把后面的路全部吃掉，用户看到的就是「点了没反应」。
@@ -888,7 +887,7 @@ fn open_external(url: String) -> Result<(), InvokeError> {
 ///
 /// `verb` / `params` 都可以留空（空动词 = 系统默认动词，打开目录就是它）。调用方
 /// （`open_folder` / `reveal_path` / `open_external`）都把它当**兜底**：它
-/// 从 `dpr.exe` 调可能返回 TRUE 却什么都不发生（原因未查明，可能是这个进程/线程没有 shell
+/// 从 `DPRecorder.exe` 调可能返回 TRUE 却什么都不发生（原因未查明，可能是这个进程/线程没有 shell
 /// 需要的 COM 环境），所以每条路里它都排在 `cmd /c start` 后面。
 #[cfg(target_os = "windows")]
 fn shell_execute(
@@ -1059,18 +1058,20 @@ async fn read_chart_asset(path: String, name: String) -> Result<tauri::ipc::Resp
     .await
 }
 
-/// 用 `dpe.exe` 起一个预览窗口看生成的谱面（DPE 的输出列表上「预览」按这个走）。
+/// 用主程序的预览入口起一个窗口看生成的谱面（Editor 的输出列表上「预览」按这个走）。
 ///
-/// 不走渲染页：那里会重解析一遍谱面、还要人再点一次预览。这里直接把谱面包交给预览进程。
-/// `--standalone` 让它别读 stdin —— 这里的 stdin 给的是 null，预览进程一读就是 EOF，
-/// 会当成「父进程没了」立刻退出。
+/// 预览是同一个程序的另一个入口（`DPRecorder dpe-preview`），不单独出 exe；窗口仍要独立进程，
+/// 因为一个进程只开一个窗口。`--standalone` 让它别读 stdin —— 这里的 stdin 给的是 null，
+/// 预览进程一读就是 EOF，会当成「父进程没了」立刻退出。
+///
+/// 谱面包自带的 `config.toml` 在这里合一次：渲染页与噪域播放器的预览都由前端
+/// `withChartConfig` 合过，DPE 这边也得合 —— 纯配置谱面（改动全写在 `config.toml` 里）
+/// 不合就会显示成原谱。
 #[tauri::command]
 async fn dpe_preview(path: String, config: render::RenderConfig) -> Result<(), InvokeError> {
     wrap_async(async move {
-        let exe = std::env::current_exe()?.with_file_name(if cfg!(windows) { "dpe.exe" } else { "dpe" });
-        if !exe.is_file() {
-            bail!("找不到预览程序 {}", exe.display());
-        }
+        let exe = std::env::current_exe()?;
+        let config = with_chart_config(config, Path::new(&path)).await?;
         // 把界面上的那份渲染配置整份交给预览进程：DPR 自己的预览也是这么给的
         // （`preview_chart` 把 RenderParams 写进子进程 stdin），这样两边的画面一模一样。
         let mut prpr_config = config.to_config();
@@ -1082,7 +1083,11 @@ async fn dpe_preview(path: String, config: render::RenderConfig) -> Result<(), I
             .with_context(|| format!("写入预览配置失败：{}", config_path.display()))?;
 
         let mut cmd = cmd_hidden(exe);
-        cmd.arg("--input").arg(&path).arg("--play").arg("--standalone");
+        cmd.arg("dpe-preview")
+            .arg("--input")
+            .arg(&path)
+            .arg("--play")
+            .arg("--standalone");
         cmd.arg("--config").arg(&config_path);
         // 与 DPR 自己的预览同一条设置：全屏谱面预览开着就全屏起窗
         if common::read_config().map(|it| it.preview_fullscreen).unwrap_or(true) {
@@ -1095,6 +1100,27 @@ async fn dpe_preview(path: String, config: render::RenderConfig) -> Result<(), I
         Ok(())
     })
     .await
+}
+
+/// 把谱面包自带的 `config.toml`（经白名单过滤）盖到一份渲染配置上。
+///
+/// 语义与前端 `withChartConfig` 一致：谱面写明的键优先，其余仍按传进来的那份配置走。
+async fn with_chart_config(
+    config: render::RenderConfig,
+    path: &Path,
+) -> Result<render::RenderConfig> {
+    let Some(forced) = chart_config::read(path).await? else {
+        return Ok(config);
+    };
+    let mut merged = serde_json::to_value(&config)?;
+    if let (serde_json::Value::Object(base), serde_json::Value::Object(forced)) =
+        (&mut merged, serde_json::Value::Object(forced))
+    {
+        for (key, value) in forced {
+            base.insert(key, value);
+        }
+    }
+    Ok(serde_json::from_value(merged)?)
 }
 
 #[tauri::command]

@@ -230,7 +230,7 @@ pub fn write_generated(
 
     let mut table = toml::Table::new();
     for (key, value) in entries {
-        if let Some(value) = to_toml_value(value) {
+        if let Some(value) = to_toml_value(key, value) {
             table.insert(key.clone(), value);
         }
     }
@@ -245,20 +245,70 @@ pub fn write_generated(
     Ok(())
 }
 
-/// `serde_json::Value` → `toml::Value`：只认白名单里会出现的那几种形状。
-fn to_toml_value(value: &Value) -> Option<toml::Value> {
-    match value {
-        Value::Bool(it) => Some(toml::Value::Boolean(*it)),
-        Value::Number(it) => it
+/// `serde_json::Value` → `toml::Value`，**按 [`ALLOWED`] 声明的类型转**。
+///
+/// 界面交过来的值不保证是 JSON 数字：`ChartModView` 把滑杆值统一收成 `unknown`，写过来是
+/// `"0.1"` 这种字符串。照原样写成 `pureConfigChartLineY = "0.1"` 的话，[`read`] 会按白名单
+/// 判「类型不对」把它丢掉 —— 纯配置谱面读回来就等于原谱。
+fn to_toml_value(key: &str, value: &Value) -> Option<toml::Value> {
+    let Some((_, kind)) = ALLOWED.iter().find(|(name, _)| *name == key) else {
+        warn!("[配置] 写 {CONFIG_FILE}：不支持键 {key}，已忽略");
+        return None;
+    };
+    match (kind, value) {
+        (Kind::Bool, Value::Bool(it)) => Some(toml::Value::Boolean(*it)),
+        // 开关也可能是字符串（前端把值当 `unknown` 传）
+        (Kind::Bool, Value::String(it)) => match it.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(toml::Value::Boolean(true)),
+            "false" | "0" => Some(toml::Value::Boolean(false)),
+            _ => wrong_type(key, value),
+        },
+        (Kind::Number, it) => toml_number(it).or_else(|| wrong_type(key, value)),
+        (Kind::String, Value::String(it)) => Some(toml::Value::String(it.clone())),
+        (Kind::Strings, Value::Array(items)) => Some(toml::Value::Array(
+            items
+                .iter()
+                .filter_map(|it| it.as_str().map(|text| toml::Value::String(text.to_owned())))
+                .collect(),
+        )),
+        (Kind::Array, Value::Array(items)) => Some(toml::Value::Array(
+            items.iter().filter_map(toml_integer).collect(),
+        )),
+        _ => wrong_type(key, value),
+    }
+}
+
+/// 数字：JSON 数字照搬，字符串按能不能整除拆成整数 / 浮点（`"45"` → 45、`"0.1"` → 0.1）。
+fn toml_number(value: &Value) -> Option<toml::Value> {
+    if let Value::Number(it) = value {
+        return it
             .as_i64()
             .map(toml::Value::Integer)
-            .or_else(|| it.as_f64().map(toml::Value::Float)),
-        Value::String(it) => Some(toml::Value::String(it.clone())),
-        Value::Array(items) => Some(toml::Value::Array(
-            items.iter().filter_map(to_toml_value).collect(),
-        )),
+            .or_else(|| it.as_f64().map(toml::Value::Float));
+    }
+    let Value::String(it) = value else {
+        return None;
+    };
+    let number = it.trim().parse::<f64>().ok()?;
+    if number.fract() == 0. && number.abs() <= i64::MAX as f64 {
+        Some(toml::Value::Integer(number as i64))
+    } else {
+        Some(toml::Value::Float(number))
+    }
+}
+
+/// `resolution` 这种整数数组：字符串数字也收。
+fn toml_integer(value: &Value) -> Option<toml::Value> {
+    match value {
+        Value::Number(it) => it.as_i64().map(toml::Value::Integer),
+        Value::String(it) => it.trim().parse::<i64>().ok().map(toml::Value::Integer),
         _ => None,
     }
+}
+
+fn wrong_type(key: &str, value: &Value) -> Option<toml::Value> {
+    warn!("[配置] 写 {CONFIG_FILE}：键 {key} 的类型不对（{value}），已忽略");
+    None
 }
 
 #[cfg(test)]
@@ -341,6 +391,70 @@ mod tests {
         assert_eq!(archive.file_names().filter(|name| *name == INFO_FILE).count(), 1);
         assert!(archive.by_name("chart.json").is_ok());
         assert!(archive.by_name(CONFIG_FILE).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 界面交来的字符串数字（滑杆给的是 `"0.1"`）写进 `config.toml` 要变成数字，否则读回来
+    /// 会被白名单当成「类型不对」丢掉 —— 纯配置谱面就退化成原谱。
+    #[test]
+    fn generated_config_converts_string_numbers() {
+        let dir = std::env::temp_dir().join(format!("dpr-chart-config-num-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("src.pez");
+        {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&source).unwrap());
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("chart.json", options).unwrap();
+            std::io::Write::write_all(&mut zip, br#"{"formatVersion":3,"judgeLineList":[]}"#)
+                .unwrap();
+            zip.finish().unwrap();
+        }
+
+        let entries: Map<String, Value> = serde_json::from_str(
+            r#"{
+                "pureConfigChart": "true",
+                "pureConfigChartAngle": "45",
+                "pureConfigChartLineY": "0.1",
+                "chartModReplaceTap": "drag",
+                "chartModOrder": ["arrange", "replace"],
+                "resolution": ["640", 360],
+                "unknownKey": 1
+            }"#,
+        )
+        .unwrap();
+
+        let dest = dir.join("out.pez");
+        write_generated(&source, &dest, &entries, None).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let got = runtime.block_on(read(&dest)).unwrap().unwrap();
+        assert_eq!(got.get("pureConfigChart"), Some(&serde_json::json!(true)));
+        assert_eq!(got.get("pureConfigChartAngle"), Some(&serde_json::json!(45)));
+        assert_eq!(
+            got.get("pureConfigChartLineY"),
+            Some(&serde_json::json!(0.1))
+        );
+        assert_eq!(
+            got.get("chartModReplaceTap"),
+            Some(&serde_json::json!("drag"))
+        );
+        assert_eq!(
+            got.get("chartModOrder"),
+            Some(&serde_json::json!(["arrange", "replace"]))
+        );
+        assert_eq!(got.get("resolution"), Some(&serde_json::json!([640, 360])));
+
+        // 不在白名单的键连文件都不该写进去（写了也读不回来，只是在包里留垃圾）
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&dest).unwrap()).unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name(CONFIG_FILE).unwrap(), &mut text)
+            .unwrap();
+        assert!(text.contains("pureConfigChartLineY = 0.1"), "{text}");
+        assert!(!text.contains("unknownKey"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

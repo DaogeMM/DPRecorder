@@ -37,7 +37,7 @@ use dps::{
     scene::{NextScene, Scene},
     task::Task,
     time::TimeManager,
-    ui::{FontArc, IntoShading, Shading, TextPainter, Ui},
+    ui::{theme, FontArc, IntoShading, Shading, TextPainter, Ui},
 };
 use std::{
     any::Any, borrow::Cow, ops::DerefMut, path::PathBuf, sync::{Arc, Mutex}
@@ -268,17 +268,17 @@ impl Fader {
     }
 
     pub fn progress(&self, t: f32) -> f32 {
-        if self.start_time.is_nan() {
-            0.
+        // `time` 为 0 表示硬切：没有位移和淡入，画面一下换掉。
+        if self.start_time.is_nan() || self.time <= 0. {
+            return 0.;
+        }
+        let p = ((t - self.start_time) / self.time).clamp(0., 1.);
+        let p = (1. - p).powi(3);
+        let p = if self.back { p } else { 1. - p };
+        if self.sub {
+            1. - p
         } else {
-            let p = ((t - self.start_time) / self.time).clamp(0., 1.);
-            let p = (1. - p).powi(3);
-            let p = if self.back { p } else { 1. - p };
-            if self.sub {
-                1. - p
-            } else {
-                -p
-            }
+            -p
         }
     }
 
@@ -316,14 +316,14 @@ impl Fader {
         ui.scissor(Some(Rect::new(-1., tp, 2., h)));
         let p = self.progress(t);
         let tp = tp + h * p;
-        for (i, c) in s.chars().enumerate() {
-            ui.text(c.to_string())
-                .pos(-0.8 + i as f32 * 0.117, tp)
-                .anchor(0.5, 0.)
-                .size(1.4)
-                .color(Color::new(1., 1., 1., 0.4))
-                .draw_with_font(Some(painter));
-        }
+        // 整行一次性排版：逐字画会把字距撑得比正常排版宽。
+        ui.text(s)
+            .pos(0., tp)
+            .anchor(0.5, 0.)
+            .size(1.4)
+            .no_baseline()
+            .color(theme::with_alpha(theme::TEXT, 0.6))
+            .draw_with_font(Some(painter));
         ui.scissor(None);
     }
 }
@@ -406,7 +406,7 @@ impl SharedState {
         Ok(Self {
             t: 0.,
             rt: 0.,
-            fader: Fader::new(),
+            fader: Fader::new().with_time(0.),
             painter,
             charts_local: Vec::new(),
 
@@ -440,6 +440,11 @@ pub enum NextPage {
 
 pub trait Page {
     fn label(&self) -> Cow<'static, str>;
+
+    /// 页面顶部那行大标题；`None` 时页面铺满整屏。
+    fn title(&self) -> Option<Cow<'static, str>> {
+        None
+    }
 
     fn can_play_bgm(&self) -> bool {
         true

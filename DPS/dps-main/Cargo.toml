@@ -1,6 +1,6 @@
 [package]
 name = "dps-main"
-version = "0.4.0"
+version.workspace = true
 edition = "2021"
 authors.workspace = true
 license.workspace = true
@@ -8,3 +8,8 @@ repository.workspace = true
 
 [dependencies]
 dps-ui = { path = "../dps-ui" }
+
+# 可执行文件名用产品名，和窗口标题一致。
+[[bin]]
+name = "DPSimulator"
+path = "src/main.rs"

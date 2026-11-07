@@ -10,12 +10,13 @@ use anyhow::Result;
 use macroquad::prelude::*;
 use dps::{
     core::Tweenable,
-    ext::{semi_black, semi_white, RectExt, SafeTexture, BLACK_TEXTURE},
-    scene::{show_message, NextScene},
+    ext::{semi_black, RectExt, SafeTexture, BLACK_TEXTURE},
+    scene::{request_file, show_message, NextScene},
     task::Task,
-    ui::{button_hit_large, DRectButton, Scroll, Ui},
+    ui::{button_hit_large, theme, DRectButton, Scroll, Ui},
 };
 use std::{
+    borrow::Cow,
     ops::Range,
     path::Path,
     sync::{
@@ -102,6 +103,11 @@ pub struct ChartsView {
     transit: Option<TransitState>,
     charts: Option<Vec<ChartDisplayItem>>,
 
+    /// 空列表时那块虚线框的点击区。
+    empty_btn: DRectButton,
+    /// 空列表时框里的说明；`None` 就还是显示「空空如也」。
+    empty_hint: Option<Cow<'static, str>>,
+
     pub row_num: u32,
     pub row_height: f32,
 
@@ -122,11 +128,19 @@ impl ChartsView {
             transit: None,
             charts: None,
 
+            empty_btn: DRectButton::new(),
+            empty_hint: None,
+
             row_num: 4,
             row_height: 0.3,
 
             can_refresh: true,
         }
+    }
+
+    /// 空列表时画成虚线框（中间的加号可以点）。
+    pub fn set_empty_hint(&mut self, hint: Option<Cow<'static, str>>) {
+        self.empty_hint = hint;
     }
 
     fn charts_display_range(&self, content_size: (f32, f32)) -> Range<u32> {
@@ -166,6 +180,10 @@ impl ChartsView {
     }
 
     pub fn touch(&mut self, touch: &Touch, t: f32, rt: f32) -> Result<bool> {
+        if self.empty_hint.is_some() && self.empty_btn.touch(touch, t) {
+            request_file("_import");
+            return Ok(true);
+        }
         if self.scroll.touch(touch, t) {
             return Ok(true);
         }
@@ -277,17 +295,39 @@ impl ChartsView {
         let range = self.charts_display_range(content_size);
         let Some(charts) = &mut self.charts else {
             let ct = r.center();
-            ui.loading(ct.x, ct.y, t, semi_white(alpha), ());
+            ui.loading(ct.x, ct.y, t, theme::with_alpha(theme::TEXT_SECONDARY, alpha), ());
             return;
         };
         if charts.is_empty() {
             let ct = r.center();
-            ui.text(ttl!("list-empty"))
-                .pos(ct.x, ct.y)
-                .anchor(0.5, 0.5)
-                .no_baseline()
-                .color(semi_white(alpha))
-                .draw();
+            if let Some(hint) = &self.empty_hint {
+                // 本地谱面为空时给一块和资源包页同款的方框：中间的加号点下去就是导入。
+                let w = (r.w * 0.5).min(0.9);
+                let h = (r.h * 0.6).min(0.42);
+                let br = Rect::new(ct.x - w / 2., ct.y - h / 2., w, h);
+                let (br, _) = self.empty_btn.render_shadow(ui, br, t, alpha, |_| theme::with_alpha(theme::SURFACE_1, alpha));
+                ui.border(br, theme::RADIUS_MD, alpha);
+                let arm = 0.05;
+                let thick = theme::HAIRLINE * 2.;
+                let cy = br.center().y - h * 0.14;
+                let color = theme::with_alpha(theme::TEXT_TERTIARY, alpha);
+                ui.fill_rect(Rect::new(ct.x - arm, cy - thick / 2., arm * 2., thick), color);
+                ui.fill_rect(Rect::new(ct.x - thick / 2., cy - arm, thick, arm * 2.), color);
+                ui.text(hint.as_ref())
+                    .pos(ct.x, br.bottom() - h * 0.2)
+                    .anchor(0.5, 0.5)
+                    .no_baseline()
+                    .size(0.62)
+                    .color(theme::with_alpha(theme::TEXT_TERTIARY, alpha))
+                    .draw();
+            } else {
+                ui.text(ttl!("list-empty"))
+                    .pos(ct.x, ct.y)
+                    .anchor(0.5, 0.5)
+                    .no_baseline()
+                    .color(theme::with_alpha(theme::TEXT_SECONDARY, alpha))
+                    .draw();
+            }
             return;
         }
         ui.scope(|ui| {

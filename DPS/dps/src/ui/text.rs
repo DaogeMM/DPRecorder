@@ -15,6 +15,11 @@ use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use tracing::debug;
 
+/// 全局字号缩放：`size()` 给的是相对值，最终像素数乘上这个系数。
+///
+/// 界面文字整体偏大，统一收一点比逐个页面调 `size()` 一致。
+const FONT_SCALE: f32 = 0.8;
+
 #[must_use = "DrawText does nothing until you 'draw' it"]
 pub struct DrawText<'a, 's, 'ui> {
     pub ui: &'ui mut Ui<'a>,
@@ -98,7 +103,7 @@ impl<'a, 's, 'ui> DrawText<'a, 's, 'ui> {
     }
 
     fn get_scale(&self, w: i32) -> f32 {
-        0.04 * self.size * w as f32
+        FONT_SCALE * 0.04 * self.size * w as f32
     }
 
     fn measure_inner<'c>(&mut self, text: &'c str, painter: &mut Option<&mut TextPainter>) -> (Section<'c>, Rect) {

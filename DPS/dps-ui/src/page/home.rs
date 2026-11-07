@@ -17,11 +17,11 @@ use anyhow::Result;
 use image::DynamicImage;
 use macroquad::prelude::*;
 use dps::{
-    ext::{semi_black, semi_white, RectExt, SafeTexture, ScaleType},
+    ext::{RectExt, SafeTexture, ScaleType},
     info::ChartInfo,
     scene::{show_error, NextScene},
     task::Task,
-    ui::{button_hit_large, rounded_rect, DRectButton, Ui},
+    ui::{button_hit_large, theme, DRectButton, Ui},
 };
 use serde::Deserialize;
 use tracing::warn;
@@ -30,7 +30,6 @@ const BOARD_SWITCH_TIME: f32 = 4.;
 const BOARD_TRANSIT_TIME: f32 = 1.2;
 
 pub struct HomePage {
-    character: SafeTexture,
     icons: Arc<Icons>,
 
     btn_play: DRectButton,
@@ -61,8 +60,9 @@ pub struct HomePage {
 
 impl HomePage {
     pub async fn new() -> Result<Self> {
-        let character = SafeTexture::from(load_texture("char.png").await?).with_mipmap();
-        let update_task = if get_data().config.offline_mode {
+        let update_task = if !crate::ONLINE {
+            None
+        } else if get_data().config.offline_mode {
             None
         } else if let Some(u) = &get_data().me {
             UserManager::request(u.id);
@@ -77,14 +77,13 @@ impl HomePage {
             None
         };
         Ok(Self {
-            character,
             icons: Arc::new(Icons::new().await?),
 
-            btn_play: DRectButton::new().with_radius(0.00).with_delta(-0.006).with_elevation(0.000).no_sound(),
+            btn_play: DRectButton::new().with_radius(theme::RADIUS_LG).with_delta(-0.006).with_elevation(0.000).no_sound(),
             // btn_event: DRectButton::new().with_elevation(0.002).no_sound(),
-            btn_respack: DRectButton::new().with_radius(0.00).with_delta(-0.003).with_elevation(0.000).no_sound(),
+            btn_respack: DRectButton::new().with_delta(-0.003).with_elevation(0.000).no_sound(),
             // btn_msg: DRectButton::new().with_radius(0.03).with_delta(-0.003).with_elevation(0.002),
-            btn_settings: DRectButton::new().with_radius(0.00).with_delta(-0.003).with_elevation(0.000),
+            btn_settings: DRectButton::new().with_delta(-0.003).with_elevation(0.000),
             btn_user: DRectButton::new().with_delta(-0.000),
 
             next_page: None,
@@ -127,7 +126,11 @@ impl HomePage {
 
 impl Page for HomePage {
     fn label(&self) -> std::borrow::Cow<'static, str> {
-        "DPS".into()
+        "DPSimulator".into()
+    }
+
+    fn title(&self) -> Option<std::borrow::Cow<'static, str>> {
+        Some("DPSimulator".into())
     }
 
     fn enter(&mut self, s: &mut SharedState) -> Result<()> {
@@ -135,7 +138,9 @@ impl Page for HomePage {
             self.sf.enter(s.t);
             self.need_back = false;
         }
-        self.fetch_has_new();
+        if crate::ONLINE {
+            self.fetch_has_new();
+        }
         Ok(())
     }
 
@@ -144,7 +149,7 @@ impl Page for HomePage {
             return Ok(true);
         }
         let t = s.t;
-        if self.login.touch(touch, s.t) {
+        if crate::ONLINE && self.login.touch(touch, s.t) {
             return Ok(true);
         }
         if self.btn_play.touch(touch, t) {
@@ -171,10 +176,10 @@ impl Page for HomePage {
         //     return Ok(true);
         // }
         if self.btn_settings.touch(touch, t) {
-            self.next_page = Some(NextPage::Overlay(Box::new(SettingsPage::new(self.icons.lang.clone()))));
+            self.next_page = Some(NextPage::Overlay(Box::new(SettingsPage::new())));
             return Ok(true);
         }
-        if self.btn_user.touch(touch, t) {
+        if crate::ONLINE && self.btn_user.touch(touch, t) {
             if let Some(me) = &get_data().me {
                 self.need_back = true;
                 self.sf.goto(t, ProfileScene::new(me.id, self.icons.user.clone(), s.icons.clone()));
@@ -188,7 +193,9 @@ impl Page for HomePage {
 
     fn update(&mut self, s: &mut SharedState) -> Result<()> {
         let t = s.t;
-        self.login.update(t)?;
+        if crate::ONLINE {
+            self.login.update(t)?;
+        }
         if let Some(task) = &mut self.update_task {
             if let Some(res) = task.take() {
                 match res {
@@ -272,11 +279,6 @@ impl Page for HomePage {
 
         let offset = s.gyro_offset;
 
-        s.render_fader(ui, |ui, c| {
-            let r = Rect::new(offset.x * 0.4 - 0.9, offset.y * 0.4 - ui.top + 0.1, 1.5, 1.5);
-            ui.fill_rect(r, (*self.character, r, ScaleType::CropCenter, c));
-        });
-
         // play button
         // let top = s.render_fader(ui, |ui, c| {
         //     let r = Rect::new(0.60, -0.30, 0.3, 0.2);
@@ -312,95 +314,78 @@ impl Page for HomePage {
         //     top
         // });
 
-        let text_and_icon = |ui: &mut Ui, r: Rect, btn: &mut DRectButton, text, icon, c: Color| {
+        let text_and_icon = |ui: &mut Ui, r: Rect, btn: &mut DRectButton, text, icon, icon_size: f32, c: Color| {
             let ow = r.w;
-            let (r, _) = btn.render_shadow(ui, r, t, c.a, |_| semi_black(0.4 * c.a));
-            let ir = Rect::new(r.x + 0.02, r.bottom() - 0.08, 0.14, 0.14);
-            ui.text(text).pos(r.x + 0.026, r.y + 0.026).size(0.6 * r.w / ow).color(c).draw();
-            ui.fill_rect(
-                {
-                    let mut ir = ir;
-                    ir.h = ir.h.min(r.bottom() - ir.y);
-                    ir
-                },
-                (icon, ir, ScaleType::Fit, semi_white(0.4 * c.a)),
-            );
+            // 主菜单按钮：DPR 那种暗面板 + 1 px 边框，文字用正文色，图标用次级色。
+            let radius = btn.config.radius;
+            let (r, _) = btn.render_shadow(ui, r, t, c.a, |_| theme::with_alpha(theme::SURFACE_1, c.a));
+            ui.border(r, radius, c.a);
+            ui.text(text)
+                .pos(r.x + 0.026, r.y + 0.026)
+                .size(0.6 * r.w / ow)
+                .color(theme::with_alpha(theme::TEXT, c.a))
+                .draw();
+            let ir = Rect::new(r.x + 0.026, r.bottom() - 0.026 - icon_size, icon_size, icon_size);
+            ui.fill_rect(ir, (icon, ir, ScaleType::Fit, theme::with_alpha(theme::TEXT_SECONDARY, c.a)));
         };
 
-        let r = s.render_fader(ui, |ui, c| {
-            let r = Rect::new(offset.x * 0.6 + 0.70, offset.y * 0.6 - 0.30, 1.3, 0.2);
-            text_and_icon(ui, r, &mut self.btn_play, tl!("play"), *self.icons.play, c);
-            r
-        });
-
-        // let r = s.render_fader(ui, |ui, c| {
-        //     let r = Rect::new(0., top, 0.38, 0.23);
-        //     text_and_icon(ui, r, &mut self.btn_event, tl!("event"), *self.icons.medal, c);
-        //     r
-        // });
-
-        let r = s.render_fader(ui, |ui, c| {
-            let r = Rect::new(r.left(), r.bottom() + 0.02, 1.3, 0.2);
-            text_and_icon(ui, r, &mut self.btn_respack, tl!("respack"), *self.icons.respack, c);
-            r
-        });
-
+        // 主菜单：左侧「游玩」，右上「资源包」、右下「设置」，整组居中、约占屏幕 60%。
         s.render_fader(ui, |ui, c| {
-            // let r = Rect::new(lf, top, 0.11, 0.11);
-            // let (r, _) = self.btn_msg.render_shadow(ui, r, t, c.a, |_| semi_black(0.4 * c.a));
-            // let r = r.feather(-0.01);
-            // ui.fill_rect(r, (*self.icons.msg, r, ScaleType::Fit, c));
-            // if self.has_new {
-            //     let pad = 0.007;
-            //     ui.fill_circle(r.right() - pad, r.y + pad, 0.01, Color { a: c.a, ..RED });
-            // }
-
-            let r = Rect::new(r.left(), r.bottom() + 0.02, 1.3, 0.2);
-            // let (r, _) = self.btn_settings.render_shadow(ui, r, t, c.a, |_| semi_black(0.4 * c.a));
-            // let r = r.feather(0.004);
-            // ui.fill_rect(r, (*self.icons.settings, r, ScaleType::Fit, c));
-            text_and_icon(ui, r, &mut self.btn_settings, tl!("settings"), *self.icons.settings, c);
+            let bw = 1.2;
+            let bh = 0.62;
+            let gap = 0.02;
+            let lw = 0.62;
+            let bx = -bw / 2. + offset.x * 0.02;
+            let by = -bh / 2. + 0.03 + offset.y * 0.02;
+            text_and_icon(ui, Rect::new(bx, by, lw, bh), &mut self.btn_play, tl!("play"), *self.icons.play, 0.2, c);
+            let rw = bw - lw - gap;
+            let rh = (bh - gap) / 2.;
+            text_and_icon(ui, Rect::new(bx + lw + gap, by, rw, rh), &mut self.btn_respack, tl!("respack"), *self.icons.respack, 0.14, c);
+            text_and_icon(ui, Rect::new(bx + lw + gap, by + rh + gap, rw, rh), &mut self.btn_settings, tl!("settings"), *self.icons.settings, 0.14, c);
         });
 
         s.fader.roll_back();
-        s.render_fader(ui, |ui, c| {
-            let rad = 0.05;
-            let ct = (0.9, -ui.top + 0.1);
-            self.btn_user.config.radius = rad;
-            let r = Rect::new(ct.0, ct.1, 0., 0.).feather(rad);
-            let (r, _) = self.btn_user.build(ui, t, r);
-            ui.avatar(
-                ct.0,
-                ct.1,
-                r.w / 2.,
-                c,
-                t,
-                get_data()
-                    .me
-                    .as_ref()
-                    .map(|user| UserManager::opt_avatar(user.id, &self.icons.user))
-                    .unwrap_or(Err(self.icons.user.clone())),
-            );
-            let rt = ct.0 - rad - 0.02;
-            if let Some(me) = &get_data().me {
-                ui.text(&me.name).pos(rt, r.center().y + 0.002).anchor(1., 1.).size(0.6).color(c).draw();
-                ui.text(format!("{:.2}", me.rks))
-                    .pos(rt, r.center().y + 0.008)
-                    .anchor(1., 0.)
-                    .size(0.4)
-                    .color(Color { a: c.a * 0.6, ..c })
-                    .draw();
-            } else {
-                ui.text(tl!("not-logged-in"))
-                    .pos(rt, r.center().y)
-                    .anchor(1., 0.5)
-                    .no_baseline()
-                    .size(0.6)
-                    .color(c)
-                    .draw();
-            }
-        });
-        self.login.render(ui, t);
+        // 联网入口：登录状态、头像卡与登录浮层暂时都不显示。
+        if crate::ONLINE {
+            s.render_fader(ui, |ui, c| {
+                let rad = 0.05;
+                let ct = (0.9, -ui.top + 0.1);
+                self.btn_user.config.radius = rad;
+                let r = Rect::new(ct.0, ct.1, 0., 0.).feather(rad);
+                let (r, _) = self.btn_user.build(ui, t, r);
+                ui.avatar(
+                    ct.0,
+                    ct.1,
+                    r.w / 2.,
+                    c,
+                    t,
+                    get_data()
+                        .me
+                        .as_ref()
+                        .map(|user| UserManager::opt_avatar(user.id, &self.icons.user))
+                        .unwrap_or(Err(self.icons.user.clone())),
+                );
+                let rt = ct.0 - rad - 0.02;
+                if let Some(me) = &get_data().me {
+                    ui.text(&me.name).pos(rt, r.center().y + 0.002).anchor(1., 1.).size(0.6).color(c).draw();
+                    ui.text(format!("{:.2}", me.rks))
+                        .pos(rt, r.center().y + 0.008)
+                        .anchor(1., 0.)
+                        .size(0.4)
+                        .color(Color { a: c.a * 0.6, ..c })
+                        .draw();
+                } else {
+                    ui.text(tl!("not-logged-in"))
+                        .pos(rt, r.center().y)
+                        .anchor(1., 0.5)
+                        .no_baseline()
+                        .size(0.6)
+                        .color(c)
+                        .draw();
+                }
+            });
+            self.login.render(ui, t);
+        }
         self.sf.render(ui, t);
         Ok(())
     }

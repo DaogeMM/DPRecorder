@@ -1,6 +1,6 @@
 {
   "productName": "DPRecorder",
-  "mainBinaryName": "dpr",
+  "mainBinaryName": "DPRecorder",
   "identifier": "com.daogemm.dpr",
   "build": {
     "beforeBuildCommand": "pnpm build",

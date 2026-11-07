@@ -222,8 +222,8 @@ const renderGroups: RenderGroup[] = [
       { id: 'sec-chart-line', label: 'title.judge-line', icon: 'mdi-minus' },
       // 噪域排在按键下面：顺序 = 页面顺序，必须与 ConfigView 模板一致
       { id: 'sec-block-area', label: 'title.block-area', icon: 'mdi-blur' },
-      // 「谱面修改」这一页和 DPE 的谱面修改页是同一段控件（`../components/ConfigView.vue` 与
-      // `../../DPE/ui/ChartModView.vue`），两边都能改，落盘的是同一份工作配置
+      // 「谱面修改」这一页和 Editor 的谱面修改页是同一段控件（`../components/ConfigView.vue` 与
+      // `./ChartModView.vue`），两边都能改，落盘的是同一份工作配置
       { id: 'sec-chart-mod', label: 'title.chart-mod', icon: 'mdi-pencil-ruler' },
       // 「判定」与「谱面进水」都在本组末尾的「更多」分区里，不单列
       { id: 'sec-more-chart', label: 'more', icon: 'mdi-dots-horizontal' },
@@ -463,7 +463,7 @@ onUnmounted(() => {
   <v-app id="dpr">
     <v-sonner position="bottom-right" />
 
-    <!-- 标题栏：整条可拖拽。左边是 DPR / DPE 切换器（挨着 DPRecorder 名字），右边是窗口按钮 -->
+    <!-- 标题栏：整条可拖拽。左边是 Render / Editor 切换器（挨着 DPRecorder 名字），右边是窗口按钮 -->
     <header class="phi-titlebar" data-tauri-drag-region>
       <div class="phi-titlebar__brand" data-tauri-drag-region>
         <img src="./assets/favicon.png" alt="icon" class="phi-titlebar__logo" />
@@ -758,10 +758,13 @@ html {
   background: var(--phi-danger);
 }
 
-/* ---------- 部分切换器：DPR / DPE ----------
-   挨着左边的 `DPRecorder` 名字；靠 1px 容器底色做出分隔线。直角、无圆角，与外壳的取法一致。 */
+/* ---------- 部分切换器：Render / Editor ----------
+   挨着左边的 `DPRecorder` 名字；靠 1px 容器底色做出分隔线。直角、无圆角，与外壳的取法一致。
+   两格等宽：用 grid 的 `1fr` 均分，不让标签字数与字宽把格子拉得不一样宽。 */
 .phi-parts {
-  display: flex;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   flex: none;
   gap: 1px;
   margin-left: var(--phi-space-3);

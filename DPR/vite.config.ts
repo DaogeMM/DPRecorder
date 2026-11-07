@@ -27,9 +27,6 @@ export default defineConfig(({ mode }) => {
         // 仓库根 `assets/`：界面字体 `font.ttf` 在那里（与引擎共用同一份）。CSS 的 `url()` 走这个别名，
         // Vite 会把它解析成真实路径并打进产物，dev 与打包后都能取到。
         '@repo-assets': fileURLToPath(new URL('../assets', import.meta.url)),
-        // DPE 的界面：这部分代码住在仓库的 `DPE/ui/`（跟 DPE 的预览进程同一个文件夹），
-        // 由外壳这边的路由挂进来。DPR/src 里只留录制与渲染那条线的东西。
-        '@dpe': fileURLToPath(new URL('../DPE/ui', import.meta.url)),
       },
     },
     server: {

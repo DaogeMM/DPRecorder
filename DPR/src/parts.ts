@@ -6,10 +6,9 @@ import { useStorage } from '@vueuse/core';
  * DPRecorder 只有一个窗口：标题栏里 `DPRecorder` 名字右边的切换器决定窗口里放哪一部分，
  * 左栏一级导航、切换时落到的首页路由都按当前部分走（见 `App.vue` 的 `currentPart` / `switchPart`）。
  *
- * 三个部分的全称（界面上只写缩写，全称留在这里）：
- * - DPR = DPRender：录制器（渲染 / 任务）。
- * - DPE = DPEdit：谱面编辑器（批量页 / 谱面修改 / 噪域播放器），改谱面时另开 `dpe.exe` 预览
- *   进程看效果（见 `DPE/README.md`）。
+ * 窗口的两个部分（切换器上写 `Render` / `Editor`）：
+ * - Render：录制与渲染这条线（内部仍叫 dpr）。
+ * - Editor：谱面编辑与工具这条线（内部仍叫 dpe），改谱面时主程序另起一份预览进程看效果。
  * - DPS = DPSimulator：移动端的第三部分，但它的界面要另做一套，不进这个窗口的切换器。
  */
 export type PartId = 'dpr' | 'dpe';
@@ -39,7 +38,7 @@ export interface Part {
 export const PARTS: Part[] = [
   {
     id: 'dpr',
-    label: 'DPR',
+    label: 'Render',
     home: 'render',
     nav: [
       { name: 'render', icon: 'mdi-auto-fix' },
@@ -51,7 +50,7 @@ export const PARTS: Part[] = [
   },
   {
     id: 'dpe',
-    label: 'DPE',
+    label: 'Editor',
     home: 'chart-mod',
     nav: [
       // 谱面列表不再单独一项：它折进了「谱面修改」页顶部

@@ -1,21 +1,16 @@
 # NOTICE —— AI 生成警告、出处、许可与致谢
 
-本文件说明 DPRecorder（本仓库）的**开发方式（AI 生成）**、**代码谱系**、**第三方素材归属**与**致谢**。
-每条都给出上游仓库地址；**GitHub 上的上游仓库才是权威来源**，本文件只是索引。
+本文件说明 DPRecorder（本仓库）的**开发方式（AI 生成）**、**代码谱系**、**第三方素材归属**与**致谢**。**GitHub 上的上游仓库才是权威来源**，本文件只是索引。
 
 ## 1. 开发方式 —— AI 生成警告（先读这一节）
 
 **本项目大量使用 AI 生成代码。** 源码、文档、重构与整合有相当一部分由 **DeepSeek 大模型**辅助制作，具体模型为 **DeepSeek V4.1 Flash**（DeepSeek 官方 API，模型 id `deepseek-flash`）：人类作者负责提出需求、做决定与验收，模型负责输出实现与文字。
-
-因此请注意：
 
 - 模型输出**可能包含错误、过时或不安全的内容**，任何结论请以**仓库里的代码**与**你在本机的实测结果**为准；
 - 构建、提交与再分发之前请自行审查和测试，不要因为「看起来能跑」就假定它正确；
 - 若你在此基础上继续二次开发，建议一并保留这份声明。
 
 ## 2. 代码出处
-
-**命名**：两侧子系统在正式使用前就定了名——引擎 **DPS**、桌面渲染器 **DPR**。早期工作名 `DP-Simulator`（引擎侧）与 `DP-Recorder` / `DP-Renderer`（渲染器侧）**从未发布、也从未正式使用过**，只存在于项目早期的改名过程里；整个项目名为 **DPRecorder**。
 
 | 本仓库 | 直接上游 | 许可证 |
 | --- | --- | --- |
@@ -25,35 +20,25 @@
 | ↑ DPS 引擎的源头 | [TeamFlos/phira](https://github.com/TeamFlos/phira) 的 `prpr` 引擎实现 | GPL-3.0 |
 | `DPS/dps/src/core/block_area/`（噪域 / blockArea） | 逐字移植自 [Phira-Pro/Phira-Pro](https://github.com/Phira-Pro/Phira-Pro)（自述「基于 [Phira](https://github.com/TeamFlos/phira) v0.8.2 的改版」） | GPL-3.0 |
 
-上游依赖里有几个自定义 fork，都在 `github.com/2278535805/` 下：
-[`prpr-macroquad`](https://github.com/2278535805/prpr-macroquad)、
-[`prpr-miniquad`](https://github.com/2278535805/prpr-miniquad)、
-[`sasa`](https://github.com/2278535805/sasa)、
-[`oboe-rs`](https://github.com/2278535805/oboe-rs)
-—— 它们对应的上游项目（macroquad / miniquad / sasa / oboe-rs）的版权归各自作者。
+命名：引擎 **DPS**、桌面渲染器 **DPR**，整个项目叫 **DPRecorder**；早期工作名 `DP-Simulator` / `DP-Recorder` / `DP-Renderer` 从未发布、也从未正式使用过。
 
-其余 Rust 依赖见 [`Cargo.lock`](Cargo.lock)，前端依赖见 [`DPR/pnpm-lock.yaml`](DPR/pnpm-lock.yaml)，各依其自身许可证。
+上游依赖里还有几个自定义 fork（都在 `github.com/2278535805/` 下）：[`prpr-macroquad`](https://github.com/2278535805/prpr-macroquad)、[`prpr-miniquad`](https://github.com/2278535805/prpr-miniquad)、[`sasa`](https://github.com/2278535805/sasa)、[`oboe-rs`](https://github.com/2278535805/oboe-rs) —— 它们对应的上游项目版权归各自作者。其余 Rust 依赖见 [`Cargo.lock`](Cargo.lock)，前端依赖见 [`DPR/pnpm-lock.yaml`](DPR/pnpm-lock.yaml)，各依其自身许可证。
 
 ## 3. 许可证
 
 - 本仓库整体以 **GNU General Public License v3.0** 发布，全文见 [`LICENSE`](LICENSE)。
-- 其中 `DPR/` 谱系含按 **Apache-2.0** 提供的上游代码（`phira-render`）。Apache-2.0 与 GPL-3.0 **单向兼容**：这部分代码并入本仓库后，整体按 GPL-3.0 分发。
-- 第三方组件与依赖的许可证索引见 [`LICENSES/README.md`](LICENSES/README.md)。
+- 其中 `DPR/` 谱系含按 **Apache-2.0** 提供的上游代码（`phira-render`），原文见 `LICENSES/`。Apache-2.0 与 GPL-3.0 **单向兼容**：这部分代码并入本仓库后，整体按 GPL-3.0 分发。
 - 再分发本程序或其源码时，请一并满足 GPL-3.0 的**源码提供**与**许可证保留**要求。
 
 ## 4. 第三方素材（不在 GPL-3.0 覆盖范围内）
 
 ### 4.1 随本仓库分发的
 
-- `assets/rank/`、`ui-font.ttf` 等来自 Phira 及其社区资源包，版权归各自作者。
-- 字体（Exo / halva / bold / Sarasa UI SC 等）版权归各自字体作者。
-- `assets/respack/` 里的内置默认皮肤（根上那几张 png 与 `info.yml`）版权归其作者。
-
-这些素材**不属于本项目的版权范围**，随程序分发只是为了让程序开箱可用；权利人如要求，会立即移除。
+`assets/rank/` 与 `assets/ui-font.ttf` 等来自 Phira 及其社区资源包，字体（Exo / halva / bold 等）归各自字体作者，`assets/respack/` 里的内置默认皮肤归其作者。这些素材**不属于本项目的版权范围**，随程序分发只是为了让程序开箱可用；权利人如要求，会立即移除。
 
 ### 4.2 不随本仓库、也不随安装包分发的
 
-皮肤包 `appendant.official.zip`（官方皮肤）/ `appendant.old.zip`（旧版皮肤）/ `appendant.retri.zip`（「报应SP」用的手绘皮肤）与材质包 `appendant.lava.zip`（基岩贴图 `netherrock.png` + 岩浆帧 `lava.gif`）/ `appendant.water.zip`（水面 `water.png` + 受伤音效 `hit/hit-1.mp3`、`hit/hit-2.mp3`）**都不在本仓库里**：作者把它们放在网盘 <https://daogemm.lanzouc.com/b0018qnkxi>（密码 `dgmm`），由用户自己下载后放进程序目录的 `appendant/`，程序启动时按需读取。版权归各自作者（Minecraft 材质 © Mojang AB），同样不属于本项目的版权范围，本项目的任何产物都不包含它们。
+皮肤包（官方 / 旧版 / 「报应SP」）与材质包（岩浆 / 水面）**都不在本仓库里**：作者把它们放在网盘 <https://daogemm.lanzouc.com/b0018qnkxi>（密码 `dgmm`），由用户自己下载后放进程序目录的 `appendant/`，程序启动时按需读取。版权归各自作者（Minecraft 材质 © Mojang AB），同样不属于本项目的版权范围，本项目的任何产物都不包含它们。
 
 ## 5. 致谢
 

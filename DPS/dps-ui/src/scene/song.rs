@@ -304,7 +304,8 @@ impl SongScene {
             .iter()
             .find(|it| Some(&it.local_path) == local_path.as_ref())
             .and_then(|it| it.record.clone());
-        let fetch_best_task = if get_data().me.is_some() {
+        // 联网功能暂时关掉：不去拉线上最佳成绩。
+        let fetch_best_task = if crate::ONLINE && get_data().me.is_some() {
             chart.info.id.map(|id| Task::new(Client::best_record(id)))
         } else {
             None
@@ -342,7 +343,7 @@ impl SongScene {
                 }
             })),
 
-            load_task: if offline_mode {
+            load_task: if offline_mode || !crate::ONLINE {
                 None
             } else {
                 id.map(|it| Task::new(async move { Ptr::new(it).fetch_opt().await }))
@@ -582,7 +583,8 @@ impl SongScene {
         if self.local_path.is_some() {
             self.menu_options.push("delete");
         }
-        if self.info.id.is_some() {
+        // 联网功能暂时关掉：评分、审核、稳定、上传这些条目都不出现。
+        if crate::ONLINE && self.info.id.is_some() {
             self.menu_options.push("rate");
         }
         if let Some(local_path) = &self.local_path {
@@ -602,7 +604,7 @@ impl SongScene {
             .me
             .as_ref()
             .map_or(false, |it| Some(it.id) == self.info.uploader.as_ref().map(|it| it.id));
-        if self.info.id.is_some() && perms.contains(Permissions::REVIEW) {
+        if self.info.id.is_some() && perms.contains(Permissions::REVIEW) && crate::ONLINE {
             if self.entity.as_ref().map_or(false, |it| !it.reviewed && !it.stable_request) {
                 self.menu_options.push("review-approve");
                 self.menu_options.push("review-deny");
@@ -789,7 +791,8 @@ impl SongScene {
                 id: it.id,
                 rks: it.rks,
             });
-            let upload_fn: Option<UploadFn> = Some(Arc::new(move |data| {
+        let upload_fn: Option<UploadFn> = if crate::ONLINE && id.is_some() {
+            Some(Arc::new(move |data| {
                 Task::new(async move {
                     #[derive(Serialize)]
                     #[serde(rename_all = "camelCase")]
@@ -826,7 +829,10 @@ impl SongScene {
                         new_rks: resp.new_rks,
                     })
                 })
-            }));
+            }))
+        } else {
+            None
+        };
             if is_unlock {
                 let chart = get_data_mut().charts.iter_mut().find(|it| it.local_path == local_path).unwrap();
                 if !chart.played_unlock {

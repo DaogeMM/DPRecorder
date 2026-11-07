@@ -323,6 +323,22 @@ function commitAspect() {
   const h = parseFloat(aspectHeight.value);
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
   ui.aspectRatio = w / h;
+  // 改比例就是改成片画幅：分辨率一起换成同比例（见 useRenderConfig 的 applyAspectRatio）。
+  // 不调 markProgrammatic()：这一下是用户改的，预设该亮星号。
+  applyAspectRatio(w / h);
+}
+/**
+ * 反过来：手改分辨率就是手改成片画幅，比值跟着这个分辨率走。
+ * 两边对不上时「画面按比值居中摆、四周留黑边」，看上去就是画幅没生效。
+ */
+function commitResolution(value: string) {
+  const parts = String(value ?? '').split(/[xX]/g);
+  const w = parseInt(parts[0] ?? '');
+  const h = parseInt(parts[1] ?? '');
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
+  const ratio = w / h;
+  // 只写比值、不动分辨率这一格：这里本来就是用户刚敲进去的那串。
+  if (Math.abs(ratio - Number(ui.aspectRatio)) > 1e-3) ui.aspectRatio = ratio;
 }
 watch(() => (aspectRatio ? Number(aspectRatio.value) : 16 / 9), (ratio) => formatAspect(ratio), { immediate: true });
 
@@ -777,7 +793,7 @@ defineExpose({
           <!-- ===== 文本框在后 ===== -->
           <!-- 「偏移」与「总分」不在本分区：「渲染参数」的空状态（未导入谱面）里也能改。 -->
           <CfgField :label="t('resolution')" :tip="t('resolution-tip')">
-            <v-combobox density="compact" hide-details="auto" :items="resolutionList" :rules="[resolutionRule]" v-model="resolution"></v-combobox>
+            <v-combobox density="compact" hide-details="auto" :items="resolutionList" :rules="[resolutionRule]" v-model="resolution" @update:model-value="commitResolution"></v-combobox>
           </CfgField>
           <CfgField :label="t('fps')" :tip="t('fps-tip')">
             <v-combobox density="compact" hide-details="auto" :items="fpsList" type="number" :rules="[RULES.int, RULES.positive]" v-model="fps"></v-combobox>
@@ -793,7 +809,7 @@ defineExpose({
             <v-combobox v-if="dynamicBitrateControl" density="compact" hide-details="auto" :items="bitrateCrfList" type="number" :rules="[isCrf]" v-model="bitrate"></v-combobox>
             <v-combobox v-else density="compact" hide-details="auto" :items="bitrateList" :rules="[isBitrate]" v-model="bitrate"></v-combobox>
           </CfgField>
-          <CfgField :label="`${t('width')} : ${t('height')}`">
+          <CfgField :label="`${t('width')} : ${t('height')}`" :tip="t('width-height-tip')">
             <!-- 配置里只存一个比值（`aspectRatio`），这两个框是它的显示形式（见本文件上面的
                  `aspectWidth / aspectHeight` 与 `commitAspect()`）；两个框都改完才写回比值 -->
             <v-text-field type="number" density="compact" hide-details="auto" style="max-width: 96px" :rules="[RULES.positive]" v-model="aspectWidth" @update:modelValue="commitAspect()"></v-text-field>

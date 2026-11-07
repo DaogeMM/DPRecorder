@@ -7,9 +7,9 @@ use anyhow::{Context, Result};
 use macroquad::prelude::*;
 use dps::{
     core::ResourcePack,
-    ext::{create_audio_manger, get_latency, push_frame_time, screen_aspect, semi_black, RectExt},
+    ext::{create_audio_manger, get_latency, push_frame_time, screen_aspect},
     time::TimeManager,
-    ui::{Slider, Ui}
+    ui::{theme, Slider, Ui}
 };
 use sasa::{AudioClip, AudioManager, Music, MusicParams, PlaySfxParams, Sfx};
 
@@ -163,7 +163,7 @@ impl Page for OffsetPage {
             let mut r = ui.content_rect();
             r.w += r.x - lf;
             r.x = lf;
-            ui.fill_path(&r.rounded(0.00), semi_black(c.a * 0.4));
+            ui.panel(r, theme::RADIUS_MD, c.a);
             let ct = r.center();
             let hw = 0.3 * aspect * 1.7777777;
             let hh = 0.0075;

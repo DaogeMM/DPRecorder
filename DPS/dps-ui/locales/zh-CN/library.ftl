@@ -10,6 +10,7 @@ not-opened = 功能尚未开启
 failed-to-load-online = 加载在线谱面失败
 
 import = 导入
+empty-hint = 点击这里打开谱面文件
 
 search = 搜索
 

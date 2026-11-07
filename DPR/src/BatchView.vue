@@ -32,6 +32,7 @@ import { formatLvlInText } from './lvl';
 import { diffTier, diffLvl } from './tasks';
 import { DEFAULT_RENDER_CONFIG, type ChartInfo, type RenderConfig, type RenderChart, type Preset, type FileDropEvent, type Task } from './model';
 import { sameRenderConfig } from './config/useRenderConfig';
+import { alignResolution } from './config/resolution';
 import { chartModMarker, chartSideOf } from './config/chartSide';
 import { readChartConfig, withChartConfig } from './chartConfig';
 import { jumpToFirstError, type FormError } from './formError';
@@ -130,9 +131,15 @@ async function getPresets() {
 const presets = ref([DEFAULT_PRESET]);
 const preset = useStorage<Preset>(storageKey('BatchView.Preset'), DEFAULT_PRESET);
 async function updatePresets() {
-  presets.value = await getPresets();
+  // 预设里存的分辨率与比值可能是老版本留下的不搭组合：读进来就对齐，省得渲染出 16 : 9 加黑边
+  presets.value = (await getPresets()).map((x) => ({ ...x, config: alignResolution(x.config) }));
   if (preset.value.key !== 'temp') {
     preset.value = presets.value.find((x) => x.key === preset.value.key) || presets.value[0];
+  } else {
+    // 自己改出来的那份（`temp`）存在 localStorage 里，同样对齐一次；
+    // 值没变就别写，免得白改一次 localStorage。
+    const aligned = alignResolution(preset.value.config);
+    if (!sameRenderConfig(aligned, preset.value.config)) preset.value = { ...preset.value, config: aligned };
   }
 }
 // 预设列表到位了才揭开内容区那层转圈（见 `./pageLoad`）；读失败也要揭开，别让页面一直盖着
@@ -245,7 +252,11 @@ async function buildParams(chart: RenderChart) {
   } catch (e) {
     toast(t('chart-config-failed', { err: String(e) }), 'warning');
   }
-  const config = withChartConfig(preset.value.config, forced);
+  let config = withChartConfig(preset.value.config, forced);
+  // 谱面自己写了 `resolution`（噪域谱面按原视频尺寸出片就是这种）就以它为准；
+  // 否则按比值把分辨率对齐 —— 预设里那份可能是老版本存的「4 : 3 配 1920×1080」，
+  // 直接拿去渲染会得到 16 : 9 的画幅加左右黑边（见 `alignResolution`）。
+  if (!forced?.resolution) config = alignResolution(config);
   // 预览片段窗口不超过 15 秒：预览开始 / 结束时间现在是**配置项**，所以这条校验跟着配置走
   // （渲染页那边由 ConfigView.buildConfig() 保证；批量页直接读预设里那份 config）。
   if (config.previewEnd && config.previewEnd - config.previewStart > 15) {
@@ -575,15 +586,27 @@ onUnmounted(() => {
 
       <template v-else>
         <div v-for="item in filteredCharts" :key="item.id" class="batch-item">
+          <!-- 勾选框吊在卡片左边框外面（同任务页），不占行高。它必须留在卡片**外面**：
+               `.v-card` 是 `overflow: hidden`，塞进卡片里会被整块裁掉，连 hover 都露不出来。 -->
+          <span
+            v-if="!listOnly"
+            class="batch-item__check"
+            :class="{ 'batch-item__check--on': item.isSelect }"
+            @mousedown.prevent
+            @click.stop="item.isSelect = !item.isSelect"
+          >
+            <v-checkbox-btn :model-value="item.isSelect" density="compact" :ripple="false"></v-checkbox-btn>
+          </span>
           <v-card class="batch-card" :class="{ 'batch-card--open': expandedIds.includes(item.id) }">
             <!-- 整行点击 = 展开 / 收起；曲绘与曲名各自 stop 掉，它们另有去处。
                  `listOnly`（DPE 的谱面列表）里只有横卡片与勾选框：不展开、不跳渲染页、不预览。 -->
             <div class="batch-row" :class="{ 'batch-row--static': listOnly }" @click="onRowClick(item)">
-              <!-- 勾选框默认吊在卡片左边框外面（同任务页），不占行高；`listOnly` 里改成排在卡片内最前
-                   （见 `.batch-item__check--inline`），否则那一栏会跟卡片隔着一截空白。 -->
+              <!-- `listOnly` 里没有卡片外那一栏，勾选框改成排在卡片内最前
+                   （见 `.batch-item__check--inline`），否则会跟卡片隔着一截空白。 -->
               <span
-                class="batch-item__check"
-                :class="{ 'batch-item__check--on': item.isSelect, 'batch-item__check--inline': listOnly }"
+                v-if="listOnly"
+                class="batch-item__check batch-item__check--inline"
+                :class="{ 'batch-item__check--on': item.isSelect }"
                 @mousedown.prevent
                 @click.stop="item.isSelect = !item.isSelect"
               >

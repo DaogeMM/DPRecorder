@@ -13,7 +13,7 @@ use dps::{
 };
 
 pub const USAGE: &str = "\
-用法：dpe --input <谱面目录|.pez> [选项]
+用法：dpr dpe-preview --input <谱面目录|.pez> [选项]
 
   --input <路径>     谱面目录或 .pez 文件（必填）
   --speed <倍速>     播放速度，默认 1.0

@@ -1,19 +1,28 @@
-//! Malody 键位谱（`.mc` / `.mcz` / 谱面文件夹）→ Phigros 谱面（PGR v3，装进 `.pez`）。
+//! Malody 谱面（`.mc` / `.mcz` / 谱面文件夹）→ Phigros 谱面（装进 `.pez`）。
 //!
-//! Malody 的键位谱是「固定轨道 + 按键落在轨道上」的模型，Phigros 没有轨道：转换时把按键吸附到
-//! 轨道横坐标、判定线钉在一个固定高度（换算与 DPR「多K模式」同一套，见
-//! `DPS/dps/src/core/fixed_lane.rs`），再把整条时间轴按真实秒数重新表达成 PGR 的 1/32 拍。
+//! 转两种模式：**Key**（4K / 5K / 7K…，「固定轨道 + 按键落在轨道上」）写 PGR v3；**Slide**
+//! （触摸屏上一排可长可短的横条）写 PEC。判定线都钉在一个固定高度（换算与 DPR 的「定轨谱面」同一套，
+//! 见 `DPS/dps/src/core/fixed_lane.rs`）。
 //!
-//! 为什么写 PGR 而不是 PEC：PEC 里按键的 `x` 按 `0~1024 → 0~1` 折算、判定线的 `cp x` 却按
+//! Slide 为什么写 PEC：Slide 的横条自带宽度（`x` 是中心、`w` 是宽度），PGR 的按键结构里没有「单个
+//! 按键多宽」这个字段，而 PEC 的 `& <size>` 正好只缩放按键的横向（解析器写的是 `object.scale.0`，
+//! 见 `DPS/dps/src/parse/pec.rs`）。
+//!
+//! Slide 的长条还可能分成多段（`seg` 里好多个顶点，横条会横着滑过去）：PEC 的长按是竖直不动的，
+//! 表达不了斜的，所以横着走的那些沿折线撒成一串同宽的滑动键（间距取按键宽度的九成，串起来就是
+//! 一条连贯的斜长条），不动的直条仍然写 `n2` 长按。
+//!
+//! Key 为什么不写 PEC：PEC 里按键的 `x` 按 `0~1024 → 0~1` 折算、判定线的 `cp x` 却按
 //! `0~2048 → -1~1` 折算（见 `DPS/dps/src/parse/pec.rs`），两者口径不一致，照 PEC 的语义写出来的
-//! 按键会整体右移半屏；PGR v3 的换算在解析器里是自洽的，照着它写就能正确落点。
+//! 按键会整体右移半屏；PGR v3 的换算在解析器里是自洽的。Slide 写 PEC 时按引擎的实际口径
+//! （按键 `x` 除以 1024）给值，落点仍然是准的。
 //!
 //! 时间轴：Malody 的 `beat` 是 `[拍, 分子, 分母]`，即 `拍 + 分子 / 分母` 个四分音符，按 `time[]`
 //! 里的 BPM 折成秒。PGR v3 每条判定线自己带 BPM、文件里的时间单位是「1/32 拍」，所以这里先求出
 //! 秒数、再按判定线的 BPM 折算回去 —— Malody 谱面中途换过 BPM 也照样对得上。
 //!
-//! 这个模块只管解析与生成，路径、压缩包读写都由调用方（DPR 的命令层）负责，所以它既能编进
-//! `dpe.exe`，也能被 `DPR/src-tauri` 直接按路径引用。
+//! 这个模块只管解析与生成，路径、压缩包读写都由调用方（DPR 的命令层）负责，所以它既能被
+//! 预览入口编进去，也能被 `DPR/src-tauri` 直接按路径引用。
 
 use std::path::{Path, PathBuf};
 
@@ -21,23 +30,26 @@ use anyhow::{bail, Context, Result};
 use dps::fs::{self, FileSystem};
 use serde::{Deserialize, Serialize};
 
-/// 判定线高度、轨道间距、流速 —— 转换页上的三个参数。
+/// 判定线高度、轨道间距、流速、按键宽度 —— 转换页上的参数。
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Options {
     /// 判定线钉在屏幕纵向的哪个高度：`0` 是屏幕底边、`1` 是屏幕顶边、`0.5` 是正中。
     pub line_y: f32,
-    /// 相邻轨道的间隔，屏宽的几成：`0.18` 就是相邻两条相距屏幕宽度的 18%。
+    /// 相邻轨道的间隔，屏宽的几成：`0.18` 就是相邻两条相距屏幕宽度的 18%（只有 Key 用得上）。
     pub gap: f32,
-    /// 按键流速：判定线高度积分与长按尾端都按它算，与 DPR「多K模式」的流速同义。
+    /// 按键流速：判定线高度积分与长按尾端都按它算，与 DPR「定轨谱面」的流速同义。
     pub speed: f64,
+    /// 按键宽度的额外倍率（只有 Slide 用得上）：Malody 横条的宽度先按「一个轨道宽 = 1」折算，
+    /// 再乘这个倍率，方便整体调胖调瘦。
+    pub width: f64,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        // 三个参数与 DPR「多K模式」的 `fixed_lane_line_y` / `fixed_lane_gap` / `fixed_lane_speed`
+        // 前三个参数与 DPR「定轨谱面」的 `fixed_lane_line_y` / `fixed_lane_gap` / `fixed_lane_speed`
         // 同义（同一个画面含义），数值取一组常用的定轨排布
-        Self { line_y: 0.12, gap: 0.18, speed: 2.7 }
+        Self { line_y: 0.12, gap: 0.18, speed: 2.7, width: 1.0 }
     }
 }
 
@@ -53,7 +65,11 @@ pub struct Entry {
     pub charter: String,
     /// Malody 的难度名（`meta.version`）
     pub version: String,
-    /// 键数（`mode_ext.column`，缺失时按最大列号 + 1 猜）
+    /// `meta.mode`：0 是 Key，其余见 [`mode_label`]
+    pub mode: i32,
+    /// [`mode`](Self::mode) 的模式名，列表里直接显示
+    pub mode_name: String,
+    /// 轨道数（`mode_ext.column`，缺失时按最大列号 + 1 猜）；只有 Key 模式有这个数字
     pub column: i32,
     /// 可演奏按键数（不含 BGM 提示）
     pub notes: usize,
@@ -85,7 +101,7 @@ pub struct Probe {
 
 /// 转换结果：`.pez` 里该有哪些条目，按写入顺序排好。
 pub struct Output {
-    /// 产物文件名（不含扩展名），`<曲名>.<难度>`，由曲名与难度整理而来。
+    /// 产物文件名（不含扩展名），`<曲名>.<模式>.<难度>`，由曲名、模式与难度整理而来。
     pub name: String,
     /// 转换出来的按键数（页面回显用）
     pub notes: usize,
@@ -204,7 +220,19 @@ impl Source {
             .with_context(|| format!("输入里没有第 {} 张谱面", chart + 1))?
             .clone();
         let raw = self.load(&name).await?;
+        // 目前只认 Key 与 Slide：其余模式（Catch / Pad / Taiko / Ring）的按键字段与几何各不相同，
+        // 按这两套硬转会产出一张错谱，所以只做展示、不转。
+        // 模式先看再解析：别的模式按 Key 解析出来往往一个按键都不剩，报「没有按键」会误导。
+        if raw.meta.mode != 0 && raw.meta.mode != SLIDE_MODE {
+            bail!(
+                "这张是 {} 模式的谱面，现在只能转 Key 与 Slide 模式",
+                mode_label(raw.meta.mode)
+            );
+        }
         let parsed = parse(raw)?;
+        if parsed.notes.is_empty() && parsed.slides.is_empty() {
+            bail!("这张谱面里没有可演奏的按键（Key 要带 `column`，Slide 要带 `x`）");
+        }
 
         let (audio_entry, audio_bytes) = match audio {
             Some(path) => (
@@ -306,22 +334,39 @@ impl Source {
             }
         };
 
-        let chart = build_chart(&parsed, &options);
-        let chart = serde_json::to_vec(&chart)?;
-        let info = build_info(&parsed.meta, &audio_entry, illustration_entry.as_deref());
+        let (chart_entry, chart_bytes) = if parsed.meta.mode == SLIDE_MODE {
+            ("chart.pec", build_pec(&parsed, &options).into_bytes())
+        } else {
+            (
+                "chart.json",
+                serde_json::to_vec(&build_chart(&parsed, &options))?,
+            )
+        };
+        let format = if parsed.meta.mode == SLIDE_MODE {
+            "pec"
+        } else {
+            "pgr"
+        };
+        let info = build_info(
+            &parsed,
+            &audio_entry,
+            illustration_entry.as_deref(),
+            chart_entry,
+            format,
+        );
 
         let mut files = Vec::with_capacity(4);
         files.push(("info.yml".to_owned(), info.into_bytes()));
-        files.push(("chart.json".to_owned(), chart));
+        files.push((chart_entry.to_owned(), chart_bytes));
         files.push((audio_entry, audio_bytes));
         if let (Some(name), Some(bytes)) = (illustration_entry, illustration_bytes) {
             files.push((name, bytes));
         }
 
         Ok(Output {
-            // 产物名用 `<曲名>.<难度>`：同一首曲子的几个难度转出来不会互相覆盖
+            // 产物名用 `<曲名>.<模式>.<难度>`：同一首曲子的几个难度、几个模式转出来不会互相覆盖
             name: output_name(&parsed.meta),
-            notes: parsed.notes.len(),
+            notes: parsed.notes.len() + parsed.slides.len(),
             files,
         })
     }
@@ -415,6 +460,9 @@ struct Meta {
     /// 难度名（`4K HD Lv.22` 这种）
     #[serde(default)]
     version: String,
+    /// 模式：0 = Key，3 = Catch，4 = Pad，5 = Taiko，6 = Ring，7 = Slide
+    #[serde(default)]
+    mode: i32,
     #[serde(default)]
     song: Song,
     #[serde(default, rename = "mode_ext")]
@@ -458,6 +506,28 @@ struct RawNote {
     /// BGM 提示的偏移，毫秒
     #[serde(default)]
     offset: Option<f64>,
+    /// 键型：1 是 BGM 提示（Key / Slide 都一样），Slide 里 4 是「滑动」、没有就是「点按」
+    #[serde(default, rename = "type")]
+    kind: Option<i32>,
+    /// Slide 横条的中心与宽度，都在一条 256 宽的行里（实测中心落在 21~234、宽度落在 25~204）
+    #[serde(default)]
+    x: Option<f64>,
+    #[serde(default)]
+    w: Option<f64>,
+    /// Catch / Slide 里标「这是 BGM」的另一种写法
+    #[serde(default, rename = "isBgm")]
+    is_bgm: Option<bool>,
+    /// 横条的移动段：每个元素是一个「离起点多少拍」的时间点，最后那个就是横条的尾端
+    #[serde(default)]
+    seg: Option<Vec<Seg>>,
+}
+
+/// Slide 横条的一个移动段：`beat` 是离起点多少拍，`x` 是横条挪到起点的哪个相对位置。
+#[derive(Deserialize)]
+struct Seg {
+    beat: Beat,
+    #[serde(default)]
+    x: f64,
 }
 
 /// Malody 的拍号：`[拍, 分子, 分母]` 就是 `拍 + 分子 / 分母` 个四分音符；也兼容直接写一个数。
@@ -489,6 +559,8 @@ struct Parsed {
     /// `(起始拍, BPM)`，第一段一定从 0 拍开始、BPM 一定为正
     timeline: Vec<(f64, f64)>,
     notes: Vec<PlayNote>,
+    /// Slide 的横条（Key 谱面里是空的）
+    slides: Vec<SlideNote>,
     bgm: Option<Bgm>,
     /// 键数（`mode_ext.column` 缺失或小于实际列号时按后者补）
     column_count: i32,
@@ -502,6 +574,40 @@ struct PlayNote {
     end: Option<f64>,
     column: i32,
 }
+
+/// Slide 的一根横条。
+struct SlideNote {
+    /// 判定时刻，秒
+    start: f64,
+    /// 横条中心的谱面横坐标（`-1` 左边缘、`0` 正中、`1` 右边缘）
+    x: f64,
+    /// 横条宽度，屏宽的几成（`0.25` 就是一个轨道宽）
+    width: f64,
+    /// `true` 是滑动键（Malody 的 `type: 4`），`false` 是点按键
+    drag: bool,
+    /// 长条的顶点 `(时间, 横坐标)`：`seg` 里每个移动段一个，空表示单点按键。
+    /// 横条会沿这些顶点滑过去，所以一根长条可能有好几段、好几个拐点。
+    path: Vec<(f64, f64)>,
+}
+
+impl SlideNote {
+    /// 尾端时刻：单点按键就是起点，长条取最后一个顶点。
+    fn end(&self) -> f64 {
+        self.path.last().map_or(self.start, |it| it.0)
+    }
+
+    /// 这根横条是否真的会横着走（`seg` 的位移全是 0 时它就是一根直条）。
+    fn moving(&self) -> bool {
+        self.path.iter().any(|(_, x)| (x - self.x).abs() > 1e-4)
+    }
+}
+
+/// Malody `meta.mode` 里的 Slide。
+const SLIDE_MODE: i32 = 7;
+/// Slide 横条所在的那条行的宽度（`x` / `w` 都以它为基准，实测中心最大 234、宽度最大 204）
+const SLIDE_ROW_WIDTH: f64 = 256.;
+/// 一个轨道宽的横条算多少个屏宽：256 宽的行按 4 轨排，一格就是屏宽的 1/4
+const SLIDE_LANE_WIDTH: f64 = 0.25;
 
 /// BGM 提示：哪一份音频、偏移多少毫秒。
 struct Bgm {
@@ -517,40 +623,75 @@ fn parse_raw(bytes: &[u8]) -> Result<RawChart> {
 
 fn parse(raw: RawChart) -> Result<Parsed> {
     let timeline = timeline(&raw.time);
+    let slide = raw.meta.mode == SLIDE_MODE;
     let mut bgm = None;
     let mut notes = Vec::new();
+    let mut slides = Vec::new();
     let mut max_column = -1;
     for note in &raw.note {
         let beat = note.beat.beats();
-        // 负拍是 Malody 的 `EmptyBeat` 占位，负列（或不写列）是 BGM 提示，都不算按键
-        match note.column {
-            Some(column) if column >= 0 && beat >= 0. => {
-                let start = seconds_at(&timeline, beat);
-                let end = note
-                    .endbeat
-                    .map(|it| seconds_at(&timeline, it.beats()))
-                    .filter(|it| *it > start);
-                max_column = max_column.max(column);
-                notes.push(PlayNote { start, end, column });
-            }
-            _ => {
-                if bgm.is_none() {
-                    if let Some(sound) = note.sound.as_deref().filter(|it| !it.trim().is_empty()) {
-                        bgm = Some(Bgm {
-                            sound: sound.to_owned(),
-                            offset: note.offset.unwrap_or(0.),
-                        });
-                    }
+        // 负拍是 Malody 的 `EmptyBeat` 占位，跳过
+        if beat < 0. {
+            continue;
+        }
+        // BGM 提示（`type: 1` 带声音文件名，或 Catch / Slide 的 `isBgm`）不是按键，两种模式下都这么认
+        if note.kind == Some(1) || note.is_bgm == Some(true) {
+            if bgm.is_none() {
+                if let Some(sound) = note.sound.as_deref().filter(|it| !it.trim().is_empty()) {
+                    bgm = Some(Bgm {
+                        sound: sound.to_owned(),
+                        offset: note.offset.unwrap_or(0.),
+                    });
                 }
             }
+            continue;
+        }
+        if slide {
+            // Slide 的横条：`x` 是中心、`w` 是宽度，都在一条 256 宽的行里；
+            // 带 `seg` 的是长条（要按住到最后一个移动段的时间点），不带的就是单点按键
+            let Some(x) = note.x else {
+                continue;
+            };
+            let start = seconds_at(&timeline, beat);
+            let width = note.w.unwrap_or(SLIDE_ROW_WIDTH * SLIDE_LANE_WIDTH) / SLIDE_ROW_WIDTH;
+            // `seg` 的每个元素是「离起点多少拍、横条挪到起点的哪个相对位置」，横条会按顺序滑过去；
+            // 顶点的时间从谱面起点算起，`x` 是相对起点的位移（不是累加），所以直接加在起点上
+            let mut path: Vec<(f64, f64)> = note
+                .seg
+                .iter()
+                .flatten()
+                .map(|seg| {
+                    let time = seconds_at(&timeline, beat + seg.beat.beats());
+                    let x = ((x + seg.x) / SLIDE_ROW_WIDTH * 2. - 1.).clamp(-1., 1.);
+                    (time, x)
+                })
+                .filter(|(time, _)| *time > start)
+                .collect();
+            path.sort_by(|a, b| a.0.total_cmp(&b.0));
+            slides.push(SlideNote {
+                start,
+                x: (x / SLIDE_ROW_WIDTH * 2. - 1.).clamp(-1., 1.),
+                width: width.clamp(0.02, 1.),
+                drag: note.kind == Some(4),
+                path,
+            });
+            continue;
+        }
+        // Key：负列（或不写列）的是 BGM 提示，可演奏的按键一定有列号
+        if let Some(column) = note.column.filter(|it| *it >= 0) {
+            let start = seconds_at(&timeline, beat);
+            let end = note
+                .endbeat
+                .map(|it| seconds_at(&timeline, it.beats()))
+                .filter(|it| *it > start);
+            max_column = max_column.max(column);
+            notes.push(PlayNote { start, end, column });
         }
     }
-    if notes.is_empty() {
-        bail!("这张谱面里没有可演奏的按键");
-    }
     notes.sort_by(|a, b| a.start.total_cmp(&b.start));
+    slides.sort_by(|a, b| a.start.total_cmp(&b.start));
     let column_count = raw.meta.mode_ext.column.max(max_column + 1).max(1);
-    Ok(Parsed { meta: raw.meta, timeline, notes, bgm, column_count })
+    Ok(Parsed { meta: raw.meta, timeline, notes, slides, bgm, column_count })
 }
 
 /// BPM 变更点整理成 `(起始拍, BPM)`：按拍排好、丢掉非正数、补上 0 拍那一段。
@@ -599,6 +740,24 @@ fn seconds_at(timeline: &[(f64, f64)], beat: f64) -> f64 {
         bpm = next_bpm;
     }
     seconds + (beat - start) * 60. / bpm
+}
+
+/// 第 `seconds` 秒落在第几拍 —— `seconds_at` 的反函数，PEC 的时间轴是拍所以要折回去。
+fn beats_at(timeline: &[(f64, f64)], seconds: f64) -> f64 {
+    let Some(&(mut start, mut bpm)) = timeline.first() else {
+        return 0.;
+    };
+    let mut elapsed = 0.;
+    for &(next_start, next_bpm) in timeline.iter().skip(1) {
+        let span = (next_start - start) * 60. / bpm;
+        if seconds <= elapsed + span {
+            return start + (seconds - elapsed) * bpm / 60.;
+        }
+        elapsed += span;
+        start = next_start;
+        bpm = next_bpm;
+    }
+    start + (seconds - elapsed) * bpm / 60.
 }
 
 // ---------------------------------------------------------------- PGR v3
@@ -753,25 +912,130 @@ fn build_chart(parsed: &Parsed, options: &Options) -> ChartFile {
     }
 }
 
+// ---------------------------------------------------------------- PEC
+
+/// PGR 的按键高度是「秒 × 流速 ÷ 它」，PEC 的判定线高度却是直接积分流速，两边要下落得一样快，
+/// 就得把这份换算折进 `cv` 的数值里（值见 `DPS/dps/src/core.rs`）。
+const HEIGHT_RATIO: f64 = 0.83175;
+
+/// PEC 的 `cv` 数值与流速之间还隔着这一份：解析器把它除以 5.85 才是流速（见 `pec.rs` 的 `b"v"`）。
+const PEC_SPEED_SCALE: f64 = 5.85;
+
+/// 折成 PEC：一条横判定线 + 一根根带自己宽度的横条。
+fn build_pec(parsed: &Parsed, options: &Options) -> String {
+    let line_y = options.line_y.clamp(0., 1.) as f64;
+    let speed = options.speed.max(0.01);
+    let width_scale = options.width.max(0.01);
+    let offset = -parsed.bgm.as_ref().map_or(0., |it| it.offset) / 1000.;
+
+    // 第一行是音频偏移（毫秒）：解析器按 `值 / 1000 - 0.15` 折成谱面偏移
+    let mut text = format!("{}\n", num((offset + 0.15) * 1000.));
+    // `bp` 必须全部写在按键与事件之前
+    for (beat, bpm) in &parsed.timeline {
+        text.push_str(&format!("bp {} {}\n", num(*beat), num(*bpm)));
+    }
+    // 判定线：`cp` 的 x 归一化后是 0（1024 是正中），y 按 `值 / 1400 × 2 - 1` 折算
+    text.push_str(&format!("cp 0 0 1024 {}\n", num(line_y * 1400.)));
+    // 流速：PEC 积的是 `cv 值 / 5.85`，而 PGR 的高度还要再除以 `HEIGHT_RATIO`
+    text.push_str(&format!(
+        "cv 0 0 {}\n",
+        num(speed * PEC_SPEED_SCALE / HEIGHT_RATIO)
+    ));
+
+    for note in &parsed.slides {
+        let size = (note.width / SLIDE_LANE_WIDTH * width_scale).clamp(0.2, 8.);
+        let mut push = |kind: &str, time: f64, end: Option<f64>, x: f64| {
+            // 按键的横向写 `谱面坐标 × 1024`：引擎读 PEC 的按键是 `x / 1024`（见 `parse/pec.rs`），
+            // 照这个口径写落点才准；`above` = 1（在判定线上方）、`fake` = 0
+            let beat = num(beats_at(&parsed.timeline, time));
+            match end {
+                Some(end) => text.push_str(&format!(
+                    "{kind} 0 {beat} {} {} 1 0\n",
+                    num(beats_at(&parsed.timeline, end)),
+                    num(x * 1024.)
+                )),
+                None => text.push_str(&format!("{kind} 0 {beat} {} 1 0\n", num(x * 1024.))),
+            }
+            // 宽度单独写一行 `&`：它缩放的是按键的横向（一个轨道宽 = 1），正是 Malody 的 `w`
+            if (size - 1.).abs() > 1e-4 {
+                text.push_str(&format!("& {}\n", num(size)));
+            }
+        };
+        if !note.moving() {
+            // 直条：没有横向位移，一根长按就够（单点按键走 `n1` / `n4`）
+            if note.path.is_empty() {
+                push(if note.drag { "n4" } else { "n1" }, note.start, None, note.x);
+            } else {
+                push("n2", note.start, Some(note.end()), note.x);
+            }
+            continue;
+        }
+        // 斜条：Phigros 没有「能倾斜的长条」，只好沿折线撒一串同一宽度的滑动键 —— 间距取按键宽度的
+        // 九成，串起来就是一条连贯的斜条；拐点各自落在折线的顶点上，多段折线也照样跟着走。
+        // 横坐标 1 个单位 = 半个屏宽，所以屏宽几成的 `width` 折成横坐标要乘 2
+        let gap = (2. * size * SLIDE_LANE_WIDTH * 0.9).max(0.01);
+        push(if note.drag { "n4" } else { "n1" }, note.start, None, note.x);
+        let mut from = (note.start, note.x);
+        for &(time, x) in &note.path {
+            let dx = x - from.1;
+            let steps = ((dx.abs() / gap).ceil() as usize).clamp(1, 64);
+            for step in 1..=steps {
+                let ratio = step as f64 / steps as f64;
+                push(
+                    "n4",
+                    from.0 + (time - from.0) * ratio,
+                    None,
+                    from.1 + dx * ratio,
+                );
+            }
+            from = (time, x);
+        }
+    }
+    text
+}
+
+/// 去掉多余的小数位：整数不带小数点，其余最多三位。
+fn num(value: f64) -> String {
+    let rounded = (value * 1000.).round() / 1000.;
+    if rounded == rounded.trunc() && rounded.abs() < 1e9 {
+        format!("{}", rounded as i64)
+    } else {
+        format!("{rounded}")
+    }
+}
+
 /// `info.yml`：只写单字键（`ChartInfo` 按 camelCase 反序列化，单字键两边同名）。
-fn build_info(meta: &Meta, music: &str, illustration: Option<&str>) -> String {
+///
+/// 难度名前面带上模式（`Key 4K HD Lv.22`），同一首曲子的几种模式摆在列表里才分得清；
+/// `difficulty` 写定数、`level` 写难度文本，与引擎「`difficulty` 是定数、`level` 是难度名」的约定一致。
+fn build_info(
+    parsed: &Parsed,
+    music: &str,
+    illustration: Option<&str>,
+    chart: &str,
+    format: &str,
+) -> String {
+    let meta = &parsed.meta;
     let version = meta.version.trim();
-    let (diff, lvl) = split_version(version);
-    let fallback = if version.is_empty() { "Malody".to_owned() } else { version.to_owned() };
-    let diff = if diff.is_empty() { "UK".to_owned() } else { diff };
+    let (_, lvl) = split_version(version);
+    let label = mode_label(meta.mode);
+    let level = if version.is_empty() {
+        label.clone()
+    } else {
+        format!("{label} {version}")
+    };
     let lines = [
         format!("name: {}", yaml_str(meta.song.title.trim())),
         format!("composer: {}", yaml_str(meta.song.artist.trim())),
         format!("charter: {}", yaml_str(meta.creator.trim())),
         format!("illustrator: {}", yaml_str("")),
-        format!("level: {}", yaml_str(&fallback)),
-        format!("difficulty: {}", yaml_str(&fallback)),
-        format!("diff: {}", yaml_str(&diff)),
-        format!("lvl: {lvl:.1}"),
-        "chart: chart.json".to_owned(),
+        format!("level: {}", yaml_str(&level)),
+        format!("difficulty: {lvl:.1}"),
+        format!("diff: {}", yaml_str(&label)),
+        format!("chart: {chart}"),
         format!("music: {music}"),
         format!("illustration: {}", illustration.unwrap_or("")),
-        "format: pgr".to_owned(),
+        format!("format: {format}"),
     ];
     lines.join("\n") + "\n"
 }
@@ -802,6 +1066,7 @@ fn entry_of(index: usize, file: &str, parsed: &Parsed) -> Entry {
         .notes
         .iter()
         .map(|it| it.end.unwrap_or(it.start))
+        .chain(parsed.slides.iter().map(SlideNote::end))
         .fold(0.0_f64, f64::max);
     Entry {
         index,
@@ -810,9 +1075,20 @@ fn entry_of(index: usize, file: &str, parsed: &Parsed) -> Entry {
         artist: parsed.meta.song.artist.trim().to_owned(),
         charter: parsed.meta.creator.trim().to_owned(),
         version: parsed.meta.version.trim().to_owned(),
+        mode: parsed.meta.mode,
+        mode_name: mode_label(parsed.meta.mode),
         column: parsed.column_count,
-        notes: parsed.notes.len(),
-        holds: parsed.notes.iter().filter(|it| it.end.is_some()).count(),
+        notes: parsed.notes.len() + parsed.slides.len(),
+        holds: parsed
+            .notes
+            .iter()
+            .filter(|it| it.end.is_some())
+            .count()
+            + parsed
+                .slides
+                .iter()
+                .filter(|it| !it.path.is_empty() && !it.moving())
+                .count(),
         duration,
         bpm: parsed.timeline[0].1,
         audio: bgm.map(|it| it.sound.clone()),
@@ -866,19 +1142,37 @@ fn is_image(name: &str) -> bool {
     )
 }
 
-/// 产物文件名（不含扩展名）：`<曲名>.<难度>`。难度取 Malody 的 `meta.version`
-/// （`4K HD Lv.22` 这种整串），没有难度名时只留曲名。
+/// 产物文件名（不含扩展名）：`<曲名>.<模式>.<难度>`。难度取 Malody 的 `meta.version`
+/// （`4K HD Lv.22` 这种整串）；多 K 谱面的模式一律写 `Key`，轨道数只体现在谱面上。
 fn output_name(meta: &Meta) -> String {
     let title = meta.song.title.trim();
+    let title = if title.is_empty() { "Untitled" } else { title };
+    let mode = mode_label(meta.mode);
     let version = meta.version.trim();
     if version.is_empty() {
-        title.to_owned()
+        format!("{title}.{mode}")
     } else {
-        format!("{title}.{version}")
+        format!("{title}.{mode}.{version}")
     }
 }
 
-/// 便于命令层拼路径：`<目录>/<曲名>.<难度>.pez`。
+/// Malody 的 `meta.mode`：0 = Key、3 = Catch、4 = Pad、5 = Taiko、6 = Ring、7 = Slide。
+///
+/// 只有 Key 与 Slide 能转；其余模式的按键字段各不相同，界面上只做展示。
+pub fn mode_label(mode: i32) -> String {
+    match mode {
+        0 => "Key",
+        3 => "Catch",
+        4 => "Pad",
+        5 => "Taiko",
+        6 => "Ring",
+        7 => "Slide",
+        other => return format!("模式{other}"),
+    }
+    .to_owned()
+}
+
+/// 便于命令层拼路径：`<目录>/<曲名>.<模式>.<难度>.pez`。
 pub fn output_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{}.pez", file_stem(name)))
 }
@@ -1026,14 +1320,16 @@ mod tests {
         assert_eq!(entry.holds, 47);
         assert_eq!(entry.audio.as_deref(), Some("Letters.ogg"));
 
-        // 产物名是 `<曲名>.<难度>`，同一首曲子的几个难度不会互相覆盖
+        // 产物名是 `<曲名>.<模式>.<难度>`，同一首曲子的几种模式、几个难度都不会互相覆盖
+        assert_eq!(entry.mode, 0);
+        assert_eq!(entry.mode_name, "Key");
         assert_eq!(
             output.name,
-            format!("{}.{}", entry.title.trim(), entry.version.trim())
+            format!("{}.Key.{}", entry.title.trim(), entry.version.trim())
         );
         assert_eq!(
             output_path(Path::new("out"), &output.name),
-            Path::new("out").join(format!("{}.{}.pez", entry.title.trim(), entry.version.trim()))
+            Path::new("out").join(format!("{}.Key.{}.pez", entry.title.trim(), entry.version.trim()))
         );
 
         let file = |wanted: &str| {
@@ -1048,6 +1344,13 @@ mod tests {
         assert!(info.contains("format: pgr"), "{info}");
         assert!(info.contains("chart: chart.json"), "{info}");
         assert!(info.contains("music: music.ogg"), "{info}");
+        // 难度名前面标模式；定数单独写进 `difficulty`
+        assert!(
+            info.contains(&format!("level: \"Key {}\"", entry.version.trim())),
+            "{info}"
+        );
+        assert!(info.contains("diff: \"Key\""), "{info}");
+        assert!(info.contains("difficulty: 22.0"), "{info}");
 
         let text = String::from_utf8_lossy(file("chart.json")).into_owned();
         let chart = dps::parse::parse_phigros(&text, dps::core::ChartExtra::default())
@@ -1121,6 +1424,10 @@ mod tests {
                 );
                 assert_eq!(info.chart, "chart.json");
                 assert_eq!(info.music, "music.ogg");
+                // 难度名带模式前缀；定数按 `difficulty` 读回来，`diff` 是模式
+                assert_eq!(info.level, "Key 4K HD Lv.22");
+                assert_eq!(info.diff, "Key");
+                assert!((info.lvl - 22.0).abs() < 1e-6, "定数应读成 22.0，实际 {}", info.lvl);
                 let text = String::from_utf8_lossy(&fs.load_file(&info.chart).await?).into_owned();
                 let chart = dps::parse::parse_phigros(&text, dps::core::ChartExtra::default())?;
                 assert_eq!(chart.lines.len(), 1);
@@ -1128,5 +1435,287 @@ mod tests {
                 Ok::<_, anyhow::Error>(())
             })
             .expect("读回谱面包失败");
+    }
+
+    /// 模式名：Malody 的 `meta.mode` 只有 Key（0）与 Slide（7）能转，其余是展示用的名字。
+    #[test]
+    fn mode_names_match_malody() {
+        assert_eq!(mode_label(0), "Key");
+        assert_eq!(mode_label(3), "Catch");
+        assert_eq!(mode_label(4), "Pad");
+        assert_eq!(mode_label(5), "Taiko");
+        assert_eq!(mode_label(6), "Ring");
+        assert_eq!(mode_label(7), "Slide");
+        assert_eq!(mode_label(9), "模式9");
+    }
+
+    /// 非 Key 模式的谱面挡住不转（拿 Malody 自带的 Catch 谱面试一下）。
+    #[test]
+    fn non_key_mode_is_refused() {
+        let chart = Path::new("J:/Malody-4.3.7/beatmap/_song_978/4168/mamsc.mc");
+        if !chart.is_file() {
+            eprintln!("跳过：没有参考谱面 {}", chart.display());
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("建 tokio 运行时失败");
+        let error = runtime
+            .block_on(async {
+                let mut source = Source::open(chart)?;
+                source.convert(0, None, None, Options::default()).await
+            })
+            .err()
+            .expect("Catch 模式的谱面不该转换成功")
+            .to_string();
+        assert!(error.contains("Catch"), "报错里应该点出模式：{error}");
+    }
+
+    /// 一个 Malody 曲包的文件夹里常常混着各模式、各难度的谱面（`_song_978/4168` 就是这样）：
+    /// 列表要逐张列出模式名，Key 那张照常能转，别的模式只在列表里占位。
+    #[test]
+    fn mixed_mode_folder_probes_every_chart() {
+        let dir = Path::new("J:/Malody-4.3.7/beatmap/_song_978/4168");
+        if !dir.is_dir() {
+            eprintln!("跳过：没有参考谱面包 {}", dir.display());
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("建 tokio 运行时失败");
+        let probe = runtime
+            .block_on(async {
+                let mut source = Source::open(dir)?;
+                source.probe().await
+            })
+            .expect("读取参考谱面包失败");
+
+        assert!(probe.charts.len() > 1, "这个包里应该有好几张谱面");
+        let modes: Vec<&str> = probe.charts.iter().map(|it| it.mode_name.as_str()).collect();
+        assert!(modes.contains(&"Catch"), "模式名要按 `meta.mode` 译出来：{modes:?}");
+        let key = probe
+            .charts
+            .iter()
+            .find(|it| it.mode == 0)
+            .expect("这个包里应该有一张 Key 谱面");
+        assert_eq!(key.mode_name, "Key");
+        assert!(key.notes > 0);
+
+        // 真谱面也能一路转到 `.pez` 的内容（示例谱面之外再拿一张 Malody 自己导出的 4K 谱面验一遍）
+        let output = runtime
+            .block_on(async {
+                let mut source = Source::open(dir)?;
+                source.convert(key.index, None, None, Options::default()).await
+            })
+            .expect("转换参考包里的 Key 谱面失败");
+        assert_eq!(output.notes, key.notes);
+        assert!(output.name.contains(".Key."), "产物名要带模式：{}", output.name);
+        assert!(output.files.iter().any(|(name, _)| name == "chart.json"));
+        assert!(output.files.iter().any(|(name, _)| name.starts_with("music.")));
+    }
+
+    /// Slide：横条的 `x` / `w` / `type` 分别落到谱面横坐标、按键宽度、键型上，产物是 PEC
+    /// （PGR 的按键结构里没有「单个按键多宽」，宽度只能靠 PEC 的 `& <size>` 表达）。
+    #[test]
+    fn slide_chart_becomes_pec_with_widths() {
+        use dps::core::NoteKind;
+
+        let chart = Path::new("J:/Malody-4.3.7/beatmap/_song_978/4168/1549989004.mc");
+        if !chart.is_file() {
+            eprintln!("跳过：没有参考谱面 {}", chart.display());
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("建 tokio 运行时失败");
+        runtime
+            .block_on(async {
+                let mut source = Source::open(chart)?;
+                let output = source.convert(0, None, None, Options::default()).await?;
+                assert!(output.name.contains(".Slide."), "产物名要带模式：{}", output.name);
+                // 这张谱面 62 条：1 条 BGM 提示 + 61 个可演奏的横条；
+                // 其中 4 根是直条（写 `n2`），4 根斜条要撒成 6 个滑动键，所以 PEC 里一共 67 个按键
+                assert_eq!(output.notes, 61);
+                let file = |name: &str| {
+                    output
+                        .files
+                        .iter()
+                        .find(|(entry, _)| entry == name)
+                        .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+                        .unwrap_or_else(|| panic!("产物里没有 {name}"))
+                };
+                let info = file("info.yml");
+                assert!(info.contains("format: pec"), "info.yml 要写 pec：{info}");
+                assert!(info.contains("chart: chart.pec"), "info.yml 的谱面名不对：{info}");
+                let text = file("chart.pec");
+                assert!(text.lines().any(|it| it.starts_with("bp 0 ")), "缺 `bp`：{text}");
+                assert!(text.lines().any(|it| it.starts_with("cv 0 0 ")), "缺 `cv`：{text}");
+                let count = |prefix: &str| text.lines().filter(|it| it.starts_with(prefix)).count();
+                assert_eq!(count("n1 "), 32, "点按数量不对");
+                assert_eq!(count("n4 "), 31, "滑动数量不对");
+                assert_eq!(count("n2 "), 4, "直条数量不对");
+                // 横条的宽度各不相同，所以一定有按键带横向缩放
+                assert!(count("& ") > 0, "没有任何按键写宽度：{text}");
+
+                // 引擎自己读一遍：键型、数量、落点都要对得上
+                let chart = dps::parse::parse_pec(&text, dps::core::ChartExtra::default())?;
+                assert_eq!(chart.lines.len(), 1);
+                let notes = &chart.lines[0].notes;
+                assert_eq!(notes.len(), 67);
+                assert_eq!(
+                    notes.iter().filter(|it| matches!(it.kind, NoteKind::Drag)).count(),
+                    31
+                );
+                for note in notes {
+                    let x = note.object.translation.0.now();
+                    assert!((-1. ..=1.).contains(&x), "横坐标越界：{x}");
+                }
+
+                // 打成谱面包再用引擎的文件系统读回来：`format: pec` + `chart.pec` 这个组合要能认
+                use std::io::Write as _;
+                let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+                let zip_options = zip::write::SimpleFileOptions::default();
+                for (name, bytes) in &output.files {
+                    writer.start_file(name.as_str(), zip_options)?;
+                    writer.write_all(bytes)?;
+                }
+                let bytes = writer.finish()?.into_inner();
+                let mut fs = dps::fs::ZipFileSystem::new(bytes)?;
+                let info = dps::fs::load_info(&mut fs).await?;
+                assert!(
+                    matches!(info.format, Some(dps::info::ChartFormat::Pec)),
+                    "包里的 info.yml 没让引擎认出是 PEC 谱面"
+                );
+                assert_eq!(info.chart, "chart.pec");
+                let text = String::from_utf8_lossy(&fs.load_file(&info.chart).await?).into_owned();
+                let chart = dps::parse::parse_pec(&text, dps::core::ChartExtra::default())?;
+                assert_eq!(chart.lines[0].notes.len(), 67);
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("转换参考 Slide 谱面失败");
+    }
+
+    /// Slide 的长条：直条写 `n2` 长按，斜条沿折线撒成一串滑动键。
+    #[test]
+    fn slide_long_notes_follow_their_segments() {
+        use dps::core::NoteKind;
+
+        let chart = Path::new("J:/Malody-4.3.7/beatmap/_song_4900/0/1553093571.mc");
+        if !chart.is_file() {
+            eprintln!("跳过：没有参考谱面 {}", chart.display());
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("建 tokio 运行时失败");
+        runtime
+            .block_on(async {
+                let mut source = Source::open(chart)?;
+                let output = source.convert(0, None, None, Options::default()).await?;
+                assert!(output.name.contains(".Slide."), "产物名要带模式：{}", output.name);
+                // 这张谱面 796 条：1 条 BGM 提示 + 795 个可演奏的横条，
+                // 其中 58 根是不动的直条、其余都带位移；斜条撒点之后 PEC 里一共 982 个按键
+                assert_eq!(output.notes, 795);
+                let text = output
+                    .files
+                    .iter()
+                    .find(|(name, _)| name == "chart.pec")
+                    .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+                    .expect("产物里没有 chart.pec");
+                let count = |prefix: &str| text.lines().filter(|it| it.starts_with(prefix)).count();
+                assert_eq!(count("n1 "), 633, "点按数量不对");
+                assert_eq!(count("n4 "), 291, "滑动数量不对");
+                assert_eq!(count("n2 "), 58, "直条数量不对");
+
+                // 引擎读回来：长按的尾端在起点之后，落点都在屏幕内
+                let chart = dps::parse::parse_pec(&text, dps::core::ChartExtra::default())?;
+                let notes = &chart.lines[0].notes;
+                assert_eq!(notes.len(), 982);
+                let holds: Vec<_> = notes
+                    .iter()
+                    .filter(|it| matches!(it.kind, NoteKind::Hold { .. }))
+                    .collect();
+                assert_eq!(holds.len(), 58, "长按数量不对");
+                for note in holds {
+                    let NoteKind::Hold { end_time, .. } = &note.kind else {
+                        unreachable!()
+                    };
+                    assert!(*end_time > note.time, "长按尾端没排在起点之后");
+                }
+                for note in notes {
+                    let x = note.object.translation.0.now();
+                    assert!((-1. ..=1.).contains(&x), "横坐标越界：{x}");
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("转换长条 Slide 谱面失败");
+    }
+
+    /// 斜条展开：顶点要落准、相邻按键的间距不超过按键宽度、整条宽度一致。
+    ///
+    /// 合成一张两段折线的谱面：120 BPM、第 4 拍起、`x = 128`（正中）、`w = 64`（一个轨道宽），
+    /// 两个移动段把横条移到 `+64`（正中偏右半格）再移回原位。
+    #[test]
+    fn slanted_slide_lands_on_its_vertices() {
+        let json = r#"{
+            "meta": {"$ver": 0, "creator": "t", "version": "Slide TEST Lv.1", "mode": 7, "mode_ext": {}},
+            "time": [{"beat": [0, 0, 1], "bpm": 120.0}],
+            "note": [
+                {"beat": [0, 0, 1], "type": 1, "sound": "a.ogg", "offset": 0},
+                {"beat": [4, 0, 1], "x": 128, "w": 64,
+                 "seg": [{"beat": [2, 0, 1], "x": 64}, {"beat": [4, 0, 1], "x": 0}]},
+                {"beat": [16, 0, 1], "x": 64, "w": 32}
+            ]
+        }"#;
+        let parsed = parse(parse_raw(json.as_bytes()).unwrap()).unwrap();
+        let text = build_pec(&parsed, &Options::default());
+
+        // 只留按键行：`[键型, 拍, 横坐标, (长按尾端)]`
+        let notes: Vec<(String, Vec<f64>)> = text
+            .lines()
+            .filter(|it| it.starts_with("n1 ") || it.starts_with("n2 ") || it.starts_with("n4 "))
+            .map(|it| {
+                let mut parts = it.split_whitespace();
+                let kind = parts.next().unwrap().to_owned();
+                let numbers: Vec<f64> = parts
+                    .filter_map(|it| it.parse::<f64>().ok())
+                    .collect();
+                (kind, numbers)
+            })
+            .collect();
+        // 第 4 拍（2 秒）起两段各 2 拍：段 1 横坐标 0 → 0.25 → 0.5（×1024 = 0 / 256 / 512），
+        // 段 2 再原路退回；间距 0.5 一半是按键宽度 0.5 的九成以上，所以每段刚好两点
+        assert_eq!(
+            notes[0],
+            ("n1".to_owned(), vec![0., 4., 0., 1., 0.]),
+            "长条的头要按原按键的键型"
+        );
+        let chain: Vec<(f64, f64)> = notes[1..5]
+            .iter()
+            .map(|(kind, numbers)| {
+                assert_eq!(kind, "n4", "斜条要撒成滑动键");
+                (numbers[1], numbers[2])
+            })
+            .collect();
+        assert_eq!(
+            chain,
+            vec![(5., 256.), (6., 512.), (7., 256.), (8., 0.)],
+            "折线顶点没落准"
+        );
+        // 一个轨道宽 = `& 1`，正好是 1 的时候不写 `&`；半格的横条写成 `& 0.5`
+        assert!(
+            !text.lines().any(|it| it == "& 1"),
+            "一个轨道宽的横条不该再缩放：{text}"
+        );
+        assert!(
+            notes[5].1[1] == 16. && (notes[5].1[2] - -512.).abs() < 1e-6,
+            "单点横条没落准：{:?}",
+            notes[5]
+        );
+        assert!(text.contains("& 0.5\n"), "半格宽的横条要写 `& 0.5`：{text}");
     }
 }

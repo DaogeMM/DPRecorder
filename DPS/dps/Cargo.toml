@@ -1,6 +1,6 @@
 [package]
 name = "dps"
-version = "0.4.0"
+version.workspace = true
 edition = "2021"
 authors.workspace = true
 license.workspace = true
@@ -74,6 +74,10 @@ rustc-hash = "2.1.2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 rfd = { version = "0.15.3", default-features = false, features = ["gtk3"] }
+
+# 控制台准备（UTF-8 代码页、ANSI 转义）用，见 `log::init_console`。
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["consoleapi", "processenv", "wincon"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc = "*"

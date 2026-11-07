@@ -1,11 +1,10 @@
 //! 「噪域播放器」的几条 tauri 命令。
 //!
-//! 转换本身在 `DPE/src/noise_player.rs`（DPE 那一层的代码与它的界面放在一起，见工作区约定），
+//! 转换本身在 `src/dpe/noise_player.rs`（与编辑器那一侧的预览进程放在同一个目录），
 //! 这里只补 tauri 这一侧必须存在的东西：找 ffmpeg、给默认输出目录、把错误翻成 `InvokeError`。
-//! 模块按路径引用而不是加一个 crate 依赖 —— DPE 是个只编 `dpe.exe` 的包，为了一段纯逻辑让
-//! DPR 去依赖它（连带着 macroquad）不划算。
+//! 模块按路径引用而不是把预览进程那几个模块也拉进来 —— 这里只需要 `noise_player` 这一段纯逻辑。
 
-#[path = "../../../DPE/src/noise_player.rs"]
+#[path = "dpe/noise_player.rs"]
 mod noise_player;
 
 pub use noise_player::{ChartReport, ConversionProgress, ToolOutput, VideoMeta, VideoNoiseParams};

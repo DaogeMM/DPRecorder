@@ -16,7 +16,7 @@ use dps::{
     scene::{return_file, show_error, show_message, take_file, NextScene, Scene},
     task::Task,
     time::TimeManager,
-    ui::{button_hit, RectButton, Ui, UI_AUDIO},
+    ui::{button_hit, icon, theme, RectButton, Ui, UI_AUDIO},
     gyro::GYRO
 };
 use sasa::{AudioClip, Music};
@@ -44,7 +44,6 @@ pub struct MainScene {
 
     bgm: Option<Music>,
 
-    background: SafeTexture,
     background_blur: SafeTexture,
     btn_back: RectButton,
     icon_back: SafeTexture,
@@ -66,20 +65,8 @@ impl MainScene {
     pub async fn new() -> Result<Self> {
         Self::init().await?;
 
-        let bgm = {
-            let bgm_clip = AudioClip::new(load_file("bgm.ogg").await?)?;
-            Some(UI_AUDIO.with(|it| {
-                it.borrow_mut().create_music(
-                    bgm_clip,
-                    sasa::MusicParams {
-                        amplifier: get_data().config.volume_bgm,
-                        loop_mix_time: 1.0,
-                        command_buffer_size: 64,
-                        ..Default::default()
-                    },
-                )
-            })?)
-        };
+        // 背景音乐暂时关掉：不加载 `bgm.ogg`，下面那些 `if let Some(bgm)` 就全是空操作。
+        let bgm = None;
 
         let mut sf = Self::new_inner(bgm).await?;
         sf.pages.push(Box::new(HomePage::new().await?));
@@ -122,7 +109,6 @@ impl MainScene {
 
             bgm,
 
-            background: TEX_BACKGROUND.with(|it| it.borrow().clone().unwrap()),
             background_blur: TEX_BACKGROUND_BLUR.with(|it| it.borrow().clone().unwrap()),
 
             btn_back: RectButton::new(),
@@ -205,7 +191,8 @@ impl Scene for MainScene {
             return Ok(true);
         }
 
-        if get_data().config.mp_enabled {
+        // 联机入口：联网功能暂时关掉，整个悬浮按钮连同面板都不出现。
+        if crate::ONLINE && get_data().config.mp_enabled {
             if MP_PANEL.with(|it| it.borrow_mut().as_mut().map_or(false, |it| it.touch(tm, touch))) {
                 return Ok(true);
             }
@@ -387,29 +374,27 @@ impl Scene for MainScene {
         let t = RESTORE_RATE + RESTORE_RATE * restore_factor;
         s.gyro_offset = s.gyro_offset.lerp(Vec2::ZERO, t);
 
+        // 页面底色是 DPR 那套深灰；上面只留一层很淡的模糊插画，别让插画抢走面板的层次。
+        ui.fill_rect(ui.screen_rect(), theme::BG_PAGE);
         let mut r = ui.screen_rect();
         r.x -= (s.gyro_offset.x + MAX_ROTATE_RATE / 2.) * 0.5;
         r.y -= (s.gyro_offset.y + MAX_ROTATE_RATE / 2.) * 0.5;
         r.w += MAX_ROTATE_RATE * 0.5;
         r.h += MAX_ROTATE_RATE * 0.5;
-
-        ui.fill_rect(r, (*self.background, r));
-        let alpha = match self.pages.len() {
-            1 => 0.,
-            2 => 1. - s.fader.for_sub(|f| f.progress(s.t)),
-            _ => 1.,
-        };
-        let c = Color::new(1., 1., 1., alpha);
+        let c = Color::new(1., 1., 1., 0.14);
         ui.fill_rect(r, (*self.background_blur, r, ScaleType::CropCenter, c));
 
-        // 1. title
+        // 1. title：只有主页带大标题，其余页面铺满整屏、不画标题。
         if s.fader.transiting() {
             let pos = self.pages.len() - 2;
-            s.fader.reset();
-            s.fader.render_title(ui, &mut s.painter, s.t, &self.pages[pos].label());
+            if let Some(title) = self.pages[pos].title() {
+                s.fader.reset();
+                s.fader.render_title(ui, &mut s.painter, s.t, &title);
+            }
         }
-        s.fader
-            .for_sub(|f| f.render_title(ui, &mut s.painter, s.t, &self.pages.last().unwrap().label()));
+        if let Some(title) = self.pages.last().unwrap().title() {
+            s.fader.for_sub(|f| f.render_title(ui, &mut s.painter, s.t, &title));
+        }
 
         // 2. page
         if s.fader.transiting() {
@@ -431,11 +416,12 @@ impl Scene for MainScene {
                 2 => s.fader.for_sub(|f| f.progress(s.t)),
                 _ => 0.,
             } * r.h;
-            ui.fill_rect(r, (*self.icon_back, r));
+            icon::back(ui, r.feather(-0.012), theme::TEXT);
             ui.scissor(None);
         }
 
-        if get_data().config.mp_enabled {
+        // 联机入口：联网功能暂时关掉，整个悬浮按钮连同面板都不出现。
+        if crate::ONLINE && get_data().config.mp_enabled {
             let r = 0.06;
             self.mp_btn_pos.y = self.mp_btn_pos.y.clamp(-ui.top, ui.top);
             ui.fill_circle(self.mp_btn_pos.x, self.mp_btn_pos.y, r, ui.background());

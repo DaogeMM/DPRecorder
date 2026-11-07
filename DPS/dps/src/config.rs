@@ -878,7 +878,7 @@ impl Default for Config {
     block_area_edge_noise: 1.0,
             direct_block_hollow: false,
             block_area_distort: true,
-            render_judge_range: true,
+            render_judge_range: false,
             judge_range_width: 1.9,
             judge_range_width_flick: 2.1,
             judge_range_length: 5.,

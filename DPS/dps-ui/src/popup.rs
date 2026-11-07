@@ -1,8 +1,8 @@
 use crate::page::Fader;
 use macroquad::prelude::*;
 use dps::{
-    ext::{semi_black, semi_white, RectExt},
-    ui::{button_hit, rounded_rect_shadow, DRectButton, RectButton, Scroll, ShadowConfig, Ui},
+    ext::RectExt,
+    ui::{button_hit, rounded_rect_shadow, theme, DRectButton, RectButton, Scroll, ShadowConfig, Ui},
 };
 
 pub struct Popup {
@@ -95,13 +95,13 @@ impl Popup {
                     self.scroll.render(ui, |ui| {
                         for (id, (opt, btn)) in self.options.iter_mut().enumerate() {
                             if id != 0 {
-                                ui.fill_rect(Rect::new(0.02, -0.001, r.w - 0.04, 0.002), semi_white(0.7 * alpha));
+                                ui.fill_rect(Rect::new(0.02, -0.001, r.w - 0.04, 0.002), theme::with_alpha(theme::BORDER_2, alpha));
                             }
                             let r = Rect::new(0., 0., r.w, self.height);
                             btn.set(ui, r);
                             let chosen = id == self.selected;
                             if chosen {
-                                ui.fill_rect(r.feather(-0.007), semi_black(0.4 * alpha));
+                                ui.fill_rect(r.feather(-0.007), theme::with_alpha(theme::SURFACE_2, alpha));
                             }
                             ui.text(opt.as_str())
                                 .pos(self.left, self.height / 2.)
@@ -109,7 +109,7 @@ impl Popup {
                                 .no_baseline()
                                 .size(self.size)
                                 .max_width(r.w - self.left * 2.)
-                                .color(semi_white(alpha))
+                                .color(theme::with_alpha(if chosen { theme::ACCENT } else { theme::TEXT_SECONDARY }, alpha))
                                 .draw();
                             ui.dy(self.height);
                         }

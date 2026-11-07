@@ -10,6 +10,7 @@ not-opened = Not available yet
 failed-to-load-online = Failed to load online beatmaps
 
 import = Import
+empty-hint = Click here to open a chart file
 
 search = Search
 

@@ -23,7 +23,7 @@ use macroquad::prelude::*;
 use dps::{
     build_conf,
     core::init_assets,
-    l10n::{set_prefered_locale, GLOBAL, LANGS},
+    l10n::set_prefered_locale,
     log,
     scene::{show_error, show_message},
     time::TimeManager,
@@ -35,6 +35,12 @@ use scene::MainScene;
 use std::{collections::VecDeque, sync::{mpsc, Mutex}, time::Duration};
 use nalgebra::{UnitQuaternion, Vector3};
 use tracing::{error, debug, info};
+
+/// 联网功能总开关。
+///
+/// 关掉时所有联网入口都不画（登录、消息、活动、在线谱面、联机、评级与上传），
+/// 启动与浏览也不再发请求；代码仍留在下面，改回 `true` 就能恢复。
+pub const ONLINE: bool = false;
 
 static ACTIVITY_LIFECYCLE: Mutex<Option<mpsc::Sender<bool>>> = Mutex::new(None);
 static ACTIVITY_FOUCUS: Mutex<Option<mpsc::Sender<bool>>> = Mutex::new(None);
@@ -50,10 +56,10 @@ pub async fn load_res(name: &str) -> Vec<u8> {
 }
 
 pub fn sync_data() {
-    set_prefered_locale(get_data().language.as_ref().and_then(|it| it.parse().ok()));
-    if get_data().language.is_none() {
-        get_data_mut().language = Some(LANGS[GLOBAL.order.lock().unwrap()[0]].to_owned());
-    }
+    // 多语言暂时关掉：界面固定显示简体中文，设置里的语言项也已经拿掉。
+    // 恢复时把这两行换回按 `get_data().language` 选语言。
+    set_prefered_locale("zh-CN".parse().ok());
+    get_data_mut().language = Some("zh-CN".to_owned());
     let _ = client::set_access_token_sync(get_data().tokens.as_ref().map(|it| &*it.0));
 }
 
@@ -123,10 +129,54 @@ mod dir {
     }
 }
 
+/// 数据目录的绝对路径（`dir::root()` 给的是相对 exe 目录的写法，横幅与日志落点要绝对路径）。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn data_dir() -> Option<std::path::PathBuf> {
+    let root = dir::root().ok()?;
+    let root = std::path::Path::new(&root);
+    if root.is_absolute() {
+        Some(root.to_path_buf())
+    } else {
+        Some(std::env::current_dir().ok()?.join(root.to_string_lossy().trim_start_matches("./")))
+    }
+}
+
+/// 本次运行的日志文件：先放 `<程序目录>/logs`，不可写就退回数据目录下的 `logs/`，
+/// 返回给横幅显示的路径。两处都写不了就返回一句说明 —— 程序照常跑，日志只打终端。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn init_log_file() -> String {
+    let mut candidates = Vec::new();
+    if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("logs"))) {
+        candidates.push(dir);
+    }
+    if let Some(data) = data_dir() {
+        candidates.push(data.join("logs"));
+    }
+    for dir in candidates {
+        if let Ok(path) = log::init_log_file(&dir, "dps") {
+            return path.display().to_string();
+        }
+    }
+    "不可写".to_owned()
+}
+
 async fn the_main() -> Result<()> {
+    // 控制台先摆好：代码页切 UTF-8、开 ANSI 转义，再注册日志层 —— 第一条日志就该是彩色的。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    log::init_console();
+
     log::register();
 
     init_assets();
+
+    // 启动横幅直打 stderr，不受「日志输出到控制台」那个开关管：从 .bat 起的时候，
+    // 至少能看出跑的是哪一份程序、数据和日志落在哪儿。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let data = data_dir().map(|dir| dir.display().to_string()).unwrap_or_default();
+        let logs = init_log_file();
+        log::startup_banner("DPSimulator", &[("数据", &data), ("日志", &logs)]);
+    }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -189,7 +239,8 @@ async fn the_main() -> Result<()> {
         anti_addiction_action("startup", Some(format!("Phigros-{}", me.id)));
     }
 
-    let font = FontArc::try_from_vec(load_file("Untitled2.sfd").await?)?;
+    // 与 `SharedState` 的画笔共用 `font.ttf`：界面与游戏文字用同一份字体，省得再带一个字体文件。
+    let font = FontArc::try_from_vec(load_file("font.ttf").await?)?;
     let mut painter = TextPainter::new(font);
 
     let mut main = Main::new(Box::new(MainScene::new().await?), TimeManager::default(), None).await?;
@@ -287,10 +338,12 @@ async fn the_main() -> Result<()> {
         let flash_end = tm.real_time();
 
         let fps_now_sec = frame_end as u32;
+        // FPS 是调试信息：每秒一条会把控制台刷满，降到 debug —— 默认不上屏，仍进日志文件，
+        // 设了 `RUST_LOG` 才在终端里看得见。
         #[cfg(feature = "play")]
         if fps_now_sec != fps_last_update_sec {
             fps_last_update_sec = fps_now_sec;
-            info!("FPS {}", now_fps);
+            debug!("FPS {}", now_fps);
         }
         #[cfg(not(feature = "play"))]
         if fps_last_update_sec != fps_now_sec {
@@ -299,7 +352,7 @@ async fn the_main() -> Result<()> {
             let real_now_fps = (1. / (flash_end - frame_start)) as u32;
             let avg_fps = frame_times.iter().map(|(_, fps)| fps).sum::<u32>() / real_fps;
             let min_fps = frame_times.iter().map(|(_, fps)| fps).min().unwrap_or(&0);
-            info!("| AVG: {}|{} NOW: {}|{}, MIN: {}", real_fps, avg_fps, real_now_fps, now_fps, min_fps);
+            debug!("| AVG: {}|{} NOW: {}|{}, MIN: {}", real_fps, avg_fps, real_now_fps, now_fps, min_fps);
         }
     }
     Ok(())

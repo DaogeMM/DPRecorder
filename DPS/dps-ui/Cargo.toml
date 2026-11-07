@@ -1,6 +1,6 @@
 [package]
 name = "dps-ui"
-version = "0.4.0"
+version.workspace = true
 edition = "2021"
 authors.workspace = true
 license.workspace = true
