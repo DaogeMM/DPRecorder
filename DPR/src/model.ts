@@ -942,8 +942,16 @@ export interface FileDropEvent {
   position: { x: number; y: number };
 }
 
-/** 编辑窗口里一条轨道能放的素材种类。 */
-export type DraftMediaKind = 'chart' | 'music' | 'cover';
+/** 主轨道（谱面 / 音乐 / 曲绘）：每种只收同种素材，轨道本身就是这份素材。 */
+export type DraftTrackKind = 'chart' | 'music' | 'cover';
+
+/**
+ * 编辑窗口素材库里的一项能是什么：三条主轨道各自一种，另外还有歌词。
+ *
+ * 歌词不占固定轨道：拖到时间轴上时按文件里的时间摊成一条特效轨（一句一个文字噪域），
+ * 所以它只在素材库里出现，不会落到 `chart` / `music` / `cover` 上。
+ */
+export type DraftMediaKind = DraftTrackKind | 'lyric';
 
 /**
  * 草稿里的一项素材：就是磁盘上的某个文件（目录型谱面则是那个目录）。
@@ -995,7 +1003,167 @@ export interface DraftInfo {
   composer: string;
 }
 
-/** 一份草稿（剪映那样的项目）：三条轨道 + 素材库，落在 `<程序目录>/dpe/editor/drafts/<id>/draft.json`。 */
+/**
+ * 自己加的轨道分两种摆放位置：往上加只能放画面与文字，往下加只能放音频。
+ *
+ * 「画面」是图片素材（`image`），「文字」是纯文字效果（`text`，没有素材文件），
+ * 「音频」是音乐素材（`audio`），「特效」是引擎渲染的噪域之类（`effect`，参数写在轨道上）。
+ */
+export type DraftLaneKind = 'image' | 'text' | 'audio' | 'effect';
+
+/**
+ * 文字噪域的参数：把一段文字铺成一块块噪域方块（引擎的 `blockAreaList`），
+ * 笔画所在的地方是噪域；打开「反转」就整屏铺满、文字的位置挖空。
+ *
+ * 尺寸与位置都按屏幕比例算（换分辨率不变形），时间由轨道自己的起止秒给。
+ * 字号是「一个字的高度占屏幕高度的比例」，颗粒是「一个噪域格子的边长占屏幕高度的比例」。
+ */
+export interface TextNoiseEffect {
+  /** 文字内容，`\n` 分行。 */
+  text: string;
+  /** 字体族：默认用引擎那份 `assets/font.ttf`（界面里注册成 `Phigros`），也可以填系统字体名。 */
+  fontFamily: string;
+  /** 噪域颜色（`#RRGGBB`）：等于引擎原生红（`#E61A1A`）时按原生色走，不写进谱面。 */
+  color: string;
+  /** 字号：字高占屏幕高度的比例。 */
+  fontSize: number;
+  /** 颗粒：一个噪域格子的边长占屏幕高度的比例（越小越细，方块越多）。 */
+  cell: number;
+  /** 文字块中心在屏幕上的位置（0~1，x 从左往右、y 从上往下）。 */
+  x: number;
+  y: number;
+  /** 行距（字高的倍数）。 */
+  lineHeight: number;
+  /** 字间距（em，正数拉开、负数收紧）。 */
+  letterSpacing: number;
+  /** 整段文字绕自己的中心转多少度（正数顺时针）。 */
+  rotation: number;
+  /** 反转：噪域铺满整屏，文字的位置挖空（用补集矩形拼出来，不依赖引擎的减算通道）。 */
+  invert: boolean;
+  /**
+   * 反相：只把生成方块的 `isSubtract` 标成 true（引擎的减算通道），几何不变。
+   *
+   * 与 `invert` 互不影响，可以同时开着 —— 一个改方块的减算标记，一个改铺哪些方块。
+   */
+  subtract: boolean;
+  /**
+   * 融入原谱：不带颜色、材质覆盖，完全按谱面自己的噪域渲染设置画。
+   *
+   * 谱面自带的噪域长什么样，这段文字就长什么样（颜色、火花、扭曲都跟着全局走），
+   * 适合让文字看起来是谱面本身的一部分，而不是后贴上去的一层。
+   */
+  blend: boolean;
+  /**
+   * 这条特效轨自己的噪域材质：引擎按方块带材质，所以同一张谱面里两条特效轨可以长得不一样。
+   * 老草稿没有这一项时退回 `EditorDraft.noise` 或 `DEFAULT_NOISE_MATERIAL`。
+   */
+  material: NoiseMaterial;
+}
+
+/**
+ * 噪域材质：噪域方块里那层噪声长什么样。
+ *
+ * 引擎把这些当**整张谱面共用的渲染配置**（不是每个方块各带一份），所以一份草稿只有一套。
+ * 导出时写进谱面包根上的 `config.toml`：DPRecorder 渲染这张谱面时会把它合并进渲染配置，
+ * 编辑器预览也读同一份（塞进内存文件表交给 wasm 引擎）。键名与 `RenderConfig` 一致，
+ * 前后端（`drafts.rs`）用同一套名字，省掉一层映射。
+ */
+export interface NoiseMaterial {
+  /** 噪声斑点：底噪里那些大块斑。 */
+  blockAreaNoiseBlotch: boolean;
+  /** 噪域火花：方块边缘飞溅的小点。 */
+  blockAreaSpark: boolean;
+  /** 噪域扭曲：整块噪域随时间扭动。 */
+  blockAreaDistort: boolean;
+  /** 扭曲强度。 */
+  blockAreaDisplaceStrength: number;
+  /** 噪声半径。 */
+  blockAreaNoiseRadius: number;
+  /** 噪声平滑度。 */
+  blockAreaNoiseSmoothness: number;
+  /** 流动速度。 */
+  blockAreaDisplaceSpeed: number;
+  /** 边缘破碎。 */
+  blockAreaEdgeNoise: number;
+  /** 噪域密度（引擎目前不拿它画格子，按渲染页的取值原样带上）。 */
+  blockAreaDensity: number;
+  /** 颗粒大小：噪声格子的边长。 */
+  blockAreaPixelScale: number;
+  /** 简化噪域：走引擎的简化管线。 */
+  simplifiedBlockArea: boolean;
+  /** 噪域打击光晕。 */
+  blockAreaHover: boolean;
+  /** 打击光晕半径。 */
+  blockAreaHoverRadius: number;
+  /** 噪域透明度。 */
+  blockAreaAlpha: number;
+}
+
+/** 与渲染页的默认值一致（`DEFAULT_RENDER_CONFIG`），改一处要两边一起改。 */
+export const DEFAULT_NOISE_MATERIAL: NoiseMaterial = {
+  blockAreaNoiseBlotch: true,
+  blockAreaSpark: true,
+  blockAreaDistort: true,
+  blockAreaDisplaceStrength: 0.15,
+  blockAreaNoiseRadius: 0.48,
+  blockAreaNoiseSmoothness: 1,
+  blockAreaDisplaceSpeed: 1.5,
+  blockAreaEdgeNoise: 1,
+  blockAreaDensity: 2.5,
+  blockAreaPixelScale: 6,
+  simplifiedBlockArea: false,
+  blockAreaHover: true,
+  blockAreaHoverRadius: 0.5,
+  blockAreaAlpha: 0.25,
+};
+
+/**
+ * 特效轨上的一个片段：一段起止时间 + 这一段自己的效果参数。
+ *
+ * 一条特效轨可以放好几个片段（比如同一行在 3 秒和 12 秒各出现一次文字噪域），
+ * 片段之间互不影响，拖动片段可以换到别的特效轨上（换层级）。片段数组的顺序就是
+ * 同一行里后画的顺序，时间上不重叠时顺序没有意义。
+ */
+export interface DraftClip {
+  id: string;
+  /** 片段起点（秒）。 */
+  start: number;
+  /** 片段长度（秒）。 */
+  length: number;
+  /** 这一段的文字噪域参数（`effect` 轨专用）。 */
+  effect?: TextNoiseEffect | null;
+}
+
+/**
+ * 自己加上去的一条轨道上的片段：放的一样是素材库里的某一项。
+ *
+ * 主轨道（音乐 / 谱面 / 曲绘）的长度由音乐定；这些轨道的长度由 `length` 自己定，
+ * 所以可以比音乐还长（比如把曲绘铺到曲子结束之后）。`start` 与 `length` 都能在时间轴上
+ * 直接拖（拖片段本身改起点、拖两端改长度），右栏那两个数字框是同一份数据的另一种改法。
+ *
+ * 特效轨不用 `start` / `length` / `effect`，改用 `clips`（一行多段）；老草稿里这三项还在，
+ * 载入时由后端迁移成一个片段。
+ */
+export interface DraftLane {
+  id: string;
+  /** 轨道名，空着时界面显示「轨道 n」。 */
+  name: string;
+  media: DraftMedia | null;
+  /** 片段起点（秒）。 */
+  start: number;
+  /** 片段长度（秒）。 */
+  length: number;
+  /** 这条轨道放什么：图片 / 文字 / 音频 / 特效。 */
+  kind: DraftLaneKind;
+  /** 文字轨上的文字（只有 `text` 用）。 */
+  text: string;
+  /** 特效轨上的效果参数（只有 `effect` 用，现在只有文字噪域；老草稿的单片段）。 */
+  effect?: TextNoiseEffect | null;
+  /** 特效轨上的片段列表（一行可以有好几段）。 */
+  clips?: DraftClip[];
+}
+
+/** 一份草稿（剪映那样的项目）：三条主轨道 + 自己加的轨道 + 素材库，落在 `<程序目录>/dpe/editor/drafts/<id>/draft.json`。 */
 export interface EditorDraft {
   id: string;
   name: string;
@@ -1009,8 +1177,15 @@ export interface EditorDraft {
   chart: DraftMedia | null;
   music: DraftMedia | null;
   cover: DraftMedia | null;
+  /** 自己加的轨道：主轨道之外还能往上排，长度不受音乐限制。 */
+  lanes: DraftLane[];
   /** 导入过的全部素材（素材库），轨道上那三项是这里的引用。 */
   media: DraftMedia[];
   /** 素材库里的文件夹（只分组，素材仍在原处）。 */
   folders: DraftFolder[];
+  /**
+   * 噪域材质（`effect` 轨用到时才写）：整张谱面共用一套，导出时进谱面包的 `config.toml`。
+   * 没加过特效轨的草稿是 `null`，导出就不带这份配置。
+   */
+  noise?: NoiseMaterial | null;
 }

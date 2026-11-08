@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::common;
+use crate::lyrics;
 
 /// 谱面：落到「谱面」轨道上。目录（摊开的谱面）与 `.pez` / `.zip` 都算。
 pub const KIND_CHART: &str = "chart";
@@ -24,6 +25,9 @@ pub const KIND_MUSIC: &str = "music";
 
 /// 曲绘：落到「曲绘」轨道上。
 pub const KIND_COVER: &str = "cover";
+
+/// 歌词：不占某条固定轨道 —— 拖到时间轴上时按文件里的时间摊成一条特效轨，一句一个片段。
+pub const KIND_LYRIC: &str = "lyric";
 
 /// 「导入素材」往下翻的层数上限：素材通常就摊在谱面包顶层，但允许三十一层嵌套。
 const MAX_MEDIA_DEPTH: usize = 31;
@@ -36,7 +40,7 @@ pub struct DraftMedia {
     pub path: String,
     /// 显示名（文件名或目录名）。
     pub name: String,
-    /// [`KIND_CHART`] / [`KIND_MUSIC`] / [`KIND_COVER`]。
+    /// [`KIND_CHART`] / [`KIND_MUSIC`] / [`KIND_COVER`] / [`KIND_LYRIC`]。
     pub kind: String,
     /// 素材库里归到哪个文件夹（[`DraftFolder::id`]）；空着就是摊在根上。
     pub folder: Option<String>,
@@ -74,6 +78,120 @@ pub struct DraftInfo {
     pub composer: String,
 }
 
+/// 默认字体：仓库根 `assets/font.ttf`，界面里注册成 `Phigros`，与引擎画面同一份。
+pub const NATIVE_FONT: &str = "Phigros";
+
+/// 引擎原生噪域红（`block_area_color = [0.9, 0.1, 0.1]`）；等于它的颜色走原生材质。
+pub const NATIVE_NOISE_COLOR: &str = "#e61a1a";
+
+/// 文字噪域的参数：一段文字按字号、字体排出来，再按格子取成噪域方块。
+///
+/// 字号、颗粒、位置都按**屏幕高度的比例**记（0~1），换个分辨率放出来还是同一个构图；
+/// 这样谱面里也不依赖具体像素。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TextNoiseEffect {
+    /// 要铺成噪域的文字；可以多行（`\n` 分行）。
+    pub text: String,
+    /// 字体名，CSS 与引擎两侧都按这个名字找（默认是内置那份 `assets/font.ttf`）。
+    pub font_family: String,
+    /// 噪域颜色（`#rrggbb`）。等于引擎原生红时按原生色走，不写进谱面。
+    pub color: String,
+    /// 字号：占屏高的比例。
+    pub font_size: f64,
+    /// 颗粒：一个格子的边长占屏高的比例，越小格子越细。
+    pub cell: f64,
+    /// 文字中心点的位置（屏幕比例，0~1，`y` 从上往下）。
+    pub x: f64,
+    pub y: f64,
+    /// 行距：字号的倍数。
+    pub line_height: f64,
+    /// 字间距：字号的倍数（0 是字体自己的间距，负数收紧）。
+    pub letter_spacing: f64,
+    /// 整段文字绕自己的中心转多少度（正数顺时针）。
+    pub rotation: f64,
+    /// 反转：铺「除文字之外」的整片噪域，把文字挖成空白（用补集矩形拼）。
+    pub invert: bool,
+    /// 反相：生成方块时把 `isSubtract` 标成 true（引擎的减算通道），几何不变，可与反转同开。
+    pub subtract: bool,
+    /// 融入原谱：不写颜色与材质覆盖，跟随谱面自己的噪域渲染设置。
+    pub blend: bool,
+    /// 这条特效轨自己的噪域材质；老草稿留空，读的时候由界面按草稿上那份（`EditorDraft.noise`）兜底。
+    pub material: Option<NoiseMaterial>,
+}
+
+impl Default for TextNoiseEffect {
+    fn default() -> Self {
+        Self {
+            text: "Text".to_string(),
+            font_family: NATIVE_FONT.to_string(),
+            color: NATIVE_NOISE_COLOR.to_string(),
+            font_size: 0.5,
+            cell: 0.012,
+            x: 0.5,
+            y: 0.5,
+            line_height: 1.25,
+            letter_spacing: 0.0,
+            rotation: 0.0,
+            invert: false,
+            subtract: false,
+            blend: false,
+            material: None,
+        }
+    }
+}
+
+/// 特效轨上的一个片段：一段起止时间 + 这一段自己的效果参数。
+///
+/// 一条特效轨可以放好几个片段（同一行在不同时间各出现一次），片段之间互不影响；
+/// 拖动片段可以换到别的特效轨上（换层级）。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct DraftClip {
+    pub id: String,
+    /// 片段起点（秒）。
+    pub start: f64,
+    /// 片段长度（秒）。
+    pub length: f64,
+    /// 这一段的文字噪域参数（`effect` 轨专用）。
+    pub effect: Option<TextNoiseEffect>,
+}
+
+/// 自己加上去的一条轨道上的片段：放的一样是素材库里的某一项。
+///
+/// 主轨道（音乐 / 谱面 / 曲绘）的长度跟着音乐走；这些轨道的长度由 `length` 自己定，
+/// 所以能比音乐还长（比如把曲绘铺到曲子结束之后）。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct DraftLane {
+    pub id: String,
+    /// 轨道名，空着时界面显示「轨道 n」。
+    pub name: String,
+    /// 轨道上的素材；空着就是还没放东西。
+    pub media: Option<DraftMedia>,
+    /// 片段起点（秒）。
+    pub start: f64,
+    /// 片段长度（秒）。
+    pub length: f64,
+    /// 这条轨道放什么：`image` 图片 / `text` 文字 / `audio` 音频 / `effect` 特效。
+    /// 往上加的轨道只能放图片或文字，往下加的只能放音频。
+    #[serde(default = "default_lane_kind")]
+    pub kind: String,
+    /// 文字轨上的文字（只有 `text` 用）。
+    #[serde(default)]
+    pub text: String,
+    /// 特效轨的老字段：只有一段时（老草稿）参数写在这儿，载入时迁进 `clips`。
+    #[serde(default)]
+    pub effect: Option<TextNoiseEffect>,
+    /// 特效轨的片段列表（一行可以放好几段）。
+    #[serde(default)]
+    pub clips: Vec<DraftClip>,
+}
+
+fn default_lane_kind() -> String {
+    "image".to_string()
+}
+
 /// 手工写草稿 JSON 时不该被旧字段卡住，所以除了 id 之外都给默认值。
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct EditorDraft {
@@ -91,19 +209,26 @@ pub struct EditorDraft {
     /// 草稿目录的绝对路径，只给界面显示用。写盘时会被清空，所以不进 draft.json。
     #[serde(default)]
     pub dir: String,
-    /// 三条轨道上的素材；空着就是那条轨道上还没放东西。
+    /// 三条主轨道上的素材；空着就是那条轨道上还没放东西。
     #[serde(default)]
     pub chart: Option<DraftMedia>,
     #[serde(default)]
     pub music: Option<DraftMedia>,
     #[serde(default)]
     pub cover: Option<DraftMedia>,
+    /// 自己加的轨道（主轨道之外），长度不受音乐限制。
+    #[serde(default)]
+    pub lanes: Vec<DraftLane>,
     /// 导入过的全部素材（素材库）。轨道上那三项是这里面的引用。
     #[serde(default)]
     pub media: Vec<DraftMedia>,
     /// 素材库里的文件夹（只有分组作用，素材还在原来的位置）。
     #[serde(default)]
     pub folders: Vec<DraftFolder>,
+    /// 老草稿的噪域材质：新草稿的材质存在每条特效轨的 `effect.material` 上，
+    /// 这一份只在读老草稿时给轨道兜底、并当新轨道的默认值。
+    #[serde(default)]
+    pub noise: Option<NoiseMaterial>,
 }
 
 impl EditorDraft {
@@ -168,7 +293,197 @@ pub fn load(id: &str) -> Result<EditorDraft> {
     draft.dir = drafts_dir()?.join(id).to_string_lossy().to_string();
     normalize_folders(&mut draft);
     normalize_dirs(&mut draft);
+    normalize_lanes(&mut draft);
+    normalize_noise(&mut draft);
     Ok(draft)
+}
+
+/// 自己加的轨道：时间参数只认有限的正数（手改过草稿时别让 NaN 一路传到界面上算宽度）。
+/// 指向目录的项也摘掉，理由和音乐 / 曲绘轨道一样 —— 目录不知道该放哪份文件。
+/// 种类只认四个值，别的（老草稿、手写错的）当图片轨；文字轨与特效轨不挂素材文件。
+fn normalize_lanes(draft: &mut EditorDraft) {
+    for lane in &mut draft.lanes {
+        if !lane.start.is_finite() || lane.start < 0.0 {
+            lane.start = 0.0;
+        }
+        if !lane.length.is_finite() || lane.length < 0.0 {
+            lane.length = 0.0;
+        }
+        if !matches!(lane.kind.as_str(), "image" | "text" | "audio" | "effect") {
+            lane.kind = default_lane_kind();
+        }
+        if lane.kind == "text"
+            || lane.kind == "effect"
+            || lane.media.as_ref().is_some_and(|it| Path::new(&it.path).is_dir())
+        {
+            lane.media = None;
+        }
+        if lane.kind == "effect" {
+            if lane.clips.is_empty() {
+                // 老草稿的轨道上只有一段：起止与参数都在轨道自己身上，迁成一个片段
+                if let Some(effect) = lane.effect.take() {
+                    lane.clips.push(DraftClip {
+                        id: format!("{}-clip", lane.id),
+                        start: lane.start,
+                        length: lane.length,
+                        effect: Some(effect),
+                    });
+                }
+            } else {
+                lane.effect = None;
+            }
+            normalize_clips(lane);
+        } else {
+            // 换过种类的轨道（比如手改 JSON）别把上一个种类的参数带在身上
+            lane.effect = None;
+            lane.clips.clear();
+        }
+    }
+    draft.lanes.retain(|lane| !lane.id.is_empty());
+}
+
+/// 特效轨的片段：时间收成有限正数、参数逐段收范围，id 重复或空着就补一个。
+fn normalize_clips(lane: &mut DraftLane) {
+    let mut seen: Vec<String> = Vec::new();
+    for (index, clip) in lane.clips.iter_mut().enumerate() {
+        if !clip.start.is_finite() || clip.start < 0.0 {
+            clip.start = 0.0;
+        }
+        if !clip.length.is_finite() || clip.length < 0.01 {
+            clip.length = 0.01;
+        }
+        if clip.id.is_empty() || seen.contains(&clip.id) {
+            clip.id = format!("{}-c{}", lane.id, index + 1);
+        }
+        seen.push(clip.id.clone());
+        normalize_effect(clip.effect.get_or_insert_with(TextNoiseEffect::default));
+    }
+}
+
+/// 噪域材质：噪域方块里那层噪声长什么样，一条特效轨一份。
+///
+/// 引擎按方块带材质（每个噪域条目可以带上自己那份），所以同一张谱面里两条特效轨
+/// 能用不同的材质；没写进条目的键按渲染配置走。字段名与 `RenderConfig` 的 camelCase 键一致，
+/// 前后端不用再做一层映射。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NoiseMaterial {
+    pub block_area_noise_blotch: bool,
+    pub block_area_spark: bool,
+    pub block_area_distort: bool,
+    pub block_area_displace_strength: f32,
+    pub block_area_noise_radius: f32,
+    pub block_area_noise_smoothness: f32,
+    pub block_area_displace_speed: f32,
+    pub block_area_edge_noise: f32,
+    pub block_area_density: f32,
+    pub block_area_pixel_scale: f32,
+    pub simplified_block_area: bool,
+    pub block_area_hover: bool,
+    pub block_area_hover_radius: f32,
+    pub block_area_alpha: f32,
+}
+
+impl Default for NoiseMaterial {
+    fn default() -> Self {
+        Self {
+            block_area_noise_blotch: true,
+            block_area_spark: true,
+            block_area_distort: true,
+            block_area_displace_strength: 0.15,
+            block_area_noise_radius: 0.48,
+            block_area_noise_smoothness: 1.0,
+            block_area_displace_speed: 1.5,
+            block_area_edge_noise: 1.0,
+            block_area_density: 2.5,
+            block_area_pixel_scale: 6.0,
+            simplified_block_area: false,
+            block_area_hover: true,
+            block_area_hover_radius: 0.5,
+            block_area_alpha: 0.25,
+        }
+    }
+}
+
+/// 特效参数：越界或非有限的值收进可用范围，别让噪域一格都画不出来（或一次画几十万个）。
+fn normalize_effect(effect: &mut TextNoiseEffect) {
+    let fallback = TextNoiseEffect::default();
+    effect.font_size = clamp_or(effect.font_size, 0.005, 2.0, fallback.font_size);
+    effect.cell = clamp_or(effect.cell, 0.002, 0.5, fallback.cell);
+    effect.x = clamp_or(effect.x, 0.0, 1.0, fallback.x);
+    effect.y = clamp_or(effect.y, 0.0, 1.0, fallback.y);
+    effect.line_height = clamp_or(effect.line_height, 0.5, 4.0, fallback.line_height);
+    effect.letter_spacing = clamp_or(effect.letter_spacing, -1.0, 3.0, fallback.letter_spacing);
+    effect.rotation = clamp_or(effect.rotation, -360.0, 360.0, fallback.rotation);
+    effect.color = normalize_color(&effect.color);
+    if let Some(material) = effect.material.as_mut() {
+        normalize_material(material);
+    }
+}
+
+/// 颜色收成小写 `#rrggbb`：只认 3 / 6 位十六进制，认不出来就退回原生红。
+///
+/// 与前端 `text-noise.ts::normalizeNoiseColor` 同一套规则；两边各收一道，
+/// 免得手改过的草稿 JSON 把一个引擎解析不了的颜色写进谱面。
+fn normalize_color(color: &str) -> String {
+    let digits = color.trim().trim_start_matches('#');
+    let hex: Vec<u8> = digits.bytes().collect();
+    let lower = digits.to_ascii_lowercase();
+    if hex.len() == 6 && hex.iter().all(|it| it.is_ascii_hexdigit()) {
+        return format!("#{lower}");
+    }
+    if hex.len() == 3 && hex.iter().all(|it| it.is_ascii_hexdigit()) {
+        let doubled: String = lower.chars().flat_map(|it| [it, it]).collect();
+        return format!("#{doubled}");
+    }
+    NATIVE_NOISE_COLOR.to_string()
+}
+
+/// 噪域材质：数值收进渲染页允许的范围。
+fn normalize_material(noise: &mut NoiseMaterial) {
+    let fallback = NoiseMaterial::default();
+    noise.block_area_displace_strength = clamp_or32(noise.block_area_displace_strength, 0.0, 2.0, fallback.block_area_displace_strength);
+    noise.block_area_noise_radius = clamp_or32(noise.block_area_noise_radius, 0.0, 2.0, fallback.block_area_noise_radius);
+    noise.block_area_noise_smoothness = clamp_or32(noise.block_area_noise_smoothness, 0.0, 8.0, fallback.block_area_noise_smoothness);
+    noise.block_area_displace_speed = clamp_or32(noise.block_area_displace_speed, 0.0, 10.0, fallback.block_area_displace_speed);
+    noise.block_area_edge_noise = clamp_or32(noise.block_area_edge_noise, 0.0, 4.0, fallback.block_area_edge_noise);
+    noise.block_area_density = clamp_or32(noise.block_area_density, 0.1, 20.0, fallback.block_area_density);
+    noise.block_area_pixel_scale = clamp_or32(noise.block_area_pixel_scale, 0.2, 64.0, fallback.block_area_pixel_scale);
+    noise.block_area_hover_radius = clamp_or32(noise.block_area_hover_radius, 0.0, 3.0, fallback.block_area_hover_radius);
+    noise.block_area_alpha = clamp_or32(noise.block_area_alpha, 0.0, 1.0, fallback.block_area_alpha);
+    // 「简化噪域」与「打击光晕」不在编辑器的可调项里（简化分支会关掉火花 / 斑点 / 扭曲，
+    // 而打击光晕要手指按在画面上才亮）。老草稿里勾过的值在这里归位，免得存着的 true
+    // 让预览看起来「没开火花」。
+    noise.simplified_block_area = false;
+    noise.block_area_hover = false;
+}
+
+/// 老草稿上那份「整张谱面共用」的材质：没有特效轨就丢掉（没有噪域可画，留着只会
+/// 在导出包里多一份用不上的配置）；有的话仍然收一遍范围，界面上会拿它给新轨道当默认值。
+fn normalize_noise(draft: &mut EditorDraft) {
+    if !draft.lanes.iter().any(|lane| lane.kind == "effect") {
+        draft.noise = None;
+        return;
+    }
+    if let Some(noise) = draft.noise.as_mut() {
+        normalize_material(noise);
+    }
+}
+
+fn clamp_or32(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(low, high)
+    } else {
+        fallback
+    }
+}
+
+fn clamp_or(value: f64, low: f64, high: f64, fallback: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(low, high)
+    } else {
+        fallback
+    }
 }
 
 /// 把素材库的文件夹关系修一遍：上级已经不在了（手改过草稿 JSON、或者旧草稿）就退回根上，
@@ -343,8 +658,10 @@ pub fn create(name: Option<String>) -> Result<EditorDraft> {
         chart: None,
         music: None,
         cover: None,
+        lanes: Vec::new(),
         media: Vec::new(),
         folders: Vec::new(),
+        noise: None,
     })
 }
 
@@ -372,6 +689,8 @@ pub fn find_by_chart(path: &str) -> Option<EditorDraft> {
 /// 谱面除了 `.pez` / `.zip` 之外还认 `.mc` / `.pec` / `.json` / `.yaml`（单文件谱面）。
 /// 目录**永远不算素材**：一个谱面包摊开后是「谱面 json + 音频 + 曲绘」三份文件，
 /// 而不是一个文件夹在轨道上代表整张谱面。
+///
+/// 歌词（[`KIND_LYRIC`]）只进素材库，铺到时间轴上时才按里面的时间拆成一条特效轨。
 pub fn classify(path: &Path) -> Option<&'static str> {
     if path.is_dir() {
         return None;
@@ -380,6 +699,10 @@ pub fn classify(path: &Path) -> Option<&'static str> {
         .extension()
         .map(|it| it.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
+    // 歌词的扩展名只在 `lyrics` 里列一次（那边还要按扩展名挑解析器），这里不重复
+    if lyrics::is_lyric(path) {
+        return Some(KIND_LYRIC);
+    }
     match ext.as_str() {
         "pez" | "zip" | "mc" | "pec" | "json" | "yaml" | "yml" => Some(KIND_CHART),
         "mp3" | "ogg" | "wav" | "flac" | "m4a" | "aac" | "opus" => Some(KIND_MUSIC),
@@ -678,6 +1001,8 @@ mod tests {
         assert_eq!(classify(Path::new("a/b.ZIP")), Some(KIND_CHART));
         assert_eq!(classify(Path::new("a/b.mp3")), Some(KIND_MUSIC));
         assert_eq!(classify(Path::new("a/b.PNG")), Some(KIND_COVER));
+        assert_eq!(classify(Path::new("a/b.lrc")), Some(KIND_LYRIC));
+        assert_eq!(classify(Path::new("a/b.SRT")), Some(KIND_LYRIC));
         assert_eq!(classify(Path::new("a/b.txt")), None);
     }
 
@@ -703,8 +1028,10 @@ mod tests {
             chart: None,
             music: None,
             cover: None,
+            lanes: Vec::new(),
             media: Vec::new(),
             folders: Vec::new(),
+            noise: None,
         };
         draft.assign(media(KIND_MUSIC, "C:/a/song.ogg"));
         draft.assign(media(KIND_CHART, "C:/a/chart.pez"));

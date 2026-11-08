@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useStorage } from '@vueuse/core';
 
 import { useI18n } from 'vue-i18n';
@@ -8,6 +8,9 @@ const { t } = useI18n();
 import { invoke } from '@tauri-apps/api/core';
 
 import { toastError } from '@/common';
+import type { DraftInfo } from '@/model';
+import type { BlockAreaEntry } from './text-noise';
+import { withBlockAreas } from './text-noise';
 
 /**
  * 编辑窗口左上角的预览区：一块 16:9 的舞台，里面用 iframe 装网页版的引擎。
@@ -30,10 +33,14 @@ const props = withDefaults(
     musicPath?: string;
     /** 曲绘轨道上的文件；可选，没有就是个黑底。 */
     coverPath?: string;
+    /** 草稿「信息」页里填的那份：写进预览的 info.txt，画面上的曲名 / 难度跟着它走。 */
+    info?: DraftInfo | null;
+    /** 特效轨铺出来的噪域方块：并进谱面字节里，引擎没有别的入口能加噪域。 */
+    blockAreas?: BlockAreaEntry[];
     /** 是否已经占满整窗（窗口全屏 + 编辑窗口只剩预览）。图标跟着它换，实际开关由父级做。 */
     fullscreen?: boolean;
   }>(),
-  { musicPath: '', coverPath: '' },
+  { musicPath: '', coverPath: '', info: null, blockAreas: () => [], fullscreen: false },
 );
 
 const emit = defineEmits<{ 'toggle-fullscreen': [] }>();
@@ -61,6 +68,8 @@ type PlayerHandle = {
   getDuration: () => number;
   /** 音乐 / 音效音量，0~1；`public/player/wasm` 是重建前的旧产物时可能没有这一项。 */
   setVolume?: (volume: { music?: number; sfx?: number }) => void;
+  /** 换一份谱面原地重载；旧产物里没有这一项（`softReload` 会退回整页重开）。 */
+  reload?: (files: Record<string, Uint8Array>) => void;
 };
 
 function player(): PlayerHandle | null {
@@ -182,12 +191,87 @@ function restorePlayhead(seekTo: number, playing: boolean) {
  * 最低要求是一首歌：没有音乐、或者音乐文件已经不在了，就什么都不起，画面上说明。
  * 谱面与曲绘都可以没有 —— 没谱面时塞一张空谱，没曲绘时背景就是黑的。
  *
- * 文件名一律用轨道上那份文件自己的名字，再写一份只含 `Chart` / `Music` / `Image` 的
- * `info.txt`：引擎照这份文件里的名字去取文件，换过的音乐 / 曲绘才能顶替谱面包自带的那份；
- * 也只写这三行 —— 曲名、难度这些由草稿自己管，不往谱面里塞。
+ * 文件名一律用轨道上那份文件自己的名字，再写一份 `info.txt`：引擎照它去取文件（换过的音乐 /
+ * 曲绘才能顶替谱面包自带的那份），画面上的曲名 / 难度也从它来 —— 那份是草稿「信息」页里的，
+ * 和谱面包自己带的 META 不是一回事。信息页空着时那几行不写，引擎就退回谱面自己的写法。
+ */
+type BuiltFiles = {
+  files: Record<string, Uint8Array>;
+  chart: string;
+  music: string;
+  musicBytes: Uint8Array;
+};
+
+/**
+ * 把三条轨道读成一套交给播放页的文件；没有可用的音乐时返回 null（调用方切到「未添加音乐」）。
+ *
+ * 谱面与曲绘都可以没有 —— 没谱面时塞一张空谱，没曲绘时背景就是黑的；文件名一律用轨道上
+ * 那份文件自己的名字，再写一份 `info.txt`：引擎照它去取文件（换过的音乐 / 曲绘才能顶替
+ * 谱面包自带的那份），画面上的曲名 / 难度也从它来 —— 那份是草稿「信息」页里的，
+ * 和谱面包自己带的 META 不是一回事。信息页空着时那几行不写，引擎就退回谱面自己的写法。
+ */
+async function buildFiles(): Promise<BuiltFiles | null> {
+  const files: Record<string, Uint8Array> = {};
+  if (props.chartPath) {
+    try {
+      const names = await invoke<string[]>('list_editor_chart_files', {
+        path: props.chartPath,
+      });
+      for (const name of names) {
+        const raw = await invoke<ArrayBuffer>('read_editor_chart_file', {
+          path: props.chartPath,
+          name,
+        });
+        files[name] = new Uint8Array(raw);
+      }
+    } catch {
+      // 谱面文件读不动（比如刚被删掉）：当没有谱面，光有音乐照样能预览
+    }
+  }
+  const musicBytes = props.musicPath ? await readMedia(props.musicPath) : null;
+  if (!musicBytes) return null;
+  const music = baseName(props.musicPath);
+  files[music] = musicBytes;
+  const coverBytes = props.coverPath ? await readMedia(props.coverPath) : null;
+  const cover = coverBytes ? baseName(props.coverPath) : '';
+  if (coverBytes) files[cover] = coverBytes;
+
+  // 谱面轨道上那份文件优先：素材库把压缩包解成了文件夹，列出来的是整包的文件，
+  // 包里可能不止一个 json（多难度、旧版本），照名字认回用户放到轨道上的那份
+  const wanted = props.chartPath ? baseName(props.chartPath) : '';
+  const chart =
+    Object.keys(files).find((name) => name === wanted || name.endsWith(`/${wanted}`)) ??
+    Object.keys(files).find((name) => isChartName(name)) ??
+    EMPTY_CHART_NAME;
+  if (chart === EMPTY_CHART_NAME) files[EMPTY_CHART_NAME] = EMPTY_CHART;
+  // 特效轨的噪域没有别的入口：编辑器只能在交给引擎之前并进谱面字节里
+  // （引擎读谱面顶层的 `blockAreaList`，PGR / RPE 都认，`.pec` 不认，那种谱面原样退回）
+  if (props.blockAreas.length > 0 && files[chart]) {
+    files[chart] = withBlockAreas(files[chart], props.blockAreas, chart);
+  }
+  // 谱面包里自带的那份 info 会把音乐 / 曲绘指到包里的文件名，整份丢掉，换成下面这份
+  for (const name of Object.keys(files)) {
+    if (isInfoName(name)) delete files[name];
+  }
+  const manifest = ['#', `Chart: ${chart}`, `Music: ${music}`];
+  if (cover) manifest.push(`Image: ${cover}`);
+  // 信息页填了哪几行就写哪几行：画面上那两处字直接读这份 info.txt
+  const info = props.info;
+  if (info?.name.trim()) manifest.push(`Name: ${info.name.trim()}`);
+  if (info?.difficulty.trim()) manifest.push(`Level: ${info.difficulty.trim()}`);
+  if (info?.charter.trim()) manifest.push(`Charter: ${info.charter.trim()}`);
+  if (info?.composer.trim()) manifest.push(`Composer: ${info.composer.trim()}`);
+  files['info.txt'] = new TextEncoder().encode(manifest.join('\n'));
+  return { files, chart, music, musicBytes };
+}
+
+/**
+ * 装配播放页：换轨道、第一次进来、播放页不可重载时才走这条（会整页重开）。
+ *
+ * 换轨道前先把播放头与播放态记下来，新页面就绪之后照原样落回去 —— 默认是停着，
+ * 重搭完也不该自己播起来，更不该把播放头弹回曲首。
  */
 async function preparePlayer() {
-  // 换轨道会整页重开：先把播放头与播放态记下来，新页面就绪之后照原样落回去。
   // 播放页没起来（第一次装配、或者上一轮就没有音乐）时按「0 秒、停着」处理。
   const previous = player();
   const seekTo = previous?.ready() ? previous.getTime() || 0 : 0;
@@ -200,60 +284,48 @@ async function preparePlayer() {
   // 这一轮读完就按当前状态重搭了，轨道文件的快照留给下一轮轮询重新建立
   trackSnapshot = null;
   try {
-    const files: Record<string, Uint8Array> = {};
-    if (props.chartPath) {
-      try {
-        const names = await invoke<string[]>('list_editor_chart_files', {
-          path: props.chartPath,
-        });
-        for (const name of names) {
-          const raw = await invoke<ArrayBuffer>('read_editor_chart_file', {
-            path: props.chartPath,
-            name,
-          });
-          files[name] = new Uint8Array(raw);
-        }
-      } catch {
-        // 谱面文件读不动（比如刚被删掉）：当没有谱面，光有音乐照样能预览
-      }
-    }
-    const musicBytes = props.musicPath ? await readMedia(props.musicPath) : null;
-    if (!musicBytes) {
+    const built = await buildFiles();
+    if (!built) {
       loading.value = false;
       noMusic.value = true;
       return;
     }
-    const music = baseName(props.musicPath);
-    files[music] = musicBytes;
-    const coverBytes = props.coverPath ? await readMedia(props.coverPath) : null;
-    const cover = coverBytes ? baseName(props.coverPath) : '';
-    if (coverBytes) files[cover] = coverBytes;
-
-    // 谱面轨道上那份文件优先：素材库把压缩包解成了文件夹，列出来的是整包的文件，
-    // 包里可能不止一个 json（多难度、旧版本），照名字认回用户放到轨道上的那份
-    const wanted = props.chartPath ? baseName(props.chartPath) : '';
-    const chart =
-      Object.keys(files).find((name) => name === wanted || name.endsWith(`/${wanted}`)) ??
-      Object.keys(files).find((name) => isChartName(name)) ??
-      EMPTY_CHART_NAME;
-    if (chart === EMPTY_CHART_NAME) files[EMPTY_CHART_NAME] = EMPTY_CHART;
-    // 谱面包里自带的那份 info 会把音乐 / 曲绘指到包里的文件名，整份丢掉，换成下面这份
-    for (const name of Object.keys(files)) {
-      if (isInfoName(name)) delete files[name];
-    }
-    const manifest = ['#', `Chart: ${chart}`, `Music: ${music}`];
-    if (cover) manifest.push(`Image: ${cover}`);
-    files['info.txt'] = new TextEncoder().encode(manifest.join('\n'));
-
     (window as unknown as { __dprwPendingChart?: Record<string, Uint8Array> }).__dprwPendingChart =
-      files;
-    trackDuration.value = await probeDuration(musicBytes);
+      built.files;
+    trackDuration.value = await probeDuration(built.musicBytes);
     // `mute=1`：预览区只当画面用，播放页那条 BGM 桥不该出声（也不该被自动播放拦住）。
     // `paused=1`：打开就停在 0 秒。`r` 是每次装配的时间戳，点「重新载入」也会真的重载一次播放页。
     playerSrc.value = `/player/player.html?mute=1&paused=1&r=${Date.now()}`;
+    loadedSignature = signatureNow();
     waitPlayerReady(seekTo, playing);
   } catch (err) {
     loading.value = false;
+    toastError(err);
+  }
+}
+
+/**
+ * 把改过的谱面 / 参数交给同一个引擎实例原地重载（`wasm_player.rs` 的 `wm_reload`）。
+ *
+ * 不重开 iframe：播放头、播放态、画面都不跳，改一个数字就能立刻看到引擎里的结果。
+ * 播放页是旧产物（没有 `reload`）时退回整页重开。
+ */
+async function softReload() {
+  const handle = player();
+  if (!handle?.reload || !handle.ready()) {
+    void preparePlayer();
+    return;
+  }
+  try {
+    const built = await buildFiles();
+    if (!built) {
+      noMusic.value = true;
+      return;
+    }
+    trackDuration.value = await probeDuration(built.musicBytes);
+    handle.reload(built.files);
+    loadedSignature = signatureNow();
+  } catch (err) {
     toastError(err);
   }
 }
@@ -293,9 +365,9 @@ async function checkTrackFiles() {
   void preparePlayer();
 }
 
-/** 工具条左下角那颗刷新：把三条轨道重新读一遍、播放页重开。 */
+/** 工具条那颗刷新（和自动热重载走同一条路）：把三条轨道重新读一遍，交给同一个引擎实例原地重载。 */
 function reloadPreview() {
-  void preparePlayer();
+  void softReload();
 }
 
 watch(
@@ -303,6 +375,56 @@ watch(
   () => void preparePlayer(),
   { immediate: true },
 );
+
+/** 信息页那几个字段：写进预览包里的 `info.txt`，改了引擎的曲名 / 难度要重载。 */
+function infoSignature(): string {
+  const info = props.info;
+  return [info?.name, info?.difficulty, info?.charter, info?.composer].join('|');
+}
+
+/**
+ * 噪域方块签名：噪域是并进谱面字节里交给引擎的，改了就得重载才知道效果。
+ * 比对的是一串坐标 / 颜色 / 材质，不是数组本身 —— 草稿里别处的改动（信息页、素材库）
+ * 也会换掉 `blockAreas` 这个数组，但内容没变就不该触发重载。
+ */
+function blockSignature(): string {
+  return props.blockAreas
+    .map(
+      (it) =>
+        `${it.bottomLeftPercentage.x},${it.bottomLeftPercentage.y},${it.topRightPercentage.x},${it.topRightPercentage.y},${it.appearTime},${it.disableTime},${it.isSubtract ? 1 : 0},${it.color ?? ''},${it.material ? JSON.stringify(it.material) : ''}`,
+    )
+    .join(';');
+}
+
+/** 引擎当前画面里那份谱面的签名（最后一次成功装载时的样子）。 */
+let loadedSignature = '';
+
+function signatureNow(): string {
+  return `${infoSignature()}\u0001${blockSignature()}`;
+}
+
+/** 自动热重载：停手 `RELOAD_DELAY` 毫秒才把新版推进引擎，拖滑杆时只重载最后一版。 */
+const RELOAD_DELAY = 350;
+let reloadTimer = 0;
+
+function scheduleReload() {
+  window.clearTimeout(reloadTimer);
+  reloadTimer = window.setTimeout(() => {
+    reloadTimer = 0;
+    if (loading.value) {
+      // 上一轮整页装配还没结束，等它落定再推
+      scheduleReload();
+      return;
+    }
+    if (signatureNow() !== loadedSignature) void softReload();
+  }, RELOAD_DELAY);
+}
+
+watch(() => [infoSignature(), blockSignature()] as const, () => {
+  if (signatureNow() !== loadedSignature) scheduleReload();
+});
+
+onBeforeUnmount(() => window.clearTimeout(reloadTimer));
 
 defineExpose({
   ready: () => player()?.ready() ?? false,
@@ -466,11 +588,12 @@ watch(ratio, () => fitScreen());
     </div>
 
     <footer class="preview__bar">
-      <!-- 刷新：把草稿当前的三条轨道重新读一遍（改完信息页的曲名/难度后再点一下） -->
+      <!-- 刷新：把草稿当前的三条轨道重新读一遍。预览不自动重开，参数改完由用户点这里 -->
       <v-btn
         variant="text"
         size="small"
         icon="mdi-refresh"
+        class="preview__refresh"
         :title="t('editor-preview-refresh')"
         :disabled="!musicPath"
         @click="reloadPreview"
@@ -702,4 +825,5 @@ watch(ratio, () => fitScreen());
   padding: 0 var(--phi-space-2);
   border-top: 0.5px solid var(--phi-border-l1);
 }
+
 </style>

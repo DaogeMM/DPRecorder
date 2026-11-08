@@ -653,6 +653,8 @@ impl NextArea {
             judge_cover: 0,
             // 谱面里给了颜色就跟原生噪域一样走彩色材质（按它的色相旋转官方配色）。
             color: self.color,
+            // rpe-next 格式没有逐块材质，沿用全局配置。
+            material: None,
         };
         Some(Sample { zone, state: if active { 2 } else if ready { 1 } else { 0 }, layer: self.layer })
     }

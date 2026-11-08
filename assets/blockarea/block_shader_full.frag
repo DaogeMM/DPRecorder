@@ -246,7 +246,7 @@ vec4 fullActive() {
         u_xlat16.x = uUnityTime.x * _DisplaceSpeed;
         u_xlat33.y = u_xlat16.x * u_xlat16_3.x;
         u_xlat1.xy = u_xlat16_3.xy * u_xlat16.xx + displaceUV.xy;
-        u_xlat32.x = max(_BackgroundPixelScale, 1.0);
+        u_xlat32.x = max(_BackgroundPixelScale, 0.02);
         u_xlat1.xy = u_xlat1.xy * _ScreenParams.xy;
         u_xlat1.xy = u_xlat1.xy / u_xlat32.xx;
         u_xlat1.xy = floor(u_xlat1.xy);

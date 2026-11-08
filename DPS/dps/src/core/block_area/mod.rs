@@ -239,6 +239,30 @@ where
     })
 }
 
+/// 单块噪域的材质覆盖（可选）：没写的字段沿用渲染配置里的全局值。
+///
+/// 官方格式里材质是**整帧一套**的（`Config` 里的 `block_area_*`），这条扩展让每块噪域各自带一套，
+/// 于是同一个谱面里可以并存两种噪声 / 火花 / 颗粒。字段名与渲染配置一一对应（camelCase），
+/// 前端只写与默认值不同的那几项，所以全是 `Option`。
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct BlockAreaMaterial {
+    pub block_area_noise_blotch: Option<bool>,
+    pub block_area_spark: Option<bool>,
+    pub block_area_distort: Option<bool>,
+    pub block_area_hover: Option<bool>,
+    pub block_area_hover_radius: Option<f32>,
+    pub simplified_block_area: Option<bool>,
+    pub block_area_displace_strength: Option<f32>,
+    pub block_area_noise_radius: Option<f32>,
+    pub block_area_noise_smoothness: Option<f32>,
+    pub block_area_displace_speed: Option<f32>,
+    pub block_area_edge_noise: Option<f32>,
+    pub block_area_density: Option<f32>,
+    pub block_area_pixel_scale: Option<f32>,
+    pub block_area_alpha: Option<f32>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawBlockArea {
@@ -260,6 +284,9 @@ pub struct RawBlockArea {
     /// 见 [`deserialize_zone_color`]。
     #[serde(default, deserialize_with = "deserialize_zone_color")]
     pub color: Option<[f32; 3]>,
+    /// 这块噪域自己的材质覆盖；缺省就整帧一套全局材质（官方行为）。
+    #[serde(default)]
+    pub material: Option<BlockAreaMaterial>,
     #[serde(default)]
     rotate_events: Vec<RawRotateEvent>,
     #[serde(default)]
@@ -294,6 +321,8 @@ pub struct BlockArea {
     /// 来源见 [`RawBlockArea::color`]；渲染侧由 [`Zone::is_colored`] 判定要不要启用彩色材质
     /// 与颜色平面。
     pub color: Option<[f32; 3]>,
+    /// 这块噪域自己的材质覆盖（见 [`BlockAreaMaterial`]）。`None` = 用全局渲染配置。
+    pub material: Option<BlockAreaMaterial>,
     pub rotate_events: Vec<BlockAreaEvent>,
     pub move_events: Vec<BlockAreaEvent>,
     pub scale_events: Vec<BlockAreaEvent>,
@@ -354,6 +383,7 @@ impl BlockArea {
             disappear_time: f64::INFINITY,
             is_subtract: false,
             color: None,
+            material: None,
             rotate_events: Vec::new(),
             move_events: Vec::new(),
             scale_events: Vec::new(),
@@ -391,6 +421,7 @@ impl BlockArea {
             disappear_time: raw.disappear_time,
             is_subtract: raw.is_subtract,
             color: raw.color,
+            material: raw.material,
             rotate_events,
             move_events,
             scale_events,
@@ -634,6 +665,39 @@ fn quantize(v: f64) -> i64 {
     (v * SHAPE_QUANT).round() as i64
 }
 
+/// 材质覆盖的可哈希写法：未设置的项与「设成默认值」要能区分（前者沿用全局配置，
+/// 后者是明写），所以 `None` 单独用一个哨兵值表示。
+fn push_material_key(key: &mut Vec<i64>, material: &BlockAreaMaterial) {
+    fn opt_bool(key: &mut Vec<i64>, value: Option<bool>) {
+        key.push(match value {
+            None => 2,
+            Some(false) => 0,
+            Some(true) => 1,
+        });
+    }
+    fn opt_num(key: &mut Vec<i64>, value: Option<f32>) {
+        key.push(match value {
+            None => i64::MIN,
+            Some(v) if v.is_finite() => quantize(v as f64),
+            Some(_) => i64::MAX,
+        });
+    }
+    opt_bool(key, material.block_area_noise_blotch);
+    opt_bool(key, material.block_area_spark);
+    opt_bool(key, material.block_area_distort);
+    opt_bool(key, material.block_area_hover);
+    opt_bool(key, material.simplified_block_area);
+    opt_num(key, material.block_area_hover_radius);
+    opt_num(key, material.block_area_displace_strength);
+    opt_num(key, material.block_area_noise_radius);
+    opt_num(key, material.block_area_noise_smoothness);
+    opt_num(key, material.block_area_displace_speed);
+    opt_num(key, material.block_area_edge_noise);
+    opt_num(key, material.block_area_density);
+    opt_num(key, material.block_area_pixel_scale);
+    opt_num(key, material.block_area_alpha);
+}
+
 /// 把一类事件的关键帧按「相对 `appear_time`」写进键。
 #[inline]
 fn push_event_key(key: &mut Vec<i64>, events: &[BlockAreaEvent], appear_time: f64) {
@@ -663,6 +727,15 @@ impl BlockArea {
         push_event_key(key, &self.rotate_events, self.appear_time);
         push_event_key(key, &self.move_events, self.appear_time);
         push_event_key(key, &self.scale_events, self.appear_time);
+        // 材质也算「长什么样」：材质不同的两块不能并成一族，否则「噪域优化」会把它们
+        // 分到同一个 `slot`，两种材质抢同一套 uniform。
+        match &self.material {
+            None => key.push(0),
+            Some(material) => {
+                key.push(1);
+                push_material_key(key, material);
+            }
+        }
     }
 }
 

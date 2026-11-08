@@ -10,6 +10,7 @@ mod drafts;
 mod ffmpeg_download;
 mod icon;
 mod ipc;
+mod lyrics;
 mod malody_convert;
 mod merge;
 mod noise_player;
@@ -352,6 +353,7 @@ pub fn run() -> Result<()> {
             import_editor_media,
             import_editor_media_dir,
             read_editor_media,
+            parse_editor_lyrics,
             missing_editor_media,
             export_editor_draft,
             dpe_preview,
@@ -1832,6 +1834,15 @@ fn read_editor_media(path: String) -> Result<tauri::ipc::Response, InvokeError> 
     .map_err(InvokeError::from_anyhow)
 }
 
+/// 解析一份歌词文件（`.srt` / `.lrc` / `.ass` / `.ssa` / `.vtt`）：一句一条，带回起止时间。
+///
+/// 编辑窗口拿到这些句子后一句一个片段地铺到一条特效轨上（每个片段是一个文字噪域），
+/// 所以这里只负责读时间与文字；`.lrc` 没有结束时间，由前端按下一句的起点补。
+#[tauri::command]
+fn parse_editor_lyrics(path: String) -> Result<Vec<lyrics::LyricLine>, InvokeError> {
+    (|| Ok(lyrics::parse(Path::new(&path))?))().map_err(InvokeError::from_anyhow)
+}
+
 /// 挑出已经不存在的素材路径（草稿只记路径，原文件被挪走或删掉时要能看出来）。
 #[tauri::command]
 fn missing_editor_media(paths: Vec<String>) -> Vec<String> {
@@ -2050,8 +2061,15 @@ enum ExportEntry {
 /// 包里的内容就是「谱面包 + 音乐 + 曲绘 + 一份 `info.txt`」：谱面包按整包带上（目录递归、
 /// 压缩包读条目、解包缓存里摊出来的按包根找回整包），音乐与曲绘按原文件名铺在根上，
 /// `info.txt` 最后写，盖掉包里自带的那份。
+///
+/// `block_areas` 是编辑器里特效轨铺出来的噪域方块（谱面顶层 `blockAreaList` 的原生条目）：
+/// 引擎只认谱面里的噪域，别的入口都没有，所以在这一步并进谱面字节。只动 `.json` 谱面，
+/// `.pec` 没有噪域这个字段，原样带出去。
 #[tauri::command]
-fn export_editor_draft(draft: drafts::EditorDraft) -> Result<String, InvokeError> {
+fn export_editor_draft(
+    draft: drafts::EditorDraft,
+    block_areas: Option<serde_json::Value>,
+) -> Result<String, InvokeError> {
     (|| {
         let title = draft.info.name.trim();
         if title.is_empty() {
@@ -2142,6 +2160,14 @@ fn export_editor_draft(draft: drafts::EditorDraft) -> Result<String, InvokeError
             }
         };
 
+        // 特效轨铺出来的噪域并进谱面字节：引擎没有别的入口能加噪域（见 `inject_block_areas`）。
+        // 材质跟着每条噪域走（条目里的 `material`），不用再往包里塞渲染配置。
+        if let Some(areas) = block_areas.as_ref().and_then(|it| it.as_array()) {
+            if !areas.is_empty() {
+                inject_block_areas(&mut entries, &chart_name, areas)?;
+            }
+        }
+
         // 音乐、曲绘铺在包根上，按原文件名
         push_export_entry(&mut entries, music_name.clone(), ExportEntry::File(music_path));
         let mut cover_name = None;
@@ -2214,6 +2240,47 @@ fn push_export_entry(entries: &mut Vec<(String, ExportEntry)>, name: String, ent
         Some(slot) => slot.1 = entry,
         None => entries.push((name, entry)),
     }
+}
+
+/// 把噪域方块追加到导出谱面的顶层 `blockAreaList`（PGR 与 RPE 都读这个字段）。
+///
+/// 谱面本来就有噪域时接在它后面：编辑器加的特效叠在谱面自带的上面，跟预览里看到的一致。
+/// `.pec` 没有噪域字段、读不动的谱面也不算错 —— 这两种情况原样带出去，别把用户的谱面改坏。
+fn inject_block_areas(
+    entries: &mut Vec<(String, ExportEntry)>,
+    chart_name: &str,
+    areas: &[serde_json::Value],
+) -> Result<()> {
+    if !chart_name.to_ascii_lowercase().ends_with(".json") {
+        return Ok(());
+    }
+    let Some(slot) = entries.iter_mut().find(|(name, _)| name == chart_name) else {
+        return Ok(());
+    };
+    let bytes = match &slot.1 {
+        ExportEntry::Bytes(bytes) => bytes.clone(),
+        ExportEntry::File(path) => {
+            std::fs::read(path).with_context(|| format!("读取谱面文件失败：{}", path.display()))?
+        }
+    };
+    let Ok(mut chart) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(());
+    };
+    let Some(object) = chart.as_object_mut() else {
+        return Ok(());
+    };
+    let list = object
+        .entry("blockAreaList")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    match list.as_array_mut() {
+        Some(list) => list.extend(areas.iter().cloned()),
+        // 手改过的谱面把 `blockAreaList` 写成了别的东西：整份换成编辑器算出来的那些
+        None => *list = serde_json::Value::Array(areas.to_vec()),
+    }
+    slot.1 = ExportEntry::Bytes(
+        serde_json::to_vec(&chart).context("把噪域写进谱面失败")?,
+    );
+    Ok(())
 }
 
 /// 文件名的文本形式；没有文件名（路径以 `..` 结尾之类）就是出错。
@@ -2511,7 +2578,7 @@ mod tests {
             cover: Some(drafts::media_from_path(&cover).unwrap()),
             ..Default::default()
         };
-        let saved = export_editor_draft(draft.clone()).expect("导出应当成功");
+        let saved = export_editor_draft(draft.clone(), None).expect("导出应当成功");
         assert!(saved.ends_with("测试曲_未命名草稿.pez"), "文件名：{saved}");
 
         let mut archive = zip::ZipArchive::new(std::fs::File::open(&saved).unwrap()).unwrap();
@@ -2533,10 +2600,10 @@ mod tests {
         // 没有曲名 / 没有音乐都不许导出
         let mut no_title = draft.clone();
         no_title.info.name = "  ".to_owned();
-        assert!(export_editor_draft(no_title).is_err());
+        assert!(export_editor_draft(no_title, None).is_err());
         let mut no_music = draft;
         no_music.music = None;
-        assert!(export_editor_draft(no_music).is_err());
+        assert!(export_editor_draft(no_music, None).is_err());
 
         let _ = std::fs::remove_file(&saved);
         let _ = std::fs::remove_dir_all(&dir);

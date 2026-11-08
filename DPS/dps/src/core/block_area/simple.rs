@@ -148,6 +148,8 @@ pub fn parse(value: Option<&Value>) -> Vec<BlockArea> {
             disappear_time: disappear,
             is_subtract: false,
             color: Some([color[0] as f32 / 255., color[1] as f32 / 255., color[2] as f32 / 255.]),
+            // 紧凑表只有一整块的颜色，没有逐块材质。
+            material: None,
             rotate_events: Vec::new(),
             move_events: Vec::new(),
             scale_events: Vec::new(),

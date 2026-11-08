@@ -1347,8 +1347,10 @@ name = "dpr"
 version = "1.2.0"
 dependencies = [
  "anyhow",
+ "chardetng",
  "chrono",
  "dps",
+ "encoding_rs",
  "fs4",
  "humantime",
  "macroquad",

@@ -15,19 +15,27 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import type {
   ChartInfo,
+  DraftClip,
   DraftFolder,
   DraftInfo,
+  DraftLane,
   DraftMedia,
   DraftMediaKind,
+  DraftTrackKind,
   EditorDraft,
   FileDropEvent,
   MediaInDir,
+  TextNoiseEffect,
 } from '@/model';
-import { MAX_FOLDER_DEPTH } from '@/model';
+import { MAX_FOLDER_DEPTH, DEFAULT_NOISE_MATERIAL } from '@/model';
 import { toast, toastError } from '@/common';
 import EditorPreview from './EditorPreview.vue';
 import EditorInspector from './EditorInspector.vue';
+import EditorEditBar from './EditorEditBar.vue';
 import EditorTimeline from './EditorTimeline.vue';
+import { snapTime, timelineSpan } from './timeline';
+import { blockAreasOf, clipsOf, defaultTextNoise } from './text-noise';
+import { lyricClips, type LyricLine } from './lyrics';
 
 /**
  * DPE「编辑窗口」的根组件 —— 独立窗口里只渲染它，不挂主界面的外壳（见 `main.ts`）。
@@ -36,8 +44,9 @@ import EditorTimeline from './EditorTimeline.vue';
  * 不是某一张谱面。草稿里记三条轨道上放了什么（谱面 / 音乐 / 曲绘）和一份素材库，
  * 素材本身**只记原文件路径**、不复制，所以草稿只有几 KB，用户自己的文件保持原样。
  *
- * 版式照剪映那类剪辑器：左上角是谱面预览、右上角是处理区（素材库在这里）、底部是时间轴；
- * 把素材从处理区拖到时间轴对应的轨道上，就成了这张自定义谱面。
+ * 版式照剪映那类剪辑器：左边是功能栏（信息 / 素材库 / 效果），中间是谱面预览，右边是编辑栏
+ * （时间轴上选中哪条轨道，就在这里看那份素材、调它的效果），底部是时间轴；
+ * 把素材从功能栏拖到时间轴对应的轨道上，就成了这张自定义谱面。
  *
  * 窗口没有系统标题栏（后端建窗时 `decorations(false)`）：顶上那条 `.editor-titlebar`
  * 就是标题栏 —— 左边 DPEditor、接着是草稿名（点开是草稿菜单）、右边是路径与导出，
@@ -58,6 +67,9 @@ const loading = ref(true);
 /** 谱面轨道上的那份谱面（目录或包）；空着就是还没放。 */
 const chartPath = computed(() => draft.value?.chart?.path ?? '');
 
+/** 特效轨铺出来的噪域方块：右栏的预览与中间的引擎预览都从这里取。 */
+const blockAreas = computed(() => blockAreasOf(draft.value?.lanes ?? [], undefined, draft.value?.noise ?? null));
+
 /** 播放状态、播放头与时长都由预览区里的播放器报回来（`DPRWPlayer` 的 `getTime` 等）。 */
 const playing = ref(false);
 const time = ref(0);
@@ -65,29 +77,195 @@ const time = ref(0);
 const duration = ref(180);
 
 const preview = ref<InstanceType<typeof EditorPreview> | null>(null);
+/** 左边的功能栏：编辑栏点「换素材」时要让它翻到素材库那一页。 */
+const inspector = ref<InstanceType<typeof EditorInspector> | null>(null);
+/** 底部时间轴：Ctrl+= / Ctrl+- 直接调它的缩放档位，和工具条的放大镜一致。 */
+const timeline = ref<InstanceType<typeof EditorTimeline> | null>(null);
 
 /**
- * 处理区宽度与时间轴高度可以拖分隔条改，记在本地（`useStorage`）：关掉窗口再开还是上次调好的尺寸。
+ * 时间轴上选中的那条轨道。选中状态放在这里而不是时间轴里 —— 右边的编辑栏也要看它，
+ * 两处各存一份迟早对不上；时间轴点选、拖素材上轨道都只发事件，由这里改。
  *
- * 上限都按窗口算而不是写死像素：预览区是 16:9 的，处理区被拖到太宽、时间轴被拖得太高，预览就只剩一条缝。
+ * 特效轨一行可以放好几段，所以另记选中片段的 id；其余轨道的 `selectedClip` 恒为空。
+ */
+const selectedTrack = ref<string | null>(null);
+const selectedClip = ref<string | null>(null);
+
+/**
+ * 批量选中的特效片段（Ctrl / Cmd 点时间轴上的片段）。
+ *
+ * 只收特效片段：右栏那些参数是噪域专有的，混进别的轨道没有可改的字段。
+ * 主选中的那一段同时记在 `selectedTrack / selectedClip` 里，右栏按它取默认值。
+ */
+const multiClips = ref<{ laneId: string; clipId: string }[]>([]);
+
+/** 选中轨道（以及特效轨上的某一段），同时把批量选择收成这一段。 */
+function selectTrack(track: string | null, clip: string | null = null) {
+  selectedTrack.value = track;
+  selectedClip.value = track ? clip : null;
+  multiClips.value = track && clip ? [{ laneId: track, clipId: clip }] : [];
+}
+
+/* ---- 撤销 / 重做 ----
+ *
+ * 整份草稿做快照：一次改动的所有字段（轨道、片段、素材、信息）一起回退，
+ * 不按字段各记一套 —— 那样撤销顺序会跟改动的先后对不上。
+ */
+const undoStack = ref<string[]>([]);
+const redoStack = ref<string[]>([]);
+const HISTORY_LIMIT = 100;
+/** 上一次落盘后的样子：撤销栈里存的是它之前的状态。 */
+let historyBaseline = '';
+let historyAt = 0;
+let restoring = false;
+
+function draftSnapshot(): string {
+  return JSON.stringify(draft.value);
+}
+
+/** 换草稿后从头记历史（旧草稿的步骤不能撤到新草稿上）。 */
+function resetHistory() {
+  undoStack.value = [];
+  redoStack.value = [];
+  historyBaseline = draftSnapshot();
+  historyAt = 0;
+}
+
+/**
+ * 记一步历史。连续拖动滑杆会连着存好几次，同一个 500ms 突发只记第一步 ——
+ * 否则撤销一次只退一小格，得按几十下才回到拖动前。
+ */
+function recordHistory() {
+  if (restoring || !draft.value) return;
+  const current = draftSnapshot();
+  if (current === historyBaseline) return;
+  const now = performance.now();
+  if (now - historyAt > 500) {
+    undoStack.value.push(historyBaseline);
+    if (undoStack.value.length > HISTORY_LIMIT) undoStack.value.shift();
+    redoStack.value = [];
+    historyAt = now;
+  }
+  historyBaseline = current;
+}
+
+/** 回放一份快照：直接替换草稿再落盘，落盘这一下不再记历史。 */
+async function applySnapshot(snapshot: string) {
+  const keepTrack = selectedTrack.value;
+  const keepClip = selectedClip.value;
+  draft.value = JSON.parse(snapshot) as EditorDraft;
+  historyBaseline = snapshot;
+  restoring = true;
+  try {
+    await saveDraft();
+  } finally {
+    restoring = false;
+  }
+  // 撤销/重做不该顺手把选中态清掉：快照里还在的那段继续选中，没了才退回「什么都没选」
+  const lane = draft.value.lanes.find((it) => it.id === keepTrack);
+  if (lane && (!keepClip || findClip(lane, keepClip))) selectTrack(keepTrack, keepClip);
+  else selectTrack(null);
+}
+
+function undo() {
+  const target = undoStack.value.pop();
+  if (!target) return;
+  redoStack.value.push(draftSnapshot());
+  void applySnapshot(target);
+}
+
+function redo() {
+  const target = redoStack.value.pop();
+  if (!target) return;
+  undoStack.value.push(draftSnapshot());
+  void applySnapshot(target);
+}
+
+/** 时间轴发来的选中：普通的换选中，按住 Ctrl 的加/减进批量选择。 */
+function selectClipEvent(track: string | null, clip: string | null = null, additive = false) {
+  if (!additive || !track || !clip) {
+    selectTrack(track, clip);
+    return;
+  }
+  const index = multiClips.value.findIndex((it) => it.laneId === track && it.clipId === clip);
+  if (index < 0) {
+    multiClips.value = [...multiClips.value, { laneId: track, clipId: clip }];
+    selectedTrack.value = track;
+    selectedClip.value = clip;
+    return;
+  }
+  multiClips.value = multiClips.value.filter((_, i) => i !== index);
+  if (multiClips.value.length === 0) {
+    selectedTrack.value = null;
+    selectedClip.value = null;
+    return;
+  }
+  if (selectedTrack.value === track && selectedClip.value === clip) {
+    const last = multiClips.value[multiClips.value.length - 1];
+    if (last) {
+      selectedTrack.value = last.laneId;
+      selectedClip.value = last.clipId;
+    }
+  }
+}
+
+/** 时间轴上的框选：矩形碰到的特效片段一次全选上；全空就清掉选中。 */
+function selectManyClips(items: { laneId: string; clipId: string }[]) {
+  if (items.length === 0) {
+    selectTrack(null);
+    return;
+  }
+  multiClips.value = items.map((it) => ({ ...it }));
+  const last = items[items.length - 1];
+  if (last) {
+    selectedTrack.value = last.laneId;
+    selectedClip.value = last.clipId;
+  }
+}
+
+/** 换草稿时把选中清掉，别指着上一份草稿的轨道。 */
+watch(
+  () => draft.value?.id,
+  () => {
+    selectTrack(null);
+  },
+);
+
+/** 编辑栏的「换素材 / 去素材库挑」：翻到左边的素材库，素材还是照老办法拖到轨道上。 */
+function pickMediaForTrack() {
+  inspector.value?.showMedia();
+}
+
+/**
+ * 两侧栏的宽度与时间轴高度都可以拖分隔条改，记在本地（`useStorage`）：关掉窗口再开还是上次调好的尺寸。
+ *
+ * 上限都按窗口算而不是写死像素：预览区是 16:9 的，功能栏 / 编辑栏被拖到太宽、时间轴被拖得太高，
+ * 预览就只剩一条缝。
  */
 const inspectorWidth = useStorage('DPEditor.inspectorWidth', 320);
+const editWidth = useStorage('DPEditor.editWidth', 300);
 const timelineHeight = useStorage('DPEditor.timelineHeight', 214);
 
 const INSPECTOR_MIN = 260;
-/** 处理区最多占窗口宽度的一半：四列素材卡宽一点更好用，但也别把预览挤没。 */
-const INSPECTOR_MAX_RATIO = 0.5;
+/** 功能栏最多占窗口宽度的四成：素材卡宽一点更好用，但也别把预览挤没。 */
+const INSPECTOR_MAX_RATIO = 0.4;
+const EDIT_MIN = 220;
+/** 编辑栏里主要是属性行和几个按钮，窄一点也够，上限同样按四成算。 */
+const EDIT_MAX_RATIO = 0.4;
 const TIMELINE_MIN = 140;
 /** 时间轴最多占窗口高度的六成。 */
 const TIMELINE_MAX_RATIO = 0.6;
 
-let dragging: { axis: 'x' | 'y'; from: number; start: number } | null = null;
+/** 拖的是哪条竖分隔条：功能栏在左边（往右拖变宽），编辑栏在右边（往左拖变宽）。 */
+type DragPanel = 'inspector' | 'edit';
+
+let dragging: { axis: 'x' | 'y'; panel: DragPanel | null; from: number; start: number } | null = null;
 
 /**
  * 按下分隔条开始拖：用 pointer capture 把后续 move 都收在这个元素上，
  * 这样指针滑出那条细线也不会断（松手在窗口外也能收到 up）。
  */
-function startDrag(axis: 'x' | 'y', event: PointerEvent) {
+function startDrag(axis: 'x' | 'y', event: PointerEvent, panel: DragPanel | null = null) {
   // 合成事件（自动化里按坐标点）没有真实指针，捕获会抛 NotFoundError，忽略即可。
   try {
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
@@ -96,20 +274,28 @@ function startDrag(axis: 'x' | 'y', event: PointerEvent) {
   }
   dragging = {
     axis,
+    panel,
     from: axis === 'x' ? event.clientX : event.clientY,
-    start: axis === 'x' ? inspectorWidth.value : timelineHeight.value,
+    start: panel === 'edit' ? editWidth.value : axis === 'x' ? inspectorWidth.value : timelineHeight.value,
   };
   event.preventDefault();
 }
 
-/** 处理区在右侧、时间轴在底部，所以两个方向都是「往回拖变大」：用起点减位移。 */
+/**
+ * 功能栏在预览左边、编辑栏在右边、时间轴在底部，所以三个方向都是「往回拖变大」：
+ * 左边的栏用起点加位移，右边和下面的栏用起点减位移。
+ */
 function dragTo(event: PointerEvent) {
   if (!dragging) return;
-  const { axis, from, start } = dragging;
+  const { axis, panel, from, start } = dragging;
   if (axis === 'x') {
-    const next = start - (event.clientX - from);
-    const max = Math.round(window.innerWidth * INSPECTOR_MAX_RATIO);
-    inspectorWidth.value = Math.round(Math.min(max, Math.max(INSPECTOR_MIN, next)));
+    const delta = event.clientX - from;
+    const max = Math.round(window.innerWidth * (panel === 'edit' ? EDIT_MAX_RATIO : INSPECTOR_MAX_RATIO));
+    const next = panel === 'edit' ? start - delta : start + delta;
+    const min = panel === 'edit' ? EDIT_MIN : INSPECTOR_MIN;
+    const value = Math.round(Math.min(max, Math.max(min, next)));
+    if (panel === 'edit') editWidth.value = value;
+    else inspectorWidth.value = value;
   } else {
     const next = start - (event.clientY - from);
     const max = Math.round(window.innerHeight * TIMELINE_MAX_RATIO);
@@ -149,7 +335,39 @@ async function loadChartInfo() {
     chartInfo.value = (await invoke('parse_chart', { path: chartPath.value })) as ChartInfo;
   } catch (e) {
     toastError(e);
+    return;
   }
+  await seedInfoFromChart();
+}
+
+/**
+ * 谱面自带的信息补进「信息」页里空着的字段（曲线 / 曲师 / 谱师也是）。
+ *
+ * 只填空位：用户自己填过的一律不覆盖，谱面读不出来或本身没写就什么都不做。
+ * 预览里跑的就是这张谱面，信息页跟着它走才对得上。
+ */
+async function seedInfoFromChart() {
+  const info = chartInfo.value;
+  const current = draft.value;
+  if (!info || !current) return;
+  const filled: DraftInfo = { ...current.info };
+  const pairs: [keyof DraftInfo, string][] = [
+    ['name', info.name],
+    ['difficulty', info.difficulty],
+    ['charter', info.charter],
+    ['composer', info.composer],
+  ];
+  let changed = false;
+  for (const [key, value] of pairs) {
+    const next = (value ?? '').trim();
+    if (next && !filled[key].trim()) {
+      filled[key] = next;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  draft.value = { ...current, info: filled };
+  await saveDraft();
 }
 
 /** 曲绘的 Blob URL：换草稿 / 换曲绘前要先 release 掉旧的，否则每换一次漏一份内存。 */
@@ -205,6 +423,8 @@ async function unpackLibraryArchives(next: EditorDraft): Promise<EditorDraft | n
 
 /** 换到某份草稿：预览从头开始，谱面信息与曲绘按新草稿重读，再让后端记住「当前草稿」。 */
 async function applyDraft(next: EditorDraft) {
+  // 旧草稿还没落盘的改动不能再写回去（否则会盖掉正在加载的这份）
+  cancelPendingSave();
   draft.value = next;
   playing.value = false;
   time.value = 0;
@@ -219,6 +439,7 @@ async function applyDraft(next: EditorDraft) {
   await loadChartInfo();
   await loadCover();
   await refreshDrafts();
+  resetHistory();
 }
 
 async function loadDraft(id: string) {
@@ -228,23 +449,104 @@ async function loadDraft(id: string) {
   } catch (e) {
     toastError(e);
     draft.value = null;
+    resetHistory();
   } finally {
     loading.value = false;
   }
 }
 
-/** 保存当前草稿（轨道上放了什么、名字改没改都在里面）。 */
-async function saveDraft() {
-  if (!draft.value) return;
-  try {
-    draft.value = (await invoke('save_editor_draft', { draft: draft.value })) as EditorDraft;
-    await refreshDrafts();
-  } catch (e) {
-    toastError(e);
+/**
+ * 保存当前草稿（轨道上放了什么、名字改没改都在里面）。
+ *
+ * 拖动滑杆时一秒能改几十次，每次都写盘不但慢，还会把草稿菜单刷得乱跳：
+ * 这里先攒 250ms，一次改动攒成一次写入。返回值在真正落盘后才 resolve，
+ * 需要「改完立刻要文件」的地方先 `await flushSave()`。
+ */
+const SAVE_DELAY = 250;
+let saveTimer: number | null = null;
+let saveWaiters: (() => void)[] = [];
+/** 每次要求存盘加一：存盘期间又改了，就别用旧结果盖回新改动。 */
+let saveSeq = 0;
+let saving: Promise<void> | null = null;
+
+function saveDraft(): Promise<void> {
+  if (!draft.value) return Promise.resolve();
+  saveSeq += 1;
+  return new Promise((resolve) => {
+    saveWaiters.push(resolve);
+    if (saveTimer !== null) window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => {
+      saveTimer = null;
+      void flushSave();
+    }, SAVE_DELAY);
+  });
+}
+
+/** 丢掉还没落盘的那一次（换草稿时用：旧草稿的改动不该盖到新草稿上）。 */
+function cancelPendingSave() {
+  if (saveTimer !== null) {
+    window.clearTimeout(saveTimer);
+    saveTimer = null;
   }
+  saveSeq += 1;
+  const waiters = saveWaiters;
+  saveWaiters = [];
+  for (const resolve of waiters) resolve();
+}
+
+/** 立刻落盘。切草稿、关窗口前必须先调它。 */
+async function flushSave(): Promise<void> {
+  if (saveTimer !== null) {
+    window.clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (saving) {
+    await saving;
+    if (saveWaiters.length > 0) await flushSave();
+    return;
+  }
+  const draftNow = draft.value;
+  if (!draftNow) {
+    const waiters = saveWaiters;
+    saveWaiters = [];
+    for (const resolve of waiters) resolve();
+    return;
+  }
+  const seq = saveSeq;
+  const waiters = saveWaiters;
+  saveWaiters = [];
+  recordHistory();
+  saving = (async () => {
+    try {
+      const saved = (await invoke('save_editor_draft', { draft: draftNow })) as EditorDraft;
+      // 存盘这段时间又改了：保留新改动，下一轮再写
+      if (seq === saveSeq && draft.value) {
+        draft.value = saved;
+        historyBaseline = draftSnapshot();
+      }
+      await refreshDraftsThrottled();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      for (const resolve of waiters) resolve();
+      saving = null;
+    }
+  })();
+  await saving;
+  if (saveWaiters.length > 0) await flushSave();
+}
+
+/** 草稿菜单最多每 1.5 秒刷一次：菜单只显示名字与时间，没必要每次存盘都重列。 */
+let draftsAt = 0;
+async function refreshDraftsThrottled() {
+  const now = performance.now();
+  if (now - draftsAt < 1500) return;
+  draftsAt = now;
+  await refreshDrafts();
 }
 
 async function createDraft() {
+  await flushSave();
   try {
     await applyDraft((await invoke('create_editor_draft', { name: null })) as EditorDraft);
   } catch (e) {
@@ -266,7 +568,11 @@ async function exportDraft() {
   if (!draft.value || !canExport.value || exporting.value) return;
   exporting.value = true;
   try {
-    const saved = (await invoke('export_editor_draft', { draft: draft.value })) as string;
+    // 特效轨的噪域要写进导出的谱面里：编辑器这边算好方块，后端只负责并进谱面字节
+    const saved = (await invoke('export_editor_draft', {
+      draft: draft.value,
+      blockAreas: blockAreas.value,
+    })) as string;
     toast(t('editor-export-done', { path: saved }), 'success');
   } catch (e) {
     toastError(e);
@@ -277,18 +583,37 @@ async function exportDraft() {
 
 async function switchDraft(id: string) {
   if (id === draft.value?.id) return;
+  await flushSave();
   await loadDraft(id);
 }
 
-/** 把一项素材放到它那条轨道上（从素材库拖过来，或点素材库上的「放到轨道」）。
+/**
+ * 把一项素材放到某条轨道上（从素材库拖过来，或点素材库上的「放到轨道」）。
  *
- * `track` 是松手时指针压着的那条轨道：拖错类型（比如把歌拖到谱面轨道）不会落上去，
- * 也不弹提示 —— 拖的时候那条轨道本来就不亮，松手当没发生。
+ * `track` 是松手时指针压着的那条轨道 id：做
+ * - 主轨道（`music` / `chart` / `cover`）只收同种素材，拖错类型不落上去，也不弹提示；
+ * - 自己加的轨道（`draft.lanes` 里的 id）什么素材都收，长短由这条轨道自己定。
  *
  * 只放这一项：谱面包里同目录的音乐与曲绘不跟着上轨道，用哪首 / 哪张由用户自己挑。
  */
-async function assignMedia(media: DraftMedia, track?: DraftMediaKind) {
+async function assignMedia(media: DraftMedia, track?: string) {
   if (!draft.value) return;
+  // 歌词没有固定轨道：压在特效轨上就并进那条，否则按它的时间新铺一条文字噪域轨。
+  // 素材库双击 / 点「放到轨道」、从资源管理器整份拖进来都走这一条。
+  if (media.kind === 'lyric') {
+    await addLyrics(media, track && !isMainTrack(track) ? track : null);
+    return;
+  }
+  const lane = track && !isMainTrack(track) ? draft.value.lanes.find((it) => it.id === track) : null;
+  if (lane) {
+    // 自己加的轨道按种类收货：往上加的画面轨只收图片，往下加的音频轨只收音频；
+    // 文字轨与特效轨没有素材文件，拖什么上来都不接
+    if (lane.kind === 'text' || lane.kind === 'effect') return;
+    if (lane.kind === 'image' && media.kind !== 'cover') return;
+    if (lane.kind === 'audio' && media.kind !== 'music') return;
+    await updateLane(track as string, { media });
+    return;
+  }
   if (track && track !== media.kind) return;
   const next: EditorDraft = { ...draft.value };
   if (media.kind === 'chart') next.chart = media;
@@ -303,17 +628,291 @@ async function assignMedia(media: DraftMedia, track?: DraftMediaKind) {
   if (media.kind === 'cover') await loadCover();
 }
 
-/** 把某项从轨道上拿下来（素材还留在素材库里）。 */
-async function clearTrack(kind: DraftMediaKind) {
+/** 把某项从轨道上拿下来（素材还留在素材库里）。`track` 是轨道 id，自己加的轨道也一样。 */
+async function clearTrack(track: string) {
   if (!draft.value) return;
+  if (!isMainTrack(track)) {
+    await updateLane(track, { media: null });
+    return;
+  }
   const next: EditorDraft = { ...draft.value };
-  if (kind === 'chart') next.chart = null;
-  else if (kind === 'music') next.music = null;
+  if (track === 'chart') next.chart = null;
+  else if (track === 'music') next.music = null;
   else next.cover = null;
   draft.value = next;
   await saveDraft();
-  if (kind === 'chart') await loadChartInfo();
-  if (kind === 'cover') await loadCover();
+  if (track === 'chart') await loadChartInfo();
+  if (track === 'cover') await loadCover();
+}
+
+/** 自己加的轨道 id 一律不是这三个，用来把「主轨道」和自己加的轨道分开。 */
+function isMainTrack(track: string): track is DraftTrackKind {
+  return track === 'chart' || track === 'music' || track === 'cover';
+}
+
+/** 改自己加的轨道上的片段（起点 / 长度 / 名字 / 素材），改完照常落盘。 */
+async function updateLane(id: string, patch: Partial<DraftLane>) {
+  if (!draft.value) return;
+  const next: EditorDraft = {
+    ...draft.value,
+    lanes: draft.value.lanes.map((it) => (it.id === id ? { ...it, ...patch } : it)),
+  };
+  draft.value = next;
+  await saveDraft();
+}
+
+/** 特效轨上某一段；轨道没有片段或 id 对不上时返回 null。 */
+function findClip(lane: DraftLane | null | undefined, clipId: string | null): DraftClip | null {
+  if (!lane || !clipId) return null;
+  return (lane.clips ?? []).find((it) => it.id === clipId) ?? null;
+}
+
+/** 改特效轨上的某一段（起止或文字参数），改完照常落盘。 */
+async function updateClip(laneId: string, clipId: string, patch: Partial<DraftClip>) {
+  if (!draft.value) return;
+  draft.value = {
+    ...draft.value,
+    lanes: draft.value.lanes.map((lane) =>
+      lane.id === laneId ? { ...lane, clips: (lane.clips ?? []).map((clip) => (clip.id === clipId ? { ...clip, ...patch } : clip)) } : lane,
+    ),
+  };
+  await saveDraft();
+}
+
+/**
+ * 批量改选中的那几段：只动它们的 `effect`，别的字段（起止、id）各留各的。
+ *
+ * 右栏在「多个值」状态下改一下滑杆就走这里 —— 一次把同一项写到每一段上，
+ * 于是改完它们在这一项上就一致了。
+ */
+async function updateClips(patch: Partial<TextNoiseEffect>) {
+  if (!draft.value || multiClips.value.length === 0) return;
+  const targets = new Set(multiClips.value.map((it) => `${it.laneId}/${it.clipId}`));
+  draft.value = {
+    ...draft.value,
+    lanes: draft.value.lanes.map((lane) => ({
+      ...lane,
+      clips: (lane.clips ?? []).map((clip) =>
+        targets.has(`${lane.id}/${clip.id}`) && clip.effect ? { ...clip, effect: { ...clip.effect, ...patch } } : clip,
+      ),
+    })),
+  };
+  await saveDraft();
+}
+
+/** 批量改起止：同一项写到每一段上（想让几段对齐时用）。 */
+async function updateClipsTime(patch: Partial<Pick<DraftClip, 'start' | 'length'>>) {
+  if (!draft.value || multiClips.value.length === 0) return;
+  const targets = new Set(multiClips.value.map((it) => `${it.laneId}/${it.clipId}`));
+  draft.value = {
+    ...draft.value,
+    lanes: draft.value.lanes.map((lane) => ({
+      ...lane,
+      clips: (lane.clips ?? []).map((clip) => (targets.has(`${lane.id}/${clip.id}`) ? { ...clip, ...patch } : clip)),
+    })),
+  };
+  await saveDraft();
+}
+
+/** 时间轴上拉片段的两端（或整段平移）松手：把新的起点与长度写回那一段。 */
+async function resizeClip(laneId: string, clipId: string, start: number, length: number) {
+  await updateClip(laneId, clipId, { start, length });
+}
+
+/**
+ * 把一段拖到别的特效轨上：换层级，起点按松手位置重新定。
+ *
+ * 源轨道因此空了就顺手删掉 —— 没有片段的特效轨只剩一行空壳，留着只会碍事。
+ * 拖回同一条轨道时只改起点。
+ */
+async function moveClip(laneId: string, clipId: string, toLaneId: string, start: number) {
+  if (!draft.value) return;
+  const lane = draft.value.lanes.find((it) => it.id === laneId);
+  const clip = findClip(lane, clipId);
+  const target = draft.value.lanes.find((it) => it.id === toLaneId && it.kind === 'effect');
+  if (!lane || !clip || !target) return;
+  if (laneId === toLaneId) {
+    await updateClip(laneId, clipId, { start });
+    return;
+  }
+  const moved: DraftClip = { ...clip, start };
+  const lanes = draft.value.lanes
+    .map((it) => {
+      if (it.id === laneId) return { ...it, clips: (it.clips ?? []).filter((one) => one.id !== clipId) };
+      if (it.id === toLaneId) return { ...it, clips: [...(it.clips ?? []), moved] };
+      return it;
+    })
+    .filter((it) => !(it.kind === 'effect' && (it.clips ?? []).length === 0));
+  draft.value = { ...draft.value, lanes };
+  selectTrack(toLaneId, clipId);
+  await saveDraft();
+}
+
+/** 删掉特效轨上的一段；这段是轨道上最后一段时，整条轨道一起走。 */
+async function removeClip(laneId: string, clipId: string) {
+  if (!draft.value) return;
+  const lanes = draft.value.lanes
+    .map((it) => (it.id === laneId ? { ...it, clips: (it.clips ?? []).filter((one) => one.id !== clipId) } : it))
+    .filter((it) => !(it.kind === 'effect' && (it.clips ?? []).length === 0));
+  draft.value = { ...draft.value, lanes };
+  if (selectedTrack.value === laneId && selectedClip.value === clipId) selectTrack(null);
+  await saveDraft();
+}
+
+/** 在已有特效轨上再加一段（时间轴上双击空白处）：参数照这一段新起一份，材质沿用上一条。 */
+async function addClip(laneId: string, seconds: number) {
+  if (!draft.value) return;
+  const lane = draft.value.lanes.find((it) => it.id === laneId && it.kind === 'effect');
+  if (!lane) return;
+  const clips = lane.clips ?? [];
+  const used = new Set(clips.map((it) => it.id));
+  let index = clips.length + 1;
+  let id = `${laneId}-c${index}`;
+  while (used.has(id)) id = `${laneId}-c${++index}`;
+  const material = clips[0]?.effect?.material ?? draft.value.noise ?? DEFAULT_NOISE_MATERIAL;
+  const clip: DraftClip = {
+    id,
+    start: Math.max(0, seconds),
+    length: 10,
+    effect: { ...defaultTextNoise(), material },
+  };
+  draft.value = {
+    ...draft.value,
+    lanes: draft.value.lanes.map((it) => (it.id === laneId ? { ...it, clips: [...(it.clips ?? []), clip] } : it)),
+  };
+  selectTrack(laneId, id);
+  await saveDraft();
+}
+
+/**
+ * 加一条自己的轨道：`side` 决定摆在主轨道上面还是下面，`start` 是片段起点（特效卡拖到时间轴上时按落点给）。
+ *
+ * - `'up'`：画面轨，只收图片（以及文字轨上写的字）；
+ * - `'down'`：音频轨，只收音乐；
+ * - `'effect'`：特效轨，目前只有「文字噪域」，参数摆在右边编辑栏，片段先给 10 秒。
+ *
+ * `before` 是时间轴发来的落点：特效卡松在两条轨道之间时，那条「下面」的轨道 id。
+ * 只有自己加的轨道能按位置插进去；命中主轨道（谱面 / 曲绘 / 音乐）时插到自加轨道那一侧的末尾。
+ */
+async function addLane(side: 'up' | 'down' | 'effect', start = 0, before: string | null = null) {
+  if (!draft.value) return;
+  const id = `l${Date.now().toString(16)}${Math.random().toString(16).slice(2, 6)}`;
+  const startAt = Math.max(0, start);
+  const clip: DraftClip | null =
+    side === 'effect'
+      ? {
+          id: `${id}-c1`,
+          start: startAt,
+          length: 10,
+          effect: { ...defaultTextNoise(), material: draft.value.noise ?? DEFAULT_NOISE_MATERIAL },
+        }
+      : null;
+  const lane: DraftLane = {
+    id,
+    name: side === 'effect' ? t('editor-effect-text-noise') : '',
+    media: null,
+    start: startAt,
+    length: 10,
+    kind: side === 'effect' ? 'effect' : side === 'up' ? 'image' : 'audio',
+    text: '',
+    effect: null,
+    clips: clip ? [clip] : [],
+  };
+  const lanes = [...draft.value.lanes];
+  const target = before ? lanes.findIndex((it) => it.id === before && it.kind !== 'audio') : -1;
+  if (target >= 0) lanes.splice(target, 0, lane);
+  else lanes.push(lane);
+  draft.value = { ...draft.value, lanes };
+  selectTrack(lane.id, clip?.id ?? null);
+  await saveDraft();
+}
+
+/** 效果卡拖到时间轴上松手：那一刻是新特效轨的起点，落点决定它插在哪两条轨道之间。 */
+async function addEffectAt(seconds: number, before: string | null = null) {
+  await addLane('effect', seconds, before);
+}
+
+/**
+ * 把一份歌词铺成文字噪域：压在已有的特效轨上就并进那条轨，否则新建一条特效轨。
+ *
+ * 一句一个片段，每段的起止全来自文件（见 `lyrics.ts`），所以指针位置只有两种用法：
+ * 指着一条特效轨（`laneId`）= 片段追加进那条轨，已有的片段按起点跟新片段排在一起；
+ * 指着别的轨道或空白处（`before`）= 新建一条，插在落点这一侧。
+ *
+ * 新建的那条跟手加的文字噪域轨没有区别：不挂素材文件、名字留空（时间轴自己编「轨道 N」），
+ * 歌词文件只是素材库里的一项。解析失败或一句带时间的句子都没有时只弹提示，不动草稿。
+ */
+async function addLyrics(media: DraftMedia, laneId: string | null = null, before: string | null = null) {
+  if (!draft.value) return;
+  let lines: LyricLine[];
+  try {
+    lines = (await invoke('parse_editor_lyrics', { path: media.path })) as LyricLine[];
+  } catch (e) {
+    toastError(e);
+    return;
+  }
+  const material = draft.value.noise ?? DEFAULT_NOISE_MATERIAL;
+  const join = laneId ? draft.value.lanes.find((it) => it.id === laneId && it.kind === 'effect') : null;
+  if (join) {
+    const added = lyricClips(join.id, lines, material);
+    const first = added[0];
+    if (!first) {
+      toast(t('editor-lyrics-none'), 'warning');
+      return;
+    }
+    // 轨道自身的起止只用来让时间轴总长盖住所有片段（`laneEnd` 看的是 start + length）
+    const merged = [...clipsOf(join), ...added].sort((a, b) => a.start - b.start);
+    const start = Math.min(...merged.map((it) => it.start));
+    const end = merged.reduce((max, it) => Math.max(max, it.start + it.length), start);
+    await updateLane(join.id, { clips: merged, start, length: end - start });
+    selectTrack(join.id, first.id);
+    toast(t('editor-lyrics-added', { n: added.length }), 'success');
+    return;
+  }
+  const id = `l${Date.now().toString(16)}${Math.random().toString(16).slice(2, 6)}`;
+  const clips = lyricClips(id, lines, material);
+  const first = clips[0];
+  if (!first) {
+    toast(t('editor-lyrics-none'), 'warning');
+    return;
+  }
+  const start = first.start;
+  const end = clips.reduce((max, clip) => Math.max(max, clip.start + clip.length), start);
+  const lane: DraftLane = {
+    id,
+    name: '',
+    media: null,
+    start,
+    length: end - start,
+    kind: 'effect',
+    text: '',
+    effect: null,
+    clips,
+  };
+  const lanes = [...draft.value.lanes];
+  const target = before ? lanes.findIndex((it) => it.id === before && it.kind !== 'audio') : -1;
+  if (target >= 0) lanes.splice(target, 0, lane);
+  else lanes.push(lane);
+  draft.value = { ...draft.value, lanes };
+  if (!draft.value.media.some((it) => it.path === media.path && it.kind === media.kind)) {
+    draft.value = { ...draft.value, media: [...draft.value.media, media] };
+  }
+  selectTrack(lane.id, first.id);
+  await saveDraft();
+  toast(t('editor-lyrics-added', { n: clips.length }), 'success');
+}
+
+/** 时间轴上拖片段 / 拉两边松手：把新的起点与长度写回草稿。 */
+async function resizeLane(id: string, start: number, length: number) {
+  await updateLane(id, { start, length });
+}
+
+/** 删掉一条自己加的轨道（主轨道不能删）。 */
+async function removeLane(id: string) {
+  if (!draft.value) return;
+  if (selectedTrack.value === id) selectTrack(null);
+  draft.value = { ...draft.value, lanes: draft.value.lanes.filter((it) => it.id !== id) };
+  await saveDraft();
 }
 
 /**
@@ -357,11 +956,12 @@ async function dropFiles(paths: string[]) {
 /** 文件选择框的过滤器：后端按扩展名认种类，这里把认得的都列上，免得多选时被挡。 */
 const IMPORT_FILTERS = [
   {
-    name: '谱面 / 音频 / 曲绘',
+    name: '谱面 / 音频 / 曲绘 / 歌词',
     extensions: [
       'pez', 'zip', 'mc', 'pec', 'json', 'yaml', 'yml',
       'mp3', 'ogg', 'wav', 'flac', 'm4a', 'aac', 'opus',
       'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif',
+      'srt', 'lrc', 'ass', 'ssa', 'vtt',
     ],
   },
   { name: '所有文件', extensions: ['*'] },
@@ -624,6 +1224,8 @@ const folderParent = ref<string | null>(null);
 async function confirmDelete() {
   const id = draft.value?.id;
   if (!id) return;
+  // 先停掉待写的那一次：草稿目录都要删了，再落盘会把它重新写出来
+  cancelPendingSave();
   try {
     await invoke('delete_editor_draft', { id });
     deleteOpen.value = false;
@@ -706,9 +1308,13 @@ function togglePlay() {
 }
 
 /** 时间轴上点一下 = 把播放头挪过去（拖动条也走这里）。 */
+/** 时间轴总长（和时间轴、编辑栏共用 `timeline.ts` 那一份算法）。 */
+const span = computed(() => timelineSpan(duration.value, draft.value?.lanes));
+
 function seek(seconds: number) {
-  time.value = Math.min(Math.max(seconds, 0), duration.value);
-  preview.value?.seek(time.value);
+  time.value = Math.min(Math.max(seconds, 0), span.value);
+  // 引擎只认音乐那一段：拖到曲子结束之后时，画面停在最后一帧
+  preview.value?.seek(Math.min(time.value, duration.value));
 }
 
 /** 这个窗口没有系统标题栏（见后端建窗时的 `decorations(false)`），
@@ -733,7 +1339,9 @@ function toggleMaximizeWindow() {
   void editorWindow.toggleMaximize();
 }
 
-function closeWindow() {
+async function closeWindow() {
+  // 关之前把攒着的那次改动写掉，别让它随窗口一起丢
+  await flushSave();
   void editorWindow.close();
 }
 
@@ -755,10 +1363,190 @@ async function togglePreviewFullscreen() {
   }
 }
 
-/** 窗口全屏不会自己退：全屏时按 Esc 退出（和别的播放器一个习惯）。 */
+/* ---- 键盘热键 ----
+ *
+ * 只在这个窗口里生效。文本输入框 / 下拉框里按下的键一律放行（该打字的打字、该撤文本的撤文本），
+ * 其余按下面这张表走：播放、播放头微调、删片段、复制粘贴、撤销、对齐、缩放。
+ */
+
+/** 焦点是否在可输入控件里（这类控件自己处理键盘）。 */
+function typingInField(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+}
+
+/** 选中的那段特效片段（批量选择时取主选中的那段）。 */
+function currentClip(): { lane: DraftLane; clip: DraftClip } | null {
+  const lane = draft.value?.lanes.find((it) => it.id === selectedTrack.value);
+  const clip = findClip(lane, selectedClip.value);
+  return lane && clip ? { lane, clip } : null;
+}
+
+/** 特效轨上还没用过的最小片段 id（`c1`、`c2`…）。 */
+function nextClipId(lane: DraftLane): string {
+  const used = new Set((lane.clips ?? []).map((it) => it.id));
+  let index = used.size + 1;
+  let id = `${lane.id}-c${index}`;
+  while (used.has(id)) id = `${lane.id}-c${++index}`;
+  return id;
+}
+
+/** 往一条特效轨上追加一段，选中它并落盘。 */
+async function insertClip(lane: DraftLane, clip: DraftClip) {
+  if (!draft.value) return;
+  draft.value = {
+    ...draft.value,
+    lanes: draft.value.lanes.map((it) => (it.id === lane.id ? { ...it, clips: [...(it.clips ?? []), clip] } : it)),
+  };
+  selectTrack(lane.id, clip.id);
+  await saveDraft();
+}
+
+/** 片段剪贴板：只存在这个窗口里（不借系统剪贴板，免得把谱面数据塞给别的程序）。 */
+const clipClipboard = ref<{ length: number; effect: TextNoiseEffect } | null>(null);
+
+function cloneEffect(effect: TextNoiseEffect): TextNoiseEffect {
+  return JSON.parse(JSON.stringify(effect)) as TextNoiseEffect;
+}
+
+function copyClip() {
+  const hit = currentClip();
+  if (!hit?.clip.effect) return;
+  clipClipboard.value = { length: hit.clip.length, effect: cloneEffect(hit.clip.effect) };
+}
+
+/** Ctrl+D：复制选中的那段到它后面，接着可以继续按（一段接一段排下去）。 */
+async function duplicateClip() {
+  const hit = currentClip();
+  if (!hit?.clip.effect) return;
+  await insertClip(hit.lane, {
+    id: nextClipId(hit.lane),
+    start: hit.clip.start + hit.clip.length,
+    length: hit.clip.length,
+    effect: cloneEffect(hit.clip.effect),
+  });
+}
+
+/**
+ * Ctrl+V：粘到播放头那一刻。
+ *
+ * 落点按「选中的特效轨 → 播放头下正放着的特效轨 → 最上面那条特效轨」挑：先选后粘是常规操作，
+ * 没选时粘回播放头下那条上，才符合「接着当前画面往下做」的直觉。
+ */
+async function pasteClip() {
+  const data = clipClipboard.value;
+  if (!draft.value) return;
+  const lanes = draft.value.lanes.filter((it) => it.kind === 'effect');
+  const at = time.value;
+  const lane =
+    lanes.find((it) => it.id === selectedTrack.value) ??
+    lanes.find((it) => clipsOf(it).some((clip) => at >= clip.start && at < clip.start + clip.length)) ??
+    lanes[0];
+  if (!lane) return;
+  await insertClip(lane, {
+    id: nextClipId(lane),
+    start: Math.max(0, snapTime(time.value)),
+    length: data?.length ?? 10,
+    effect: cloneEffect(data?.effect ?? defaultTextNoise()),
+  });
+}
+
+/** Delete / Backspace：有选中的片段就删片段，否则删选中的自加轨道。 */
+async function deleteSelected() {
+  if (selectedClip.value && selectedTrack.value) {
+    await removeClip(selectedTrack.value, selectedClip.value);
+    return;
+  }
+  if (selectedTrack.value && !isMainTrack(selectedTrack.value)) {
+    await removeLane(selectedTrack.value);
+  }
+}
+
+/** `[`：把选中片段的起点对到播放头（长度不变）。 */
+async function alignClipStart() {
+  const hit = currentClip();
+  if (!hit) return;
+  await updateClip(hit.lane.id, hit.clip.id, { start: Math.max(0, snapTime(time.value)) });
+}
+
+/** `]`：把选中片段的终点对到播放头（至少留 0.1 秒）。 */
+async function alignClipEnd() {
+  const hit = currentClip();
+  if (!hit) return;
+  const length = Math.max(0.1, snapTime(time.value) - hit.clip.start);
+  await updateClip(hit.lane.id, hit.clip.id, { length });
+}
+
+/** 热键总表：Esc（全屏退出）与输入框放行先处理，其余按键按组合分发。 */
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && previewFullscreen.value) {
     void togglePreviewFullscreen();
+    return;
+  }
+  if (typingInField(event.target)) return;
+
+  const mod = event.ctrlKey || event.metaKey;
+  const key = event.key.toLowerCase();
+
+  if (mod && key === 'z') {
+    event.preventDefault();
+    if (event.shiftKey) redo();
+    else undo();
+    return;
+  }
+  if (mod && key === 'y') {
+    event.preventDefault();
+    redo();
+    return;
+  }
+  if (mod && key === 'c') {
+    copyClip();
+    return;
+  }
+  if (mod && key === 'v') {
+    event.preventDefault();
+    void pasteClip();
+    return;
+  }
+  if (mod && key === 'd') {
+    event.preventDefault();
+    void duplicateClip();
+    return;
+  }
+  if (mod && (event.key === '=' || event.key === '+')) {
+    event.preventDefault();
+    timeline.value?.zoomIn();
+    return;
+  }
+  if (mod && event.key === '-') {
+    event.preventDefault();
+    timeline.value?.zoomOut();
+    return;
+  }
+
+  if (event.key === ' ') {
+    event.preventDefault();
+    togglePlay();
+    return;
+  }
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    const delta = (event.shiftKey ? 1 : 0.1) * (event.key === 'ArrowLeft' ? -1 : 1);
+    seek(snapTime(time.value + delta));
+    return;
+  }
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    event.preventDefault();
+    void deleteSelected();
+    return;
+  }
+  if (event.key === '[') {
+    void alignClipStart();
+    return;
+  }
+  if (event.key === ']') {
+    void alignClipEnd();
   }
 }
 </script>
@@ -854,26 +1642,11 @@ function onKeydown(event: KeyboardEvent) {
     </header>
 
     <div class="editor-body">
-      <!-- 左上角：实时谱面预览 -->
-      <EditorPreview
-        ref="preview"
-        class="editor-body__preview"
-        :chart-path="chartPath"
-        :music-path="draft?.music?.path ?? ''"
-        :cover-path="draft?.cover?.path ?? ''"
-        :fullscreen="previewFullscreen"
-        @toggle-fullscreen="togglePreviewFullscreen"
-      />
-      <!-- 右上角：处理区（宽度由左边那条分隔条拖）。全屏预览时连分隔条一起收起来 -->
+      <!-- 左边：功能栏（信息 / 素材库 / 效果）。宽度由它右边那条分隔条拖。
+           全屏预览时两侧栏连分隔条一起收起来，只剩中间的画面 -->
       <template v-if="!previewFullscreen">
-        <div
-          class="editor-splitter editor-splitter--v"
-          @pointerdown="startDrag('x', $event)"
-          @pointermove="dragTo"
-          @pointerup="endDrag"
-          @pointercancel="endDrag"
-        ></div>
         <EditorInspector
+          ref="inspector"
           class="editor-body__inspector"
           :style="{ width: `${inspectorWidth}px` }"
           :draft="draft"
@@ -890,6 +1663,55 @@ function onKeydown(event: KeyboardEvent) {
           @rename-folder="renameFolder"
           @delete-folder="deleteFolder"
           @reveal="revealMedia"
+          @add-effect="addLane('effect')"
+        />
+        <div
+          class="editor-splitter editor-splitter--v"
+          @pointerdown="startDrag('x', $event, 'inspector')"
+          @pointermove="dragTo"
+          @pointerup="endDrag"
+          @pointercancel="endDrag"
+        ></div>
+      </template>
+
+      <!-- 中间：实时谱面预览 -->
+      <EditorPreview
+        ref="preview"
+        class="editor-body__preview"
+        :chart-path="chartPath"
+        :music-path="draft?.music?.path ?? ''"
+        :cover-path="draft?.cover?.path ?? ''"
+        :info="draft?.info ?? null"
+        :block-areas="blockAreas"
+        :fullscreen="previewFullscreen"
+        @toggle-fullscreen="togglePreviewFullscreen"
+      />
+
+      <!-- 右边：编辑栏 —— 时间轴上选中哪条轨道，就在这里编辑那份素材 -->
+      <template v-if="!previewFullscreen">
+        <div
+          class="editor-splitter editor-splitter--v"
+          @pointerdown="startDrag('x', $event, 'edit')"
+          @pointermove="dragTo"
+          @pointerup="endDrag"
+          @pointercancel="endDrag"
+        ></div>
+        <EditorEditBar
+          class="editor-body__editbar"
+          :style="{ width: `${editWidth}px` }"
+          :draft="draft"
+          :track-id="selectedTrack"
+          :clip-id="selectedClip"
+          :multi="multiClips"
+          :duration="duration"
+          :cover-url="coverUrl"
+          @reveal="revealMedia"
+          @clear="clearTrack"
+          @pick-media="pickMediaForTrack"
+          @update-lane="updateLane"
+          @update-clip="updateClip(selectedTrack ?? '', selectedClip ?? '', $event)"
+          @update-clips="updateClips"
+          @update-clips-time="updateClipsTime"
         />
       </template>
     </div>
@@ -904,18 +1726,32 @@ function onKeydown(event: KeyboardEvent) {
         @pointercancel="endDrag"
       ></div>
 
-      <!-- 底部：进度条 + 时间轴（素材从处理区拖到这里的轨道上） -->
+      <!-- 底部：进度条 + 时间轴（素材从功能栏拖到这里的轨道上） -->
       <EditorTimeline
+        ref="timeline"
         class="editor-footer"
         :style="{ height: `${timelineHeight}px` }"
         :draft="draft"
         :playing="playing"
         :time="time"
         :duration="duration"
+        :selected="selectedTrack"
+        :selected-clip="selectedClip"
+        :multi="multiClips"
         @toggle-play="togglePlay"
         @seek="seek"
         @assign="assignMedia"
         @clear="clearTrack"
+        @select="selectClipEvent"
+        @select-many="selectManyClips"
+        @remove-lane="removeLane"
+        @drop-effect="addEffectAt"
+        @drop-lyrics="addLyrics"
+        @resize-lane="resizeLane"
+        @resize-clip="resizeClip"
+        @move-clip="moveClip"
+        @remove-clip="removeClip"
+        @add-clip="addClip"
       />
     </template>
 
@@ -1345,7 +2181,9 @@ function onKeydown(event: KeyboardEvent) {
   height: 2px;
 }
 
-.editor-body__inspector {
+/* 两侧栏的宽度由 JS 写进 style，这里只负责「别被预览挤扁」 */
+.editor-body__inspector,
+.editor-body__editbar {
   flex: none;
 }
 

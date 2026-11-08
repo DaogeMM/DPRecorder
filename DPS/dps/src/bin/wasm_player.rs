@@ -125,6 +125,15 @@ fn dpr_preview_config() -> Config {
     config.judge_range_fade_time = 0.3; // 1.8
     // 编辑器里拖到哪里就该直接看到哪里：开场的淡入加载动画（还有它那几秒等待）一律不要。
     config.enter_animation = false;
+    // 编辑器预览只要谱面本身：连击数、分数、暂停按钮、曲名、难度、Lv 等级、进度条都不画。
+    // 这几个是引擎的 `render_ui_*`，渲染页那边有它自己的默认值（全开），两边互不影响。
+    config.render_ui_combo = false; // true，连击数
+    config.render_ui_score = false; // true，分数
+    config.render_ui_pause = false; // true，常驻的暂停小按钮
+    config.render_ui_name = false; // true，曲名
+    config.render_ui_difficulty = false; // true，难度名
+    config.render_ui_level = false; // true，Lv 等级数字
+    config.render_ui_bar = false; // true，谱面进度条
     // 玩家名 / RKS / 挑战段位不跟：那是本地档案，预览画面不读，页面里也不该写死别人的 ID。
     config
 }
@@ -232,6 +241,15 @@ async fn run() -> Result<()> {
         config.play_start_time, config.play_end_time
     ));
 
+    // 热重载的原料：下面 `GameScene::new` 会拿走 `fs` / `info` / `config` 本体
+    RELOAD_SOURCE.with(|it| {
+        *it.borrow_mut() = Some(ReloadSource {
+            fs: fs.clone_box(),
+            info: info.clone(),
+            config: config.clone(),
+        });
+    });
+
     // 编辑器预览不要引擎自带的开场加载页：直接建 `GameScene`，资源加载期间画面是黑的，
     // 加载完立刻进谱面。结算页由下面的 `EditorScene` 拦掉。
     let mut background_fs = fs.clone_box();
@@ -280,7 +298,7 @@ async fn run() -> Result<()> {
     let mut last_time = f64::NEG_INFINITY;
     loop {
         // 页面提的 seek / 暂停 / 倍速在这一帧的一开头落地，`update` 里就按新状态走。
-        apply_requests(&mut main);
+        apply_requests(&mut main).await;
         main.update().context("update")?;
         main.render(&mut painter).context("render")?;
         frames += 1;
@@ -337,6 +355,22 @@ enum Request {
     SetRate(f64),
     /// 音乐 / 音效音量，两者都是 0~1。
     SetVolume(f32, f32),
+    /// 重新解析内存文件表里的谱面，原地换掉当前那张（编辑器改完参数调它）。
+    Reload,
+}
+
+/// 热重载要用的原料：`GameScene::new` 会把文件系统、谱面信息与配置吃掉，这里另存一份。
+///
+/// 页面调 `wm_reload()` 之前已经把新谱面写进 `__dprw_files`，解析时读到的就是新字节。
+struct ReloadSource {
+    fs: Box<dyn dpsfs::FileSystem>,
+    info: dps::info::ChartInfo,
+    config: Config,
+}
+
+thread_local! {
+    /// `Some` 表示可以热重载；在建 `GameScene` 之前填好，之后每次重载复制一份用。
+    static RELOAD_SOURCE: RefCell<Option<ReloadSource>> = const { RefCell::new(None) };
 }
 
 thread_local! {
@@ -453,7 +487,7 @@ fn scrub_to(main: &mut Main, time: f64, playing: bool) {
 ///
 /// 拖进度条时页面一帧内可能排进几十个 `Seek`：在这里合并成「最后一个位置」，
 /// 否则每一帧都要重新定位音乐与判定，声音会一片爆音、画面一直闪。
-fn apply_requests(main: &mut Main) {
+async fn apply_requests(main: &mut Main) {
     let requests = REQUESTS.with(|it| std::mem::take(&mut *it.borrow_mut()));
     let mut last_seek = None;
     for request in requests {
@@ -490,6 +524,8 @@ fn apply_requests(main: &mut Main) {
             }),
             // 音量不碰时钟与位置，直接落到场景上。
             Request::SetVolume(music, sfx) => with_game_scene(main, |game, _| game.set_volume(music, sfx)),
+            // 重载要重新解析谱面（异步读文件 + 建纹理），所以放在这个 async 函数里做。
+            Request::Reload => reload_now(main).await,
         }
     }
     let Some(t) = last_seek else {
@@ -512,6 +548,38 @@ fn apply_requests(main: &mut Main) {
             }
         });
     }
+}
+
+/// 重新解析内存文件表里的谱面，原地换掉当前场景里的那一张。
+///
+/// 走的是首次加载同一条 `GameScene::load_chart`：噪域、贴图、按键音效都会重新建；
+/// `reload_chart` 自己会把谱面与判定退回当前播放头，所以画面不会跳回曲首。
+async fn reload_now(main: &mut Main) {
+    // 复制一份原料再来回 await：RefCell 的借用不能跨 await 一直挂着
+    let source = RELOAD_SOURCE.with(|it| {
+        it.borrow().as_ref().map(|it| ReloadSource {
+            fs: it.fs.clone_box(),
+            info: it.info.clone(),
+            config: it.config.clone(),
+        })
+    });
+    let Some(mut source) = source else {
+        set_status("reload unavailable");
+        return;
+    };
+    match GameScene::load_chart(source.fs.as_mut(), &source.info, &source.config).await {
+        Ok((chart, _format)) => with_game_scene(main, |game, _| match game.reload_chart(chart) {
+            Ok(()) => set_status("chart reloaded"),
+            Err(err) => set_status(format!("reload failed: {err:?}")),
+        }),
+        Err(err) => set_status(format!("reload parse failed: {err:?}")),
+    }
+}
+
+/// 重新读一遍内存文件表里的谱面，下一帧原地换掉（编辑器的「刷新画面」走它）。
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wm_reload() {
+    REQUESTS.with(|it| it.borrow_mut().push(Request::Reload));
 }
 
 /// 跳到谱面时间 `t` 秒（绝对时间，不是预览区间内的偏移），下一帧生效。

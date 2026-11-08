@@ -329,6 +329,24 @@ function seek(seconds) {
   });
 }
 
+/// 换一份谱面：把新文件灌进本页的 `__dprw_files`（引擎的内存文件系统读这张 Map），
+/// 再让引擎原地重载（`wasm_player.rs` 的 `wm_reload`）。播放头、播放态、音量都不动 ——
+/// 编辑器改一个参数就调一次，画面不能跟着跳。
+function reload(files) {
+  const map = window.__dprw_files;
+  if (map && files && typeof files === "object") {
+    map.clear();
+    for (const name of Object.keys(files)) map.set(name, files[name]);
+  }
+  whenReady(() => {
+    try {
+      dps.wm_reload();
+    } catch (err) {
+      console.warn("[dprw] 重载谱面失败:", err);
+    }
+  });
+}
+
 function setRate(rate) {
   const value = Number(rate);
   if (!Number.isFinite(value)) return;
@@ -522,6 +540,9 @@ function onMessage(event) {
     case "setRate":
       setRate(value);
       break;
+    case "reload":
+      reload(value);
+      break;
     case "volume":
       setVolume(value);
       break;
@@ -551,6 +572,7 @@ window.DPRWPlayer = {
   toggle,
   seek,
   setRate,
+  reload,
   setVolume,
   getVolume,
   getTime,

@@ -12,6 +12,7 @@
 use crate::core::block_area::native::mask;
 use crate::core::block_area::native::touch;
 use crate::core::block_area::native::{NativeBlocks, HOVER_ASSET};
+use crate::core::block_area::BlockAreaMaterial;
 use crate::core::{BlockArea, BlockPhase, Matrix, Resource, Vector};
 use macroquad::prelude::*;
 use miniquad::{TextureWrap, UniformType};
@@ -53,6 +54,10 @@ pub struct Zone {
     /// 一张颜色平面（`Masks::active_colors` / `disabled_colors`），并改用彩色材质：
     /// 片元把原生红材质的饱和度/明度搬到这个色相上（`blockPalette()`）。
     pub color: Option<[f32; 3]>,
+    /// 这块噪域自己的材质覆盖；`None` = 用渲染配置里的全局材质。
+    ///
+    /// 引擎侧原本一套材质画一趟，现在按「有效材质」把一帧的方块分组、一组一趟。
+    pub material: Option<BlockAreaMaterial>,
 }
 
 impl Zone {
@@ -99,6 +104,7 @@ impl Zone {
             index: 0,
             judge_cover: 0,
             color: area.color,
+            material: area.material.clone(),
         })
     }
 }
@@ -597,15 +603,64 @@ fn lava_fill(zone: &Zone, lava: bool, disabled: bool, skin: bool) -> u8 {
     }
 }
 
+/// 一块噪域这一帧的**有效材质**：方块自带的覆盖叠在渲染配置上。
+///
+/// 分组单位就是它 —— 填充贴图、掩码颗粒、火花/斑驳这些全是**材质级 uniform**，
+/// 一趟绘制里只能有一套，所以有效材质不同的方块必须分趟画。
+#[derive(Clone, Debug, PartialEq)]
+struct FillStyle {
+    simplified: bool,
+    spark: bool,
+    blotch: bool,
+    distort: bool,
+    hover: bool,
+    hover_radius: f32,
+    density: f32,
+    edge_noise: f32,
+    alpha: f32,
+    displace_strength: f32,
+    pixel_scale: f32,
+    speed: f32,
+    noise_radius: f32,
+    smoothness: f32,
+}
+
+impl FillStyle {
+    fn resolve(cfg: &crate::config::Config, material: Option<&BlockAreaMaterial>, global_simplified: bool) -> Self {
+        Self {
+            simplified: material.and_then(|it| it.simplified_block_area).unwrap_or(global_simplified),
+            spark: material.and_then(|it| it.block_area_spark).unwrap_or(cfg.block_area_spark),
+            blotch: material.and_then(|it| it.block_area_noise_blotch).unwrap_or(cfg.block_area_noise_blotch),
+            distort: material.and_then(|it| it.block_area_distort).unwrap_or(cfg.block_area_distort),
+            hover: material.and_then(|it| it.block_area_hover).unwrap_or(cfg.block_area_hover),
+            hover_radius: material
+                .and_then(|it| it.block_area_hover_radius)
+                .unwrap_or(cfg.block_area_hover_radius)
+                .max(0.),
+            density: material.and_then(|it| it.block_area_density).unwrap_or(cfg.block_area_density),
+            edge_noise: material.and_then(|it| it.block_area_edge_noise).unwrap_or(cfg.block_area_edge_noise),
+            alpha: material.and_then(|it| it.block_area_alpha).unwrap_or(cfg.block_area_alpha),
+            displace_strength: material
+                .and_then(|it| it.block_area_displace_strength)
+                .unwrap_or(cfg.block_area_displace_strength),
+            pixel_scale: material.and_then(|it| it.block_area_pixel_scale).unwrap_or(cfg.block_area_pixel_scale),
+            speed: material.and_then(|it| it.block_area_displace_speed).unwrap_or(cfg.block_area_displace_speed),
+            noise_radius: material.and_then(|it| it.block_area_noise_radius).unwrap_or(cfg.block_area_noise_radius),
+            smoothness: material
+                .and_then(|it| it.block_area_noise_smoothness)
+                .unwrap_or(cfg.block_area_noise_smoothness),
+        }
+    }
+}
+
 /// 把一帧里该画的方块按相位画出去。
 ///
-/// 简化噪域先按「是否减算」拆成两趟：简化模式的填充色是**材质级 uniform**，一趟绘制里
-/// 只可能有一个颜色；而 `isSubtract` 的块要用反色，所以只能把两类方块各画一遍
-///（掩码会因此重算一次，简化模式本来就不跑描边/辉光/位移，代价可以接受）。
-/// 完整噪域只有一趟（减算块靠 `enabled_compose` 的异或语义挖洞），只有「岩浆噪域」
-/// 需要分贴图时才会再拆组。
+/// 分组顺序：先按**有效材质**（[`FillStyle`]），简化噪域再按「是否减算」拆两趟（简化模式的
+/// 填充色是材质级 uniform，减算块要反色）；完整噪域按「岩浆噪域 / 噪域皮肤」该贴哪档贴图再拆
+/// （`Disabled` 与 `DisabledOut` 喂的是同一个 disabled 通道，一趟里画不出「石头 + 岩浆」两种贴图）。
+/// 官方谱面每块都没有材质覆盖 ⇒ 有效材质全一样，分组退化成改动前的 1~3 趟，逐像素不变。
 fn draw_phases(res: &mut Resource, aspect: f32, zones: &[Zone], time: f32, disabled: bool, touches: &[(u64, Vec2)]) {
-    let simplified = res.config.simplified_block_area || FRAME.with(|frame| frame.borrow().simplified);
+    let global_simplified = res.config.simplified_block_area || FRAME.with(|frame| frame.borrow().simplified);
     // 「判定范围让位」/「强制定位」的合成块（`judge_cover > 0`）只参与掩码
     //（`Masks::judge_cover`），**不参与绘制**：它们若混进 `zones`，材质缺失时的
     // 逐方块调试路径会把整屏那块也画成红矩形。但掩码**必须**看得见它们，所以拆出来的
@@ -613,34 +668,30 @@ fn draw_phases(res: &mut Resource, aspect: f32, zones: &[Zone], time: f32, disab
     let (covers, zones): (Vec<Zone>, Vec<Zone>) = zones.iter().cloned().partition(|z| z.judge_cover > 0);
     let zones = zones.as_slice();
     let covers = covers.as_slice();
-    if simplified {
-        let (normal, subtract): (Vec<Zone>, Vec<Zone>) = zones.iter().cloned().partition(|z| !z.invert);
-        if !normal.is_empty() {
-            draw_layer_at(res, aspect, &normal, covers, time, disabled, touches, false, 0);
+    // 选中的皮肤包自带完整的噪域皮肤（`noise_on.*` + `noise_off.*`）就当作开着：
+    // 皮肤自带填充贴图，不再看「岩浆噪域」那个开关（没带皮肤的包仍只看它，老行为逐位不变）。
+    let skin = res.res_pack.noise.is_some();
+    let lava = res.config.block_area_lava || skin;
+    let mut groups: Vec<(FillStyle, u8, Vec<Zone>)> = Vec::new();
+    for zone in zones.iter().cloned() {
+        let fill = FillStyle::resolve(&res.config, zone.material.as_ref(), global_simplified);
+        let texture = if fill.simplified { 0 } else { lava_fill(&zone, lava, disabled, skin) };
+        match groups.iter_mut().find(|(style, slot, _)| *slot == texture && *style == fill) {
+            Some((_, _, group)) => group.push(zone),
+            None => groups.push((fill, texture, vec![zone])),
         }
-        if !subtract.is_empty() {
-            draw_layer_at(res, aspect, &subtract, covers, time, disabled, touches, true, 0);
-        }
-    } else {
-        // 「岩浆噪域」只在**完整噪域**下生效：按「这一趟该贴哪张贴图」再把本趟分成最多三组
-        //（关闭时所有方块都落进第 0 组，等价于改动前的一趟，逐位不回归）。
-        // 必须分趟的原因是填充贴图是**材质级 uniform**，而 `Disabled`（`appearTime..enableTime`）
-        // 与 `DisabledOut`（`disableTime..disappearTime`）两段喂的是同一个 disabled 掩码通道，
-        // 一趟里画不出「石头 + 岩浆」两种贴图。
-        // 完整噪域本来就只有一趟（`isSubtract` 的块靠 `enabled_compose` 的异或语义挖洞，
-        // 不分正负两趟），所以这里的分组不动任何几何/掩码语义。
-        // 选中的皮肤包自带完整的噪域皮肤（`noise_on.*` + `noise_off.*`）就当作开着：
-        // 皮肤自带填充贴图，不再看「岩浆噪域」那个开关（没带皮肤的包仍只看它，老行为逐位不变）。
-        let skin = res.res_pack.noise.is_some();
-        let lava = res.config.block_area_lava || skin;
-        let mut groups: [Vec<Zone>; 3] = Default::default();
-        for zone in zones.iter().cloned() {
-            groups[lava_fill(&zone, lava, disabled, skin) as usize].push(zone);
-        }
-        for (fill, group) in groups.iter().enumerate() {
-            if !group.is_empty() {
-                draw_layer_at(res, aspect, group, covers, time, disabled, touches, false, fill as u8);
+    }
+    for (fill, texture, group) in &groups {
+        if fill.simplified {
+            let (normal, subtract): (Vec<Zone>, Vec<Zone>) = group.iter().cloned().partition(|z| !z.invert);
+            if !normal.is_empty() {
+                draw_layer_at(res, aspect, &normal, covers, time, disabled, touches, fill, false, 0);
             }
+            if !subtract.is_empty() {
+                draw_layer_at(res, aspect, &subtract, covers, time, disabled, touches, fill, true, 0);
+            }
+        } else {
+            draw_layer_at(res, aspect, group, covers, time, disabled, touches, fill, false, *texture);
         }
     }
 }
@@ -670,6 +721,7 @@ fn draw_layer_at(
     time: f32,
     disabled: bool,
     touches: &[(u64, Vec2)],
+    fill: &FillStyle,
     invert: bool,
     lava: u8,
 ) {
@@ -745,7 +797,7 @@ fn draw_layer_at(
         // 「噪域密度」：它就是掩码格子边长（上游固定 8 像素 = 1/8 降采样）。
         // 密度越大 ⇒ 格子越小 ⇒ 边缘颗粒越细越密、描边与辉光也越细。
         // 光栅化开销按 1/cell² 增长，所以把用户输入 clamp 到一个安全区间。
-        let density = res.config.block_area_density;
+        let density = fill.density;
         // 「谱面缩放」也要作用在掩码粒度上：`chartRatio < 1.` 时整张谱面被缩小，噪域的
         // 边缘颗粒、描边、辉光都必须跟着变小，否则缩得越小越显得噪点粗糙。做法是让掩码
         // **提分辨率**（`cell_scale`）而不是把 `cell` 乘小 —— `cell` 是整数屏幕像素，
@@ -762,7 +814,7 @@ fn draw_layer_at(
         // 边缘破碎（每纹素的噪声位移）只由 `block_area_edge_noise` 决定 —— 「噪域扭曲」管的是
         // 填充内部的位移噪声与快照采样（见 `set_fill_style`），**不碰边缘**：那是两个独立开关，
         // 关掉扭曲不该把边缘也一起抹平。
-        frame.masks.edge_noise = res.config.block_area_edge_noise;
+        frame.masks.edge_noise = fill.edge_noise;
         // 「谱面缩放」：`chartRatio < 1.` 时屏幕会显示出「chart 空间 ±1」以外的区域（那些越界
         // 的长条就长在那儿），所以掩码必须也覆盖到那儿 —— 把方块几何按 `k` 缩小，掩码就从
         // 「覆盖 chart ±1」变成「覆盖 chart ±1/k」，正好等于此时屏幕显示的范围。`k == [1., 1.]`
@@ -799,7 +851,7 @@ fn draw_layer_at(
         if !disabled {
             frame.touch.update_fingers(touches, time);
         }
-        let hover = !disabled && HOVER_ASSET && frame.touch.visible();
+        let hover = !disabled && fill.hover && HOVER_ASSET && frame.touch.visible();
         // 颜色是整帧的性质（`uColored` 在材质里是编译期常量），由掩码那一步写好。
         let colored = frame.masks.colored;
         let m = m[material_index(disabled, hover, colored)];
@@ -992,11 +1044,11 @@ fn draw_layer_at(
         }
         m.set_uniform("_TouchPosShine", (0.63 + 0.37 * ((time * 43.).sin() * 0.5 + 0.5)) * 2.);
         // 「噪域打击光晕半径」：官方默认 0.5，这里允许按配置放大 / 缩小。
-        m.set_uniform("_TouchPosRadius", res.config.block_area_hover_radius.max(0.));
-        let simplified = frame.simplified || res.config.simplified_block_area;
+        m.set_uniform("_TouchPosRadius", fill.hover_radius.max(0.));
+        let simplified = fill.simplified;
         // 皮肤包自带噪域贴图时也按「岩浆噪域」那套强制关闭三项（理由见 `set_fill_style`）
-        let lava = res.config.block_area_lava || res.res_pack.noise.is_some();
-        set_fill_style(m, disabled, simplified, invert, &res.config, lava);
+        let lava_on = res.config.block_area_lava || res.res_pack.noise.is_some();
+        set_fill_style(m, disabled, simplified, invert, &res.config, lava_on, fill);
         // `chart_to_base` 把这台四边形从 chart 归一化空间送到当前基础空间：全屏四边形
         // 就是 chart 空间的 (-1,-1/aspect)-(1,1/aspect)，于是官方顶点着色器逐字成立。
         res.apply_model_of(&chart_to_base, |_| {
@@ -1026,7 +1078,15 @@ fn draw_layer_at(
 /// 所以 rgb 必须先乘 alpha，否则 `block_area_alpha < 1` 时颜色会偏亮。
 /// `lava` 是「这一帧该不该按岩浆 / 噪域皮肤那套压掉三项」—— 由调用方算好传进来，
 /// 因为开没开岩浆噪域与皮肤包有没有噪域贴图是两个不同的来源。
-fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, cfg: &crate::config::Config, lava: bool) {
+fn set_fill_style(
+    m: Material,
+    disabled: bool,
+    simplified: bool,
+    invert: bool,
+    cfg: &crate::config::Config,
+    lava: bool,
+    fill: &FillStyle,
+) {
     if !simplified {
         // 「岩浆噪域」只在完整噪域下生效，且开启它时「噪声斑点 / 噪域扭曲 /
         // 噪域火花」三项**强制关闭**：岩浆 / 下界岩必须是一整张干净的贴图 —— 噪声斑点会糊在
@@ -1073,7 +1133,7 @@ fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, c
                 m.set_uniform(*name, vec4(c[0], c[1], c[2], c[3]));
             }
         }
-        if !cfg.block_area_spark || lava {
+        if !fill.spark || lava {
             // 「噪域火花」关闭（或「岩浆噪域」开着时的强制关闭）。火花是独立于场景快照的一项：
             // active 那一趟由 `_SparkMapOpacity` 控制（`u_xlat1` 里那层被色调化的场景照旧输出，
             // 只是不再叠火花点阵），未启用那一趟由 `uDisabledSparkOpacity` 控制。
@@ -1083,7 +1143,7 @@ fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, c
                 m.set_uniform("_SparkMapOpacity", 0.0_f32);
             }
         }
-        if !cfg.block_area_noise_blotch || lava {
+        if !fill.blotch || lava {
             // 「噪声斑点」关闭（或「岩浆噪域」开着时的强制关闭）：`frag:331` 里
             // `(-噪声值) * _DisplaceBlendIntensity + _FillColor` 那一项就是往填充色里混噪声斑点，
             // 归零后填充变成纯净色（贴图路径下这一项本来也不参与填充，但留着会混进别的分支）。
@@ -1092,27 +1152,28 @@ fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, c
         // 「扭曲强度」/「颗粒大小」/「快照降采样」：只在偏离官方默认值时才写，默认配置逐位不回归。
         // 「噪域扭曲」关闭时填充位移强行归零、像素化也一起关掉（快照 1:1 采样 + 不做像素块
         // 量化）：噪域不再扭曲，后面的字 / 按键保持清晰，只剩「场景快照 / 纯色 × 透明度」。
-        let displace_strength = if cfg.block_area_distort && !lava {
-            cfg.block_area_displace_strength
+        let displace_strength = if fill.distort && !lava {
+            fill.displace_strength
         } else {
             0.
         };
         if (displace_strength - float_default("_DisplaceStrength")).abs() > f32::EPSILON {
             m.set_uniform("_DisplaceStrength", displace_strength);
         }
-        let pixel_scale = if cfg.block_area_distort && !lava {
-            cfg.block_area_pixel_scale.max(1.0_f32)
+        let pixel_scale = if fill.distort && !lava {
+            // 下限与 frag 里的 `max(_BackgroundPixelScale, 0.02)` 对齐：像素块可以细到 0.02，
+            // 再小只会把位移采样网格切成比屏幕像素还密，没有意义。
+            fill.pixel_scale.max(0.02_f32)
         } else {
             1.0_f32
         };
         if (pixel_scale - float_default("_BackgroundPixelScale")).abs() > f32::EPSILON {
-            // `frag:210` 是 `max(_BackgroundPixelScale, 1.0)`，所以这里也夹一下下限。
             m.set_uniform("_BackgroundPixelScale", pixel_scale);
         }
         // 场景快照的降采样倍率：「噪域扭曲」关掉时按 1:1（画面清晰）；开着时保持官方
         // 写死的 3.0 —— 但如果用户把「颗粒大小」调离官方默认值（说明他本来就在手动控制
         // 场景的像素化程度），那就不再叠加官方的 1/3 降采样，避免「调到 1 还是发虚」。
-        let snapshot_scale = if cfg.block_area_distort
+        let snapshot_scale = if fill.distort
             && !lava
             && (pixel_scale - float_default("_BackgroundPixelScale")).abs() <= f32::EPSILON
         {
@@ -1124,14 +1185,14 @@ fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, c
             m.set_uniform("_SnapshotPixelScale", snapshot_scale);
         }
         // 「流动速度」/「噪声半径」/「噪声平滑度」：同样只在偏离官方默认值时才写 uniform。
-        if (cfg.block_area_displace_speed - float_default("_DisplaceSpeed")).abs() > f32::EPSILON {
-            m.set_uniform("_DisplaceSpeed", cfg.block_area_displace_speed);
+        if (fill.speed - float_default("_DisplaceSpeed")).abs() > f32::EPSILON {
+            m.set_uniform("_DisplaceSpeed", fill.speed);
         }
-        if (cfg.block_area_noise_radius - float_default("_NoiseRadius")).abs() > f32::EPSILON {
-            m.set_uniform("_NoiseRadius", cfg.block_area_noise_radius);
+        if (fill.noise_radius - float_default("_NoiseRadius")).abs() > f32::EPSILON {
+            m.set_uniform("_NoiseRadius", fill.noise_radius);
         }
-        if (cfg.block_area_noise_smoothness - float_default("_NoiseSmoothness")).abs() > f32::EPSILON {
-            m.set_uniform("_NoiseSmoothness", cfg.block_area_noise_smoothness);
+        if (fill.smoothness - float_default("_NoiseSmoothness")).abs() > f32::EPSILON {
+            m.set_uniform("_NoiseSmoothness", fill.smoothness);
         }
         return;
     }
@@ -1142,11 +1203,11 @@ fn set_fill_style(m: Material, disabled: bool, simplified: bool, invert: bool, c
     let pale = [color[0] + (1. - color[0]) * 0.6, color[1] + (1. - color[1]) * 0.6, color[2] + (1. - color[2]) * 0.6];
     if disabled {
         m.set_uniform("uDisabledFillColor", vec4(pale[0], pale[1], pale[2], 1.));
-        m.set_uniform("uDisabledFillOpacity", cfg.block_area_alpha);
+        m.set_uniform("uDisabledFillOpacity", fill.alpha);
         m.set_uniform("uDisabledSparkOpacity", 0.0_f32);
     } else {
-        m.set_uniform("_FillColor", vec4(color[0] * cfg.block_area_alpha, color[1] * cfg.block_area_alpha, color[2] * cfg.block_area_alpha, 1.));
-        m.set_uniform("_FillOpacity", cfg.block_area_alpha);
+        m.set_uniform("_FillColor", vec4(color[0] * fill.alpha, color[1] * fill.alpha, color[2] * fill.alpha, 1.));
+        m.set_uniform("_FillOpacity", fill.alpha);
         // 这些字面量必须显式写成 `f32`：`set_uniform` 是泛型，`0.` 会被推断成 `f64`（8 字节），
         // 而 uniform 注册的是 `Float1`（4 字节），miniquad 只会打印
         // `Trying to set uniform … sized 4 bytes value of 8 bytes` 然后**整个丢弃**这次写入。

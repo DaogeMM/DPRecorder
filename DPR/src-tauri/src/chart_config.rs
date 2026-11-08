@@ -78,11 +78,21 @@ const ALLOWED: &[(&str, Kind)] = &[
     // 噪域
     ("renderBlockArea", Kind::Bool),
     ("blockAreaHover", Kind::Bool),
+    ("blockAreaHoverRadius", Kind::Number),
     ("blockAreaReuse", Kind::Bool),
     ("blockAreaForcePosition", Kind::Bool),
     ("blockAreaAlpha", Kind::Number),
     ("blockAreaDensity", Kind::Number),
     ("blockAreaPixelScale", Kind::Number),
+    ("simplifiedBlockArea", Kind::Bool),
+    ("blockAreaNoiseBlotch", Kind::Bool),
+    ("blockAreaSpark", Kind::Bool),
+    ("blockAreaDistort", Kind::Bool),
+    ("blockAreaDisplaceStrength", Kind::Number),
+    ("blockAreaNoiseRadius", Kind::Number),
+    ("blockAreaNoiseSmoothness", Kind::Number),
+    ("blockAreaDisplaceSpeed", Kind::Number),
+    ("blockAreaEdgeNoise", Kind::Number),
     // 谱面修改：DPE 的「生成谱面」把这份配置写进新的 `.pez`，导入时合并回工作配置，
     // 于是修改跟着谱面走，不依赖用户当时的设置。
     ("pureConfigChart", Kind::Bool),

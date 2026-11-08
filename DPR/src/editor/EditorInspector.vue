@@ -6,18 +6,19 @@ const { t } = useI18n();
 
 import { invoke } from '@tauri-apps/api/core';
 
-import type { ChartInfo, DraftFolder, DraftInfo, DraftMedia, DraftMediaKind, EditorDraft } from '@/model';
+import type { ChartInfo, DraftFolder, DraftInfo, DraftMedia, DraftMediaKind, DraftTrackKind, EditorDraft } from '@/model';
 import { MAX_FOLDER_DEPTH } from '@/model';
-import { clearDrag, dragFolderId, dragMedia, dragPoint, dragRoot, dropAt, updateDragTarget } from './media-drag';
+import { clearDrag, dragEffect, dragFolderId, dragMedia, dragPoint, dragRoot, dropAt, updateDragTarget } from './media-drag';
 
 /**
- * 编辑窗口右上角的处理区。
+ * 编辑窗口左边的功能栏。
  *
- * 剪映右侧是「属性 / 动画 / 滤镜」这类面板：这里立三页 ——
+ * 剪映左侧是「媒体 / 音频 / 文字」这类素材入口：这里立三页 ——
  * 信息页是草稿自己的谱面信息（曲名 / 难度 / 谱师 / 曲师），由用户手填，
  * 预览时按这份内容拼 `info.txt` 交给引擎，所以草稿完全是一张自定义谱面；
  * 素材页是草稿的素材库，导入的文件都挂在这里，**拖到时间轴的轨道上**就放到谱面上；
  * 效果页留给判定线、粒子这些以后的内容。
+ * 选中轨道上那份素材的属性与素材效果在右边的编辑栏（`EditorEditBar`），不在这里。
  *
  * 素材项只记路径（草稿不复制文件），所以拖拽时带的是这一项本身，不带文件内容。
  * 素材库按文件夹分组：导入一个谱面包（目录或 `.pez` / `.zip`）就按它里面的真实目录建出文件夹
@@ -38,14 +39,16 @@ const emit = defineEmits<{
   import: [];
   'import-folder': [];
   'add-folder': [parent: string | null];
-  assign: [media: DraftMedia, track?: DraftMediaKind];
+  assign: [media: DraftMedia, track?: DraftTrackKind];
   remove: [media: DraftMedia];
   reveal: [media: DraftMedia];
-  clear: [kind: DraftMediaKind];
+  clear: [kind: DraftTrackKind];
   'update-info': [info: DraftInfo];
   'move-media': [media: DraftMedia, folder: string | null];
   'rename-folder': [folder: DraftFolder, name: string];
   'delete-folder': [folder: DraftFolder];
+  /** 效果页里点「加文字噪域」：由父级往时间轴上加一条特效轨。 */
+  'add-effect': [];
 }>();
 
 /** 信息页的四行：曲名必填，其余可以留空。 */
@@ -78,6 +81,7 @@ const ICONS: Record<DraftMediaKind, string> = {
   chart: 'mdi-file-music-outline',
   music: 'mdi-music-note',
   cover: 'mdi-image-outline',
+  lyric: 'mdi-subtitles-outline',
 };
 
 /** 素材一律只显示文件名：路径留着当悬浮提示，列里挤不下就省略号。 */
@@ -91,6 +95,7 @@ function shortName(item: DraftMedia) {
 function onTrack(item: DraftMedia) {
   const d = props.draft;
   if (!d) return false;
+  // 歌词不占轨道（铺出来的是特效片段，素材本身不挂在轨道上），所以永远不会打勾
   const current = item.kind === 'chart' ? d.chart : item.kind === 'music' ? d.music : d.cover;
   return current?.path === item.path && current.kind === item.kind;
 }
@@ -246,7 +251,9 @@ function onPointerUp(event: PointerEvent) {
   const track = hit?.closest('[data-track-kind]');
   const folder = hit?.closest('[data-folder-id]');
   const root = hit?.closest('[data-media-root]');
-  if (track) emit('assign', current.item, track.getAttribute('data-track-kind') as DraftMediaKind);
+  // 歌词落到时间轴上由时间轴自己接（它要整份铺成一条新轨道，不是一个位置一份素材）
+  if (current.item.kind === 'lyric' && hit?.closest('[data-timeline-drop]')) return;
+  if (track) emit('assign', current.item, track.getAttribute('data-track-kind') as DraftTrackKind);
   else if (folder) emit('move-media', current.item, folder.getAttribute('data-folder-id') ?? null);
   else if (root) emit('move-media', current.item, null);
 }
@@ -269,6 +276,72 @@ function cancelPress() {
 }
 
 onBeforeUnmount(cancelPress);
+
+/* ---- 效果卡的 pointer 拖拽 ----
+ *
+ * 和素材卡同一套跟指针的做法：按下记起点，移动过阈值才算拖，影子跟着指针走。
+ * 差别在落点 —— 效果不落到「哪条轨道」上，而是落到一个**时刻**：时间轴那边自己
+ * 换算秒数、加一条特效轨。点一下（没拖动）则加在当前播放头之外的开头。
+ */
+type EffectItem = { id: string; icon: string; label: string };
+
+const EFFECTS: EffectItem[] = [{ id: 'text-noise', icon: 'mdi-format-text', label: 'editor-effect-text-noise' }];
+
+let effectPress: { id: string; x: number; y: number; moved: boolean } | null = null;
+/** 上一次拖效果的松手时间：拖完那一下的 click 不该再加一条轨道。 */
+let lastEffectDragAt = 0;
+
+function onEffectPointerDown(event: PointerEvent, id: string) {
+  if (event.button !== 0) return;
+  effectPress = { id, x: event.clientX, y: event.clientY, moved: false };
+  window.addEventListener('pointermove', onEffectMove);
+  window.addEventListener('pointerup', onEffectUp);
+  window.addEventListener('pointercancel', cancelEffectPress);
+  window.addEventListener('keydown', onEffectKeydown);
+}
+
+function onEffectMove(event: PointerEvent) {
+  if (!effectPress) return;
+  const dx = event.clientX - effectPress.x;
+  const dy = event.clientY - effectPress.y;
+  if (!effectPress.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+  if (!effectPress.moved) {
+    effectPress.moved = true;
+    dragEffect.value = effectPress.id;
+    document.body.classList.add('is-media-dragging');
+  }
+  dragPoint.value = { x: event.clientX, y: event.clientY };
+  updateDragTarget(event.clientX, event.clientY);
+  event.preventDefault();
+}
+
+function onEffectUp() {
+  if (effectPress?.moved) lastEffectDragAt = performance.now();
+  cancelEffectPress();
+}
+
+function onEffectKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return;
+  cancelEffectPress();
+}
+
+/** 收摊：清状态、解绑临时监听（松手、Esc、指针失效都走这里）。 */
+function cancelEffectPress() {
+  effectPress = null;
+  clearDrag();
+  document.body.classList.remove('is-media-dragging');
+  window.removeEventListener('pointermove', onEffectMove);
+  window.removeEventListener('pointerup', onEffectUp);
+  window.removeEventListener('pointercancel', cancelEffectPress);
+  window.removeEventListener('keydown', onEffectKeydown);
+}
+
+function onEffectClick() {
+  if (performance.now() - lastEffectDragAt < 300) return;
+  emit('add-effect');
+}
+
+onBeforeUnmount(cancelEffectPress);
 
 function startRename(folder: DraftFolder) {
   renameId.value = folder.id;
@@ -302,6 +375,13 @@ async function checkMissing() {
 }
 
 watch(() => props.draft?.media, () => void checkMissing(), { immediate: true, deep: true });
+
+/** 右边的编辑栏点「换素材 / 去素材库挑」时，翻到素材库这一页（父级拿 ref 调）。 */
+function showMedia() {
+  tab.value = 'media';
+}
+
+defineExpose({ showMedia });
 </script>
 
 <template>
@@ -549,7 +629,7 @@ watch(() => props.draft?.media, () => void checkMissing(), { immediate: true, de
                   v-else
                   class="media-row__btn"
                   type="button"
-                  :title="t('editor-put-on-track')"
+                  :title="item.kind === 'lyric' ? t('editor-lyrics-tip') : t('editor-put-on-track')"
                   @click="emit('assign', item)"
                 >
                   <i class="mdi mdi-plus"></i>
@@ -577,16 +657,21 @@ watch(() => props.draft?.media, () => void checkMissing(), { immediate: true, de
         </template>
       </template>
 
-      <!-- 效果：占位，先把以后要放的东西列出来 -->
+      <!-- 效果：一行一个卡，按住往时间轴上拖就落在指针那一刻，点一下加一条并选中 -->
       <template v-else>
-        <div class="inspector__empty">
-          <v-icon icon="mdi-auto-fix" size="26"></v-icon>
-          <span>{{ t('editor-effects-tip') }}</span>
-        </div>
-        <div class="inspector__chips">
-          <span v-for="name in ['判定线', '粒子', '按键高度', '噪域']" :key="name" class="inspector__chip">
-            {{ name }}
-          </span>
+        <div class="inspector__effects">
+          <article
+            v-for="item in EFFECTS"
+            :key="item.id"
+            class="inspector__effect"
+            :title="t('editor-effect-drag-tip')"
+            @pointerdown="onEffectPointerDown($event, item.id)"
+            @click="onEffectClick"
+          >
+            <i class="mdi inspector__effect-icon" :class="item.icon"></i>
+            <span class="inspector__effect-name">{{ t(item.label) }}</span>
+            <i class="mdi mdi-drag-vertical inspector__effect-grip"></i>
+          </article>
         </div>
       </template>
     </div>
@@ -601,6 +686,14 @@ watch(() => props.draft?.media, () => void checkMissing(), { immediate: true, de
       >
         <i class="mdi" :class="ICONS[dragMedia.kind]"></i>
         <span>{{ shortName(dragMedia) }}</span>
+      </div>
+      <div
+        v-if="dragEffect"
+        class="media-ghost"
+        :style="{ left: `${dragPoint.x + 12}px`, top: `${dragPoint.y + 10}px` }"
+      >
+        <i class="mdi mdi-auto-fix"></i>
+        <span>{{ t('editor-effect-text-noise') }}</span>
       </div>
     </Teleport>
   </aside>
@@ -800,20 +893,52 @@ watch(() => props.draft?.media, () => void checkMissing(), { immediate: true, de
   text-align: center;
 }
 
-.inspector__chips {
+/* 效果页：一行一个，按住能拖到时间轴上（落点是时间轴上的那一刻） */
+.inspector__effects {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--phi-space-2);
-  margin-top: var(--phi-space-3);
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--phi-space-1);
 }
 
-.inspector__chip {
-  padding: 3px 8px;
+.inspector__effect {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
   font-size: 0.72rem;
-  color: var(--phi-label-secondary);
+  color: var(--phi-label-primary);
+  cursor: grab;
+  user-select: none;
   background: var(--phi-bg-layer-2);
   border: 0.5px solid var(--phi-border-l2);
-  border-radius: var(--phi-radius-pill);
+  border-radius: var(--phi-radius-sm);
+}
+
+.inspector__effect:hover {
+  background: var(--phi-bg-layer-3);
+  border-color: var(--phi-border-l3);
+}
+
+.inspector__effect:active {
+  cursor: grabbing;
+}
+
+.inspector__effect-icon {
+  font-size: 15px;
+  color: var(--phi-label-secondary);
+}
+
+.inspector__effect-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector__effect-grip {
+  font-size: 14px;
+  color: var(--phi-label-caption);
 }
 
 /* 素材库：上面三个导入按钮，下面是可拖的素材项 */

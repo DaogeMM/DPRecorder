@@ -473,6 +473,7 @@ fn push_quad_zones(quads: &[([[f32; 2]; 4], f32)], zones: &mut Vec<Zone>, cover:
             judge_cover: if cover && *alpha > 0. { 255 } else { 0 },
             // 合成块只挖洞、不绘制，没有颜色可言。
             color: None,
+            material: None,
         });
     }
 }

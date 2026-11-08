@@ -60,6 +60,9 @@ rand = "0.9.1"
 tauri-plugin-drag = "2.1.0"
 tauri-plugin-opener = "2"
 rustc-hash = "2.1.2"
+# 歌词文件的编码不一定是 UTF-8（LRC 里 GBK 很常见）：chardetng 猜、encoding_rs 解
+chardetng = "0.1.17"
+encoding_rs = "0.8.42"
 # sysinfo = "0.29.0"
 
 [features]

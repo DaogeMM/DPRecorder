@@ -117,6 +117,26 @@ pub fn wasm_mark(msg: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = msg;
 }
+/// 只查内存里的资源表（`fw_put` 塞的 + `globalThis.__dprw_files`），不走 HTTP 兜底。
+///
+/// 给「有就读、没有就算了」的可选文件用：`load_file` 在 wasm 上没命中时会去请求 URL，
+/// 而 macroquad 对 404 的回调不保证回来（见 `WasmFileSystem::load_file` 的注释），
+/// 拿它试探一个可能不存在的文件会把整个加载卡住。
+#[cfg(target_arch = "wasm32")]
+pub fn memory_file(key: &str) -> Option<Vec<u8>> {
+    WASM_FILES
+        .lock()
+        .ok()
+        .and_then(|files| files.as_ref()?.get(key).cloned())
+        .or_else(|| js_file(key))
+}
+
+/// 非 wasm 构建没有内存资源表，恒为空。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn memory_file(_key: &str) -> Option<Vec<u8>> {
+    None
+}
+
 /// 页面在 `globalThis.__dprw_files` 上放的那张 `Map<string, Uint8Array>`。
 ///
 /// `fw_put` 只能等 wasm 实例化之后调用，而宿主要求「先把谱面资源放好、引擎起来就能读」；
