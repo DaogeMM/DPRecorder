@@ -140,7 +140,6 @@ struct Displace<'a> {
     enabled_compose: &'a [u8],
     point_aux: &'a [[u8; 3]],
     color_grid: (&'a [u8], &'a [u8]),
-    colored: bool,
 }
 
 impl Displace<'_> {
@@ -199,6 +198,7 @@ impl Displace<'_> {
 impl Masks {
     /// `width` / `height` 是**屏幕**尺寸：内部先按 `self.cell` 像素降采样（上游是固定的
     /// 1/8，即原生相机的降采样比），再横向 2× 上采样成 effect RT 尺寸（`bw*2 x bh*2`）。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn render_displaced(&mut self, width: usize, height: usize, aspect: f32, zones: &[Zone], time: f32) {
         // 单切片入口（测试 / 调试用）：按老语义把合成块筛出来。
         // 生产调用点走 `render_displaced_covers`，自己就把两者分开了，不会每帧多两次分配。
@@ -393,7 +393,6 @@ impl Masks {
             enabled_compose: &self.enabled_compose,
             point_aux: &self.point_aux,
             color_grid: (&self.color_grid[0], &self.color_grid[1]),
-            colored: self.colored,
         };
         // 逐**源像素行**并行：一个源像素铺成两行输出，`rgba` / `aux_rgba` / 两张颜色平面 /
         // `active` 位图的那两行都只由这一行写，所以各线程碰的是互不相交的区间，
@@ -973,6 +972,7 @@ mod tests {
             index: 0,
             judge_cover: 0,
             color: None,
+            material: None,
         }
     }
 

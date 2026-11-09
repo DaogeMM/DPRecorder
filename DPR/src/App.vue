@@ -47,7 +47,7 @@ import { toast, openExternal } from './common';
 import { applyPhiTheme } from './design/theme';
 import { sectionGateState } from './config/sectionGate';
 import TaskStrip from './components/TaskStrip.vue';
-import { useTasks } from './tasks';
+import { pickActiveTask, useTasks } from './tasks';
 import { pageReady } from './pageLoad';
 import { PARTS, usePart, type PartId } from './parts';
 const appWindow = getCurrentWindow();
@@ -475,24 +475,26 @@ onMounted(async () => {
 /** 渲染弹窗（`components/TaskStrip.vue`）与窗口任务栏进度都盯着这一份全局任务列表 */
 const tasks = useTasks();
 
-// 任务栏进度：和渲染弹窗同源 —— 共用这一份全局任务列表，列表每 700ms 更新一次就跟着更新，
-// 不再另开 `get_tasks` 轮询。
+// 任务栏进度：与底部那条渲染弹窗盯的是**同一条任务**（`pickActiveTask`），两边不会各说各话 ——
+// 以前这里自己写了一份筛选条件，队列里挂着好几条时未必和弹窗显示的是同一条。
+// 有百分比的画进度条，暂停画黄色暂停态，加载 / 混音还不知道进度就画滚动条，没在跑就收掉。
 watch(tasks, async () => {
+  const status = pickActiveTask(tasks.value)?.status;
   try {
-    const activeTask = tasks.value?.find(t => ['loading', 'mixing', 'mixing_sfx', 'rendering'].includes(t.status.type));
-    if (activeTask && (activeTask.status.type === 'rendering' || activeTask.status.type === 'mixing_sfx')) {
+    if (!status) {
+      await appWindow.setProgressBar({ status: ProgressBarStatus.None });
+    } else if (status.type === 'rendering' || status.type === 'mixing_sfx') {
       await appWindow.setProgressBar({
-        progress: Math.round(activeTask.status.progress * 100),
-        status: ProgressBarStatus.Normal
+        progress: Math.round(status.progress * 100),
+        status: ProgressBarStatus.Normal,
       });
-    } else if (activeTask && (activeTask.status.type === 'loading' || activeTask.status.type === 'mixing')) {
+    } else if (status.type === 'paused') {
       await appWindow.setProgressBar({
-        status: ProgressBarStatus.Indeterminate
+        progress: Math.round(status.progress * 100),
+        status: ProgressBarStatus.Paused,
       });
     } else {
-      await appWindow.setProgressBar({
-        status: ProgressBarStatus.None
-      });
+      await appWindow.setProgressBar({ status: ProgressBarStatus.Indeterminate });
     }
   } catch (e) {
     console.error('Error updating taskbar progress:', e);
@@ -507,7 +509,7 @@ onUnmounted(() => {
 
 <template>
   <v-app id="dpr">
-    <v-sonner position="bottom-right" />
+    <v-sonner position="top-right" :offset="52" />
 
     <!-- 标题栏：整条可拖拽。左边是 Render / Editor 切换器（挨着 DPRecorder 名字），右边是窗口按钮 -->
     <header class="phi-titlebar" data-tauri-drag-region>
@@ -1265,11 +1267,20 @@ html::-webkit-scrollbar {
 }
 
 /* ---------- 提示弹窗（`<v-sonner>`） ----------
-   库默认把右下角的提示从下方顶上来；这里改成从右边滑进来，并整体抬高 10% 视口高度，
-   免得贴着窗口底边、也避开 DPE 右下角那条「已选谱面」悬浮条。
-   sonner 的样式是运行时注入的，所以选择器多带一层 `#dpr` 才压得住，不用 `!important`。 */
-#dpr [data-sonner-toaster][data-y-position='bottom'] {
-  bottom: calc(var(--offset, 32px) + 5vh);
+   从顶上弹：`offset` 让开标题栏（40px 的 `--phi-titlebar-height`）再落下来。
+   宽度上限是窗口宽度的 95%（短消息按内容收窄，见 `common.ts` 里那段 `cardProps.style`）。
+   sonner 的样式是运行时注入的、选择器都是 `:where(...)`（特异性 0），这里多带一层 `#dpr` 就压得住；
+   只有 `--width` 是写在元素行内样式上的，得靠 `!important` 才盖得掉。 */
+#dpr [data-sonner-toaster][data-y-position='top'] {
+  width: 95vw;
+  --width: 95vw !important;
+}
+
+/* 提示贴住定位框的右侧：宽了往左长，窄的时候也不会跑到屏幕左边去
+   （sonner 的提示是绝对定位、没有 left/right，默认按定位框的左边缘摆） */
+#dpr [data-sonner-toaster][data-x-position='right'] [data-sonner-toast] {
+  right: 0;
+  left: auto;
 }
 
 #dpr [data-sonner-toast][data-mounted='false'] {

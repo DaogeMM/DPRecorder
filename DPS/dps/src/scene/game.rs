@@ -277,8 +277,8 @@ pub struct GameScene {
 
     pub touch_points: Vec<(f32, f32)>,
 
-    /// 「雪降SP」特殊演出：开始把分数滚回真实值的游戏时间；`None` 表示还没到揭开伪装的 COMBO
-    xuejiang_sp_burst: Option<f64>,
+    /// 「雪降SP」特殊演出：已经跨过揭开伪装的那一刻（只用来给音量条起一次步）
+    xuejiang_sp_revealed: bool,
     /// 「雪降SP」特殊演出：全部可判定音符的判定时刻（升序）。
     /// 伪装阶段的进度条按「已判定的音符数 + 到下一个音符的进度」连续推进，
     /// 倒滚窗口也取这里相邻两个音符的间隔，所以只在开这个模式时才收集。
@@ -303,7 +303,7 @@ macro_rules! reset {
         $tm.reset();
         $self.last_update_time = $tm.now();
         $self.state = State::Starting;
-        $self.xuejiang_sp_burst = None;
+        $self.xuejiang_sp_revealed = false;
         $self.xuejiang_sp_volume = 0.;
         $self.xuejiang_sp_volume_time = 0.;
         $self.pause_rewind = PauseRewind {
@@ -331,6 +331,8 @@ macro_rules! rewind {
         $self.judge.rewind_to(&$self.chart, $time);
         $res.reset();
         $res.disable_hit_fx = true;
+        // 回退到揭开伪装之前，再跨过去时音量条要重新起步
+        $self.xuejiang_sp_revealed = false;
         $self.pause_rewind = PauseRewind {
             time: Some($tm.now()),
             duration: Some(REWIND_MUTE),
@@ -665,7 +667,7 @@ impl GameScene {
 
             touch_points: Vec::new(),
 
-            xuejiang_sp_burst: None,
+            xuejiang_sp_revealed: false,
             xuejiang_sp_note_times,
             xuejiang_sp_volume: 0.,
             xuejiang_sp_volume_time: 0.,
@@ -709,6 +711,10 @@ impl GameScene {
             self.music.pause()?;
         }
         self.prepare_at(tm);
+        // 拖到哪个位置，判定就补到哪个位置：AUTOPLAY 下连击数 / 分数要跟从头播到同一处一致
+        if self.res.config.autoplay() && self.mode != GameMode::View {
+            self.judge.catch_up(&mut self.res, &mut self.chart, time);
+        }
         Ok(())
     }
 
@@ -879,14 +885,22 @@ impl GameScene {
         ((self.res.time / seconds).clamp(0., 1.)) as f32
     }
 
+    /// 「雪降SP」特殊演出：伪装阶段已经过去的音符数（按谱面位置，不看判定）。
+    ///
+    /// 演出跟着谱面走：拖进度条落到曲子中间时，伪装阶段的分数与揭开伪装的时机都跟从头播
+    /// 一模一样。按判定连击数算做不到这点 —— 拖过去之后连击数是从零重新涨起来的。
+    fn xuejiang_sp_notes_passed(&self) -> usize {
+        let time = self.res.time;
+        self.xuejiang_sp_note_times.partition_point(|it| *it <= time)
+    }
+
     /// 「雪降SP」特殊演出：分数倒滚的时长（秒），0 表示直接跳到真实分数。
     ///
     /// 取揭开伪装处相邻两个音符的间隔（即两个 FLICK 到四连 HOLD 之间），
     /// 数字滚完正好接上真实的判定分数。
-    fn xuejiang_sp_roll_window(&self, burst_combo: u32) -> f64 {
-        let index = burst_combo as usize;
-        let prev = index.checked_sub(1).and_then(|it| self.xuejiang_sp_note_times.get(it));
-        let interval = match (prev, self.xuejiang_sp_note_times.get(index)) {
+    fn xuejiang_sp_roll_window(&self, burst_combo: usize) -> f64 {
+        let prev = burst_combo.checked_sub(1).and_then(|it| self.xuejiang_sp_note_times.get(it));
+        let interval = match (prev, self.xuejiang_sp_note_times.get(burst_combo)) {
             (Some(&prev), Some(&next)) => next - prev,
             _ => 1.,
         };
@@ -968,13 +982,16 @@ impl GameScene {
         }
     }
 
-    /// 「报应SP」特殊演出这一帧要显示什么；没开这个模式就返回 `None`（一切按正常谱面画）。
+    /// 「雪降SP」特殊演出这一帧要显示什么；没开这个模式就返回 `None`（一切按正常谱面画）。
     ///
-    /// 三个阶段：
+    /// 三个阶段（切点看谱面位置，不看判定）：
     /// - 揭开伪装的 COMBO 之前：分数按伪装音符数折算，难度文本伪装成低难度，
     ///   进度条按音乐时间连续走到 1；
     /// - 揭开伪装那一帧起：难度文本换成另一个，并在倒滚窗口内把分数从伪装值滚回真实判定分数；
     /// - 之后：分数用真实判定分数，进度条改按音乐响度伸缩。
+    ///
+    /// 切点用「已经过去的音符数」而不是连击数：拖进度条之后判定是从当前位置重新算的，
+    /// 连击数不等于谱面走到哪儿，演出就会错位（要再攒够 240 个音符才揭开伪装）。
     fn xuejiang_sp_frame(&mut self) -> Option<XuejiangSpFrame> {
         if !self.res.config.xuejiang_sp_mode {
             return None;
@@ -982,10 +999,10 @@ impl GameScene {
         let face = self.xuejiang_sp_face();
         let total = self.res.info.score_total as f64;
         let fake_notes = self.res.config.xuejiang_sp_fake_notes.max(1.);
-        let burst_combo = self.res.config.xuejiang_sp_burst_combo;
-        let combo = self.judge.combo();
-        if combo < burst_combo {
-            let score = (combo as f64 / fake_notes * total).round() as u32;
+        let burst_combo = self.res.config.xuejiang_sp_burst_combo as usize;
+        let passed = self.xuejiang_sp_notes_passed();
+        if passed < burst_combo {
+            let score = (passed as f64 / fake_notes * total).round() as u32;
             let bar = self.xuejiang_sp_fake_bar();
             return Some(XuejiangSpFrame {
                 fake_diff: true,
@@ -996,18 +1013,20 @@ impl GameScene {
         }
 
         let now = self.res.time;
-        // 揭开伪装的时刻取第一次看到 COMBO 达标的那一帧，倒滚从这一帧开始算
-        let burst = match self.xuejiang_sp_burst {
-            Some(it) => it,
-            None => {
-                self.xuejiang_sp_burst = Some(now);
-                // 音量条从伪装进度的当前位置起步，免得揭开伪装那一帧凭空缩回当前音量
-                let bar = self.xuejiang_sp_fake_bar();
-                self.xuejiang_sp_volume = bar;
-                self.xuejiang_sp_volume_time = now;
-                now
-            }
-        };
+        // 揭开伪装的时刻取第 `burst_combo` 个音符的时刻，而不是「这一帧才看见 COMBO 达标」：
+        // 拖进度条落到倒滚窗口外面时，数字也要已经滚完，不能整段错位。
+        let burst = self
+            .xuejiang_sp_note_times
+            .get(burst_combo.saturating_sub(1))
+            .copied()
+            .unwrap_or(now);
+        if !self.xuejiang_sp_revealed {
+            self.xuejiang_sp_revealed = true;
+            // 音量条从伪装进度的当前位置起步，免得揭开伪装那一帧凭空缩回当前音量
+            let bar = self.xuejiang_sp_fake_bar();
+            self.xuejiang_sp_volume = bar;
+            self.xuejiang_sp_volume_time = now;
+        }
         let window = self.xuejiang_sp_roll_window(burst_combo);
         let real = self.judge.score() / 1_000_000. * total;
         let score = if window > 0. && now < burst + window {
@@ -2032,6 +2051,10 @@ impl Scene for GameScene {
         // 键盘的 `←` 不走这里（它在后面直接改 `res.time`），单独调 `rewind!`。
         if time + 1e-3 < previous_time {
             rewind!(self, self.res, tm, time);
+            // AUTOPLAY 下回退也要把判定补回来：否则回退点之后的连击数要从零重新涨
+            if self.res.config.autoplay() && self.mode != GameMode::View {
+                self.judge.catch_up(&mut self.res, &mut self.chart, time);
+            }
         }
         if !tm.paused() && (self.res.config.autoplay() || self.pause_rewind.time.is_none()) && self.mode != GameMode::View {
             self.gl.quad_gl.viewport(self.res.camera.viewport);

@@ -1,5 +1,3 @@
-crate::tl_file!("parser");
-
 use super::{
     BlockArea, BlockAreaRenderer, BlockGroup, BpmList, Effect, JudgeLine, JudgeLineKind, Matrix, NextArea, NoiseLayer, Resource, UIElement, Vector,
 };
@@ -333,6 +331,8 @@ impl Chart {
         }
     }
 
+    // 只有 video 那条渲染路径（见下面的 `render`）用它，关掉 video 的构建里用不上。
+    #[cfg(feature = "video")]
     fn hex_to_color(hex: &str, fallback: Color) -> Color {
         let hex = hex.strip_prefix('#').unwrap_or(hex);
         if hex.len() != 6 {

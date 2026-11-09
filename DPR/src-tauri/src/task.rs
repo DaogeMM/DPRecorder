@@ -141,6 +141,8 @@ fn write_saved_tasks(saved: &[SavedTask]) -> Result<()> {
             }
         }
     }
+    // 任务快照里的配置与预设同一套浮点口径：最多三位小数
+    crate::common::round_floats_json(&mut tasks);
     std::fs::write(file, serde_json::to_string_pretty(&tasks)?)?;
     Ok(())
 }

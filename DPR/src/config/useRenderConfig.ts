@@ -17,7 +17,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { isNumeric, toast } from '../common';
 import { DEFAULT_RENDER_CONFIG, type RenderConfig } from '../model';
 import { RENDER_FIELDS } from './fields';
-import { defaultConfigValue, defaultUiValue } from './convert';
+import { colorText, defaultConfigValue, defaultUiValue, roundConfigFloats, roundFloat } from './convert';
 import type { FieldContext, FieldSpec, RespackItem, UiState } from './types';
 import { alignResolution } from './resolution';
 
@@ -57,10 +57,22 @@ const DERIVED_KEYS = new Set(FIELD_ENTRIES.filter(([, field]) => field.syncToUi 
  * 所以：只比 `a`（＝界面构建出来的那份）会产出的键，值逐个比较。
  */
 export function sameRenderConfig(a: RenderConfig, b: RenderConfig) {
-  const merged = { ...DEFAULT_RENDER_CONFIG, ...b } as unknown as Record<string, unknown>;
-  const built = a as unknown as Record<string, unknown>;
+  // 两边都先取到三位小数：预设里存的可能是 `0.4117647111415863`，界面收上来的已经是 `0.412`，
+  // 不取整就会把「刚选中预设、一个字都没改」也算成改过。颜色同理但换了个写法：
+  // 预设里是 `#RRGGBB`，界面构建出来是数组，统一成色号再比（见 `normalizeColors`）。
+  const merged = normalizeColors(roundConfigFloats({ ...DEFAULT_RENDER_CONFIG, ...b }) as unknown as Record<string, unknown>);
+  const built = normalizeColors(roundConfigFloats(a) as unknown as Record<string, unknown>);
   return Object.keys(built).every((key) =>
     DERIVED_KEYS.has(key as Key) || JSON.stringify(built[key]) === JSON.stringify(merged[key]));
+}
+
+/** 颜色键：文件与 IPC 上是 HEX 文本，界面构建出来是 `[r, g, b]` ⇒ 比之前统一成文本。 */
+const COLOR_KEYS = FIELD_ENTRIES.filter(([, field]) => field.widget === 'color').map(([k]) => k);
+
+function normalizeColors(config: Record<string, unknown>) {
+  const out = { ...config };
+  for (const key of COLOR_KEYS) out[key] = colorText(out[key]);
+  return out;
 }
 
 function uiDefault(key: Key, field: FieldSpec, value: unknown): unknown {
@@ -223,8 +235,8 @@ export function useRenderConfig() {
       out[k] = field.toConfig ? field.toConfig(ui, ctx) : uiToConfig(k as Key, field, ui[field.uiKey ?? k]);
     }
     // 从界面收上来的这份也要过一遍：界面槽位可能是别处塞进来的（预设 / 工作配置 / 查询串），
-    // 不保证「比例与分辨率对得上」。
-    return alignResolution(out as unknown as RenderConfig);
+    // 不保证「比例与分辨率对得上」；浮点也统一取到三位小数，别把 f32 的尾巴发给后端。
+    return alignResolution(roundConfigFloats(out) as unknown as RenderConfig);
   }
 
   /* --------------------------- applyConfig ------------------------ */
@@ -238,11 +250,13 @@ export function useRenderConfig() {
       const raw = ((config as unknown as Record<string, unknown>)[k] ?? defaults[k]) as never;
       const uk = field.uiKey ?? k;
       const display = field.toUi ? field.toUi(raw, config, ctx) : uiDefault(key, field, raw);
+      // 规格表里手写的 `toUi` 也可能吐出带尾巴的数字（减法 / 乘 1000 算出来的）
+      const shown = typeof display === 'number' ? roundFloat(display) : display;
       if (uk === k) {
-        if (display !== undefined) ui[k] = display;
+        if (shown !== undefined) ui[k] = shown;
       } else {
-        ui[k] = raw;
-        if (display !== undefined) ui[uk] = display;
+        ui[k] = roundConfigFloats(raw);
+        if (shown !== undefined) ui[uk] = shown;
       }
     }
     syncUiOnly(config);

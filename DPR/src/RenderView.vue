@@ -15,6 +15,7 @@ import {
   APPENDANT_DOWNLOAD_URL,
   appendantItem,
   appendantUrl,
+  chartAnimationFamily,
   fetchAppendants,
   fetchRespacks,
   fetchRespackDir,
@@ -75,7 +76,7 @@ const aspectRatioApplied = ref(false);
 
 const chartInfo = ref<ChartInfo>();
 
-// 谱面信息里的「定数」输入框：显示一律补成一位小数（见 `./lvl.ts`），
+// 谱面信息里的「定数」输入框：显示按定数格式规整（整数不带小数位，见 `./lvl.ts`），
 // 输入过程仍然随手打（`13.` 不会被改写），数值照旧写回 `chartInfo.lvl`。
 const { text: lvlText, normalize: normalizeLvl } = useLvlField(
   () => chartInfo.value?.lvl,
@@ -84,14 +85,29 @@ const { text: lvlText, normalize: normalizeLvl } = useLvlField(
   },
 );
 
-// 「难度文本」整串默认由「难度标识」+「定数」拼出来（`AT` + `18.0` → `AT Lv.18.0`）。
+// 「难度文本」整串默认由「难度标识」+「定数」拼出来（`AT` + `18` → `AT Lv.18`）。
 // 只在两者变化时覆盖，手改过的「难度文本」会一直留到下一次改动它们为止。
+//
+// 例外是刚载入的谱面：`diff` / `lvl` 从空跳到文件里的值，这一步不是用户在改，
+// 而文件里的难度文本不一定是拼出来的（`SP Lv.?` 那种定数根本就不是数字）。
+// 所以记下载入时这一对值，它们没变就说明还没人动过，别拿自动拼的串盖掉文件里的文本。
+let loadedDiffLvl: [string, number] = ['', 0];
+/** 记下谱面信息里的「难度标识 + 定数」，给下面那个 watch 判断「这一跳是不是载入」 */
+function markLoadedDiffLvl() {
+  loadedDiffLvl = [
+    String(chartInfo.value?.diff ?? '').trim(),
+    Number(chartInfo.value?.lvl ?? 0),
+  ];
+}
 watch(
   [() => chartInfo.value?.diff, () => chartInfo.value?.lvl],
   ([diff, lvl]) => {
     if (!chartInfo.value) return;
     const tier = String(diff ?? '').trim();
     const lvlValue = formatLvl(lvl);
+    const [loadedDiff, loadedLvl] = loadedDiffLvl;
+    if (tier === loadedDiff && Number(lvl ?? 0) === loadedLvl) return;
+    loadedDiffLvl = [tier, Number(lvl ?? 0)];
     const parts = [tier, lvlValue ? `Lv.${lvlValue}` : ''].filter(Boolean);
     if (parts.length) chartInfo.value.difficulty = parts.join(' ');
   },
@@ -121,6 +137,13 @@ const appConfigReady = invoke('read_config')
   });
 
 const chartPath = ref('');
+
+// 「调试」按钮：只在「设置」里开了「显示隐藏选项」（Ctrl+Shift+点左栏「设置」才露出来的那条），
+// 且当前谱面属于那七张带演出动画的谱面之一时出现。它打开 DPDebugger —— 窗口里改的就是这一页
+// 这份配置，改完通过 `debug-config` 事件回传，下一次预览 / 渲染直接用调好的值。
+const debugEnabled = useStorage<boolean>('phi.debug.enabled', false);
+const debugFamily = computed(() => chartAnimationFamily(chartPath.value));
+const loadingDebugger = ref(false);
 
 /**
  * 谱面自带的强制渲染配置：谱面包根上的 `config.toml`（只有 DPR 认它，引擎不读）。
@@ -160,9 +183,11 @@ async function loadChart(file: string, info?: ChartInfo, config?: RenderConfig) 
     chartPath.value = file;
     if (info) {
       chartInfo.value = info;
+      markLoadedDiffLvl();
       await new Promise(r => setTimeout(r, 0));
     } else {
       chartInfo.value = (await invoke('parse_chart', { path: file })) as ChartInfo;
+      markLoadedDiffLvl();
     }
     // 谱面里带的那批值（宽高比 / 偏移 / 判定线长度 / 总分 / 预览起止 / 各开关）不能覆盖配置：
     // 它们是**配置项**（见 model.ts 的「谱面侧渲染参数」与 config/chartSide.ts）——
@@ -447,6 +472,20 @@ async function previewPlay() {
   }
 }
 
+/** 打开 DPDebugger：把这一页当前这套参数（含谱面自带的 `config.toml`）带过去。 */
+async function openDebugger() {
+  loadingDebugger.value = true;
+  try {
+    const params = await buildParams();
+    if (!params) return;
+    await invoke('open_debug_window', { path: params.path, config: params.config });
+  } catch (e) {
+    toastError(e);
+  } finally {
+    loadingDebugger.value = false;
+  }
+}
+
 const renderMsg = ref(''),
   renderProgress = ref<number>(),
   renderDuration = ref<number>();
@@ -467,6 +506,12 @@ event.listen('render-progress', (msg) => {
 event.listen('render-done', (msg) => {
   renderDuration.value = Math.round(msg.payload as number);
 });
+
+// DPDebugger 那边每改一个参数就把整份渲染配置发回来：直接套进这一页，
+// 之后无论预览、游玩还是渲染，用的都是调试窗口里调好的这份值。
+listen<RenderConfig>('debug-config', (payload) => {
+  configView.value?.applyConfig(payload.payload);
+}).then((unlisten) => dropUnlisteners.push(unlisten));
 
 async function moveNext() {
   // 只有一步: 校验谱面信息与渲染参数, 提交成功后弹个绿色提示(进度/结果在「任务」页看)
@@ -560,7 +605,10 @@ if (!isString(chartInQuery)) {
         if (tip) chartTip.value = tip;
         // 最近一次导入的谱面本身也放回去：谱面信息里那些文字框、标签、以及「渲染」要用的路径
         if (savedChart.chartPath) chartPath.value = savedChart.chartPath;
-        if (savedChart.chartInfo) chartInfo.value = savedChart.chartInfo;
+        if (savedChart.chartInfo) {
+          chartInfo.value = savedChart.chartInfo;
+          markLoadedDiffLvl();
+        }
         // 谱面自带的 config.toml 也要跟着重新读：不然重启后「以谱面为准」的那几项会失效
         await loadChartConfig(savedChart.chartPath ?? '');
       }
@@ -631,6 +679,7 @@ async function readInfo() {
   if (!inputPath) return;
   try {
     chartInfo.value = await invoke('read_info', { path: inputPath }) as ChartInfo;
+    markLoadedDiffLvl();
     // 宽高比是配置项，导入谱面不回填；这里只按谱面画幅比调一下分辨率（见 applyChartAspectRatio）
     applyChartAspectRatio();
     dialog.message(t('read-success'), { title: t('read-info') })
@@ -708,7 +757,7 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
             </CfgField>
             <!-- 谱面文件 / 音乐文件 / 曲绘文件 + 难度标识 / 定数 / 难度文本 / 偏移 / 总分：紧接在上面那四个后面，同属**一个**网格
                  （判定线长度在「谱面-判定线」）。
-                 「难度文本」是整串（`AT Lv.18.0`），默认由难度标识 + 定数拼出来，也能手改。
+                 「难度文本」是整串（`AT Lv.18`），默认由难度标识 + 定数拼出来，也能手改。
                  「偏移」「总分」是**配置项**（`RenderConfig.offset` / `scoreTotal`，随预设存），
                  但它们的值每谱面都要调，所以控件留在这里、值由 RenderView 与 ConfigView 互通
                  （见下面的 watch 与 `setChartInfoSlots`）。 -->
@@ -772,6 +821,8 @@ watch(() => chartInfo.value?.tags ?? [], (newVal, oldVal) => {
     <!-- 内容区底部的固定操作条：这排按钮贴底、不随页面滚动 -->
     <div class="render-view__actions">
       <v-btn :loading="loadingTweakoffset" :disabled="!chartInfo" variant="text" @click="previewTweakoffset">{{ t('tweakoffset') }}</v-btn>
+      <!-- 带演出动画的谱面才有：打开 DPDebugger 调这套演出（只有开了「显示隐藏选项」才露面） -->
+      <v-btn v-if="debugEnabled && debugFamily && chartInfo" :loading="loadingDebugger" variant="text" @click="openDebugger">{{ t('debug-open') }}</v-btn>
       <v-spacer />
       <!-- 「游玩」默认关闭, 在「设置」里打开才显示 -->
       <v-btn v-if="appConfig.enablePlayButton" :loading="loadingPlay" :disabled="!chartInfo" variant="tonal" @click="previewPlay" class="gradient-primary">{{ t('play') }}</v-btn>

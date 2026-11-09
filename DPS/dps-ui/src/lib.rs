@@ -15,6 +15,8 @@ mod popup;
 mod rate;
 mod scene;
 mod tags;
+// UML 界面描述语言的解析与元素都还没有调用方（事件页接入时才用），先整体留用。
+#[allow(dead_code)]
 mod uml;
 
 use anyhow::Result;
@@ -28,12 +30,20 @@ use dps::{
     scene::{show_error, show_message},
     time::TimeManager,
     ui::{FontArc, TextPainter},
-    gyro::{GYRO, GyroData},
     Main,
 };
 use scene::MainScene;
-use std::{collections::VecDeque, sync::{mpsc, Mutex}, time::Duration};
-use nalgebra::{UnitQuaternion, Vector3};
+use std::sync::{mpsc, Mutex};
+// 帧率统计只在没有 `play` 特性的构建里画。
+#[cfg(not(feature = "play"))]
+use std::collections::VecDeque;
+// 陀螺仪与安卓的 JNI 回调只在安卓上用。
+#[cfg(target_os = "android")]
+use {
+    dps::gyro::{GYRO, GyroData},
+    nalgebra::Vector3,
+    std::time::Duration,
+};
 use tracing::{error, debug, info};
 
 /// 联网功能总开关。
@@ -70,11 +80,12 @@ pub fn set_data(data: Data) {
 }
 
 pub fn get_data() -> &'static Data {
-    unsafe { DATA.as_ref().unwrap() }
+    // 走 `addr_of!` 而不是直接取引用：直接借 `static mut` 会触发 `static_mut_refs`。
+    unsafe { (*std::ptr::addr_of!(DATA)).as_ref().unwrap() }
 }
 
 pub fn get_data_mut() -> &'static mut Data {
-    unsafe { DATA.as_mut().unwrap() }
+    unsafe { (*std::ptr::addr_of_mut!(DATA)).as_mut().unwrap() }
 }
 
 pub fn save_data() -> Result<()> {

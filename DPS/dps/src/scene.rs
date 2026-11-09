@@ -1,3 +1,5 @@
+// wasm 上不编桌面/iOS 的输入框与文件选择，`ttl!` 在那里没有任何调用点。
+#[cfg(not(target_arch = "wasm32"))]
 crate::tl_file!("scene" ttl);
 
 mod ending;
@@ -10,11 +12,14 @@ mod loading;
 pub use loading::{BasicPlayer, LoadingScene, UpdateFn, UploadFn};
 
 use crate::{
-    ext::{draw_image, screen_aspect, LocalTask, RectExt, SafeTexture, ScaleType},
+    ext::{draw_image, screen_aspect, LocalTask, SafeTexture, ScaleType},
     judge::Judge,
     time::TimeManager,
     ui::{BillBoard, Dialog, Message, MessageHandle, MessageKind, TextPainter, Ui},
 };
+// 只有桌面输入框的 `render`（`TextInput`，见下面）用 `RectExt::rounded`。
+#[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
+use crate::ext::RectExt;
 use anyhow::{Error, Result};
 use cfg_if::cfg_if;
 use macroquad::prelude::*;

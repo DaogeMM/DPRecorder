@@ -35,7 +35,8 @@ const CARD_END: f64 = 153.;
 const ZOOM_END: f64 = 229.;
 const GLITCH_END: f64 = 251.;
 const STROBE_END: f64 = 397.;
-/// 整段总帧数（426 帧 = 7.10 秒）。
+/// 整段总帧数（426 帧 = 7.10 秒）。只给测试对表用：实际总长跟着渐出末尾走（见 `render`）。
+#[cfg_attr(not(test), allow(dead_code))]
 const TOTAL: f64 = 426.;
 
 /// 白屏（`QZK_6`）的透明度关键帧：0→1 渐入、停 20 帧、1→0 渐出到整段末尾。
@@ -45,7 +46,11 @@ const TOTAL: f64 = 426.;
 /// 渐入 / 渐出的**时长**可以由配置调，下面的默认值就是 65 帧与 30 帧。
 const WHITE_IN_START: f64 = 311.;
 const WHITE_OUT_START: f64 = 396.;
+/// 渐入 / 渐出的默认时长；运行时的值从配置来（`config.qzkago_sp_white_in/_out`），
+/// 这两个常量是 `config.rs` 里那两处默认值的对照，测试直接拿它们算。
+#[cfg_attr(not(test), allow(dead_code))]
 const WHITE_IN_DEFAULT: f64 = 65. / 60.;
+#[cfg_attr(not(test), allow(dead_code))]
 const WHITE_OUT_DEFAULT: f64 = 30. / 60.;
 
 /// C 段 16 段的帧数：远景/放大两张交替，第 0 段是远景（`QZK_2`），越切越快。
@@ -92,7 +97,7 @@ fn image_at(frame: f64) -> Option<usize> {
     if frame < GLITCH_END {
         return Some(4);
     }
-    let mut at = GLITCH_END + STROBE_LEAD;
+    let at = GLITCH_END + STROBE_LEAD;
     if frame < at {
         return Some(5);
     }

@@ -92,10 +92,10 @@ pub async fn main(cmd: bool, tweak_offset: bool, autoplay: bool) -> Result<()> {
             .filter(|end| *end > info.preview_start && *end > 0.);
     }
     // 是否全屏由「设置 → 预览全屏」决定。
-    // 读不到配置时按 true 兜底。
+    // 读不到配置时按 false 兜底（与设置项的默认值一致）。
     let preview_fullscreen = crate::common::read_config()
         .map(|config| config.preview_fullscreen)
-        .unwrap_or(true);
+        .unwrap_or(false);
     // 「输出预览性能到控制台」：每秒一行的帧率是刷屏的主力，默认不打。
     let print_preview_stats = crate::common::read_config()
         .map(|config| config.print_preview_stats)

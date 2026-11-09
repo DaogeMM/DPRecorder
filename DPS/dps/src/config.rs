@@ -3,6 +3,8 @@ use std::fmt;
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+// 只有 `play` 构建里才有 `health_mode` 这个字段（见下面的 `Config`）。
+#[cfg(feature = "play")]
 use crate::health::HealthConfig;
 
 bitflags! {
@@ -39,6 +41,36 @@ impl fmt::Display for ChallengeModeColor {
             ChallengeModeColor::Rainbow => "rainbow",
         };
         write!(f, "{}", s)
+    }
+}
+
+/// 颜色默认值：代码里按十六进制写（`hex_color("#E61A1A")`），字段本身仍是 0~1 的三分量数组。
+///
+/// 编译期就换算好，运行时与原来直接写 `[0.9, 0.1, 0.1]` 完全一样；写 HEX 是因为界面
+/// 与配置文件里颜色都以 `#RRGGBB` 出现，对颜色只能靠读数字猜。
+pub const fn hex_color(hex: &str) -> [f32; 3] {
+    let bytes = hex.as_bytes();
+    let mut rgb = [0u8; 3];
+    let mut index = 0;
+    let mut cursor = if !bytes.is_empty() && bytes[0] == b'#' { 1 } else { 0 };
+    while index < 3 && cursor + 1 < bytes.len() {
+        rgb[index] = hex_nibble(bytes[cursor]) * 16 + hex_nibble(bytes[cursor + 1]);
+        index += 1;
+        cursor += 2;
+    }
+    [
+        rgb[0] as f32 / 255.0,
+        rgb[1] as f32 / 255.0,
+        rgb[2] as f32 / 255.0,
+    ]
+}
+
+const fn hex_nibble(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => 0,
     }
 }
 
@@ -453,10 +485,10 @@ pub struct Config {
     /// 默认 500.（实际上等于不限）。
     pub water_sfx_max: f32,
 
-    /// 「噪域颜色」：简化噪域的填充颜色 rgb（0~1），默认红；
+    /// 「噪域颜色」：简化噪域的填充颜色 rgb（0~1），默认 `#E61A1A`（红）；
     /// `enable` **之前**用它的淡色（向白色混 60%），减算块两种颜色都取反
     pub block_area_color: [f32; 3],
-    /// 「噪域颜色」：**完整（非简化）噪域**的颜色 rgb（0~1），默认红。
+    /// 「噪域颜色」：**完整（非简化）噪域**的颜色 rgb（0~1），默认 `#E61A1A`（红）。
     ///
     /// 实现是**色相映射**：官方那套配色（填充 / 描边 / 辉光 / 未启用填充）色相全是 0（纯红），
     /// 所以只取这个颜色的色相去整体旋转它们，饱和度与明度保持官方值 ⇒ 换任何颜色都保住原版
@@ -665,6 +697,8 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        // 七套演出的可调参数取自 assets/chart-animation.toml，改默认值改那个文件即可
+        let a = crate::chart_animation::defaults();
         Self {
             #[cfg(not(feature = "play"))]
             auto_tweak_offset: false,
@@ -721,9 +755,9 @@ impl Default for Config {
             watermark: "".to_string(),
             notecolor: "".to_string(),
             rr_sp: false,
-            rr_hit_fx_color: "#FBA373".to_string(),
-            rr_hit_fx_scale: 1.,
-            rr_hit_fx_speed: 1.,
+            rr_hit_fx_color: a.rr.hit_fx_color.clone(),
+            rr_hit_fx_scale: a.rr.hit_fx_scale,
+            rr_hit_fx_speed: a.rr.hit_fx_speed,
             hitcolor: "".to_string(),
             linecolor: "".to_string(),
             roman: false,
@@ -752,86 +786,86 @@ impl Default for Config {
             render_ui_combo: true,
             render_ui_bar: true,
             xuejiang_sp_mode: false,
-            xuejiang_sp_fake_notes: 305.,
-            xuejiang_sp_fake_bar_seconds: 120.,
-            xuejiang_sp_burst_combo: 240,
-            xuejiang_sp_roll_scale: 0.75,
-            xuejiang_sp_diff_fake: "IN Lv.I2".to_owned(),
-            xuejiang_sp_diff_real: "SP Lv.?".to_owned(),
-            xuejiang_sp_volume_percentile: 0.99,
-            xuejiang_sp_volume_gamma: 1.05,
-            xuejiang_sp_volume_smooth: 0.07,
-            xuejiang_sp_face_hit_start: 170.7692,
-            xuejiang_sp_face_period: 4.1026,
-            xuejiang_sp_face_rounds: 4,
-            xuejiang_sp_face_lead_show: 3.5897,
-            xuejiang_sp_face_lead_roll: 2.8205,
-            xuejiang_sp_face_text_show: "(⊙o⊙)".to_owned(),
-            xuejiang_sp_face_text_roll: "(⊙ω⊙)".to_owned(),
-            xuejiang_sp_face_text_hit: "Ｏ(≧▽≦)Ｏ".to_owned(),
+            xuejiang_sp_fake_notes: a.xuejiang.fake_notes,
+            xuejiang_sp_fake_bar_seconds: a.xuejiang.fake_bar_seconds,
+            xuejiang_sp_burst_combo: a.xuejiang.burst_combo,
+            xuejiang_sp_roll_scale: a.xuejiang.roll_scale,
+            xuejiang_sp_diff_fake: a.xuejiang.diff_fake.clone(),
+            xuejiang_sp_diff_real: a.xuejiang.diff_real.clone(),
+            xuejiang_sp_volume_percentile: a.xuejiang.volume_percentile,
+            xuejiang_sp_volume_gamma: a.xuejiang.volume_gamma,
+            xuejiang_sp_volume_smooth: a.xuejiang.volume_smooth,
+            xuejiang_sp_face_hit_start: a.xuejiang.face_hit_start,
+            xuejiang_sp_face_period: a.xuejiang.face_period,
+            xuejiang_sp_face_rounds: a.xuejiang.face_rounds,
+            xuejiang_sp_face_lead_show: a.xuejiang.face_lead_show,
+            xuejiang_sp_face_lead_roll: a.xuejiang.face_lead_roll,
+            xuejiang_sp_face_text_show: a.xuejiang.face_text_show.clone(),
+            xuejiang_sp_face_text_roll: a.xuejiang.face_text_roll.clone(),
+            xuejiang_sp_face_text_hit: a.xuejiang.face_text_hit.clone(),
             baoying_sp_mode: false,
-            baoying_sp_wow_height: 0.043,
-            baoying_sp_wow_offset_x: 0.02,
-            baoying_sp_wow_offset_y: 0.02,
-            baoying_sp_title_height: 0.056,
-            baoying_sp_title_offset_x: 0.03,
-            baoying_sp_title_offset_y: 0.,
-            baoying_sp_score_offset_x: 0.,
-            baoying_sp_score_offset_y: 0.01,
-            baoying_sp_score_height: 0.05,
-            baoying_sp_score_gap: 0.003,
-            baoying_sp_score_squeeze: 1.1,
-            baoying_sp_combo_offset_x: 0.,
-            baoying_sp_combo_offset_y: 0.01,
-            baoying_sp_combo_height: 0.055,
-            baoying_sp_combo_gap: 0.,
-            baoying_sp_combo_squeeze: 1.1,
-            baoying_sp_combo_label_height: 0.055,
-            baoying_sp_combo_label_offset_x: 0.,
-            baoying_sp_combo_label_offset: 0.01,
-            baoying_sp_diff_height: 0.05,
-            baoying_sp_diff_gap_sp_lv: 0.1,
-            baoying_sp_diff_gap_lv_question: 0.,
-            baoying_sp_diff_squeeze: 1.2,
-            baoying_sp_diff_offset_x: -0.05,
-            baoying_sp_diff_offset_y: 0.029,
-            baoying_sp_digits_rtl: true,
-            baoying_sp_hit_fx_scale: 0.5,
-            baoying_sp_hit_fx_rotate: false,
-            baoying_sp_particle_count: 0,
+            baoying_sp_wow_height: a.baoying.wow_height,
+            baoying_sp_wow_offset_x: a.baoying.wow_offset_x,
+            baoying_sp_wow_offset_y: a.baoying.wow_offset_y,
+            baoying_sp_title_height: a.baoying.title_height,
+            baoying_sp_title_offset_x: a.baoying.title_offset_x,
+            baoying_sp_title_offset_y: a.baoying.title_offset_y,
+            baoying_sp_score_offset_x: a.baoying.score_offset_x,
+            baoying_sp_score_offset_y: a.baoying.score_offset_y,
+            baoying_sp_score_height: a.baoying.score_height,
+            baoying_sp_score_gap: a.baoying.score_gap,
+            baoying_sp_score_squeeze: a.baoying.score_squeeze,
+            baoying_sp_combo_offset_x: a.baoying.combo_offset_x,
+            baoying_sp_combo_offset_y: a.baoying.combo_offset_y,
+            baoying_sp_combo_height: a.baoying.combo_height,
+            baoying_sp_combo_gap: a.baoying.combo_gap,
+            baoying_sp_combo_squeeze: a.baoying.combo_squeeze,
+            baoying_sp_combo_label_height: a.baoying.combo_label_height,
+            baoying_sp_combo_label_offset_x: a.baoying.combo_label_offset_x,
+            baoying_sp_combo_label_offset: a.baoying.combo_label_offset,
+            baoying_sp_diff_height: a.baoying.diff_height,
+            baoying_sp_diff_gap_sp_lv: a.baoying.diff_gap_sp_lv,
+            baoying_sp_diff_gap_lv_question: a.baoying.diff_gap_lv_question,
+            baoying_sp_diff_squeeze: a.baoying.diff_squeeze,
+            baoying_sp_diff_offset_x: a.baoying.diff_offset_x,
+            baoying_sp_diff_offset_y: a.baoying.diff_offset_y,
+            baoying_sp_digits_rtl: a.baoying.digits_rtl,
+            baoying_sp_hit_fx_scale: a.baoying.hit_fx_scale,
+            baoying_sp_hit_fx_rotate: a.baoying.hit_fx_rotate,
+            baoying_sp_particle_count: a.baoying.particle_count,
             jingluan_sp_mode: false,
-            jingluan_sp_chan_height: 0.99,
-            jingluan_sp_chan_offset_y: -0.1,
-            jingluan_sp_chan_fade_in: 0.,
-            jingluan_sp_chan_fade_out: 0.,
-            jingluan_sp_guang_height: 1.0,
-            jingluan_sp_guang_offset_y: 0.,
-            jingluan_sp_guang_fade_in: 0.,
-            jingluan_sp_guang_fade_out: 0.,
-            jingluan_sp_mopemope_height: 1.0,
-            jingluan_sp_mopemope_offset_y: 0.,
-            jingluan_sp_mopemope_fade_in: 0.,
-            jingluan_sp_mopemope_fade_out: 0.,
-            jingluan_sp_dim: 0.18,
+            jingluan_sp_chan_height: a.jingluan.chan_height,
+            jingluan_sp_chan_offset_y: a.jingluan.chan_offset_y,
+            jingluan_sp_chan_fade_in: a.jingluan.chan_fade_in,
+            jingluan_sp_chan_fade_out: a.jingluan.chan_fade_out,
+            jingluan_sp_guang_height: a.jingluan.guang_height,
+            jingluan_sp_guang_offset_y: a.jingluan.guang_offset_y,
+            jingluan_sp_guang_fade_in: a.jingluan.guang_fade_in,
+            jingluan_sp_guang_fade_out: a.jingluan.guang_fade_out,
+            jingluan_sp_mopemope_height: a.jingluan.mopemope_height,
+            jingluan_sp_mopemope_offset_y: a.jingluan.mopemope_offset_y,
+            jingluan_sp_mopemope_fade_in: a.jingluan.mopemope_fade_in,
+            jingluan_sp_mopemope_fade_out: a.jingluan.mopemope_fade_out,
+            jingluan_sp_dim: a.jingluan.dim,
             qzkago_sp: false,
-            qzkago_sp_start: 77.07,
-            qzkago_sp_white_in: 65. / 60.,
-            qzkago_sp_white_out: 30. / 60.,
+            qzkago_sp_start: a.qzkago.start,
+            qzkago_sp_white_in: a.qzkago.white_in,
+            qzkago_sp_white_out: a.qzkago.white_out,
             clock_paradox_sp: false,
-            clock_paradox_sp_scale: 1.,
-            clock_paradox_sp_offset_x: 0.,
-            clock_paradox_sp_offset_y: 0.,
-            clock_paradox_sp_flash1_on: 108.020,
-            clock_paradox_sp_flash2_on: 109.720,
-            clock_paradox_sp_flash3_on: 111.42,
-            clock_paradox_sp_flash4_on: 142.287,
-            clock_paradox_sp_flash1_fade: 108.453,
-            clock_paradox_sp_flash2_fade: 110.170,
-            clock_paradox_sp_flash3_fade: 111.870,
-            clock_paradox_sp_flash4_fade: 145.077,
+            clock_paradox_sp_scale: a.clock_paradox.scale,
+            clock_paradox_sp_offset_x: a.clock_paradox.offset_x,
+            clock_paradox_sp_offset_y: a.clock_paradox.offset_y,
+            clock_paradox_sp_flash1_on: a.clock_paradox.flash1_on,
+            clock_paradox_sp_flash2_on: a.clock_paradox.flash2_on,
+            clock_paradox_sp_flash3_on: a.clock_paradox.flash3_on,
+            clock_paradox_sp_flash4_on: a.clock_paradox.flash4_on,
+            clock_paradox_sp_flash1_fade: a.clock_paradox.flash1_fade,
+            clock_paradox_sp_flash2_fade: a.clock_paradox.flash2_fade,
+            clock_paradox_sp_flash3_fade: a.clock_paradox.flash3_fade,
+            clock_paradox_sp_flash4_fade: a.clock_paradox.flash4_fade,
             mopemope_sp_mode: false,
-            mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
-            mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],
+            mopemope_sp_color_a: a.mopemope.color_a,
+            mopemope_sp_color_b: a.mopemope.color_b,
             render_bg: true,
             render_bg_dim: true,
             solid_bg: None,
@@ -840,8 +874,8 @@ impl Default for Config {
             block_area_hover_radius: 0.5,
             simplified_block_area: false,
             simplified_block_area_text: false,
-            simplified_block_area_text_color: [1., 0.3765, 0.5804],
-            simplified_block_area_text_pale_color: [1., 1., 1.],
+            simplified_block_area_text_color: hex_color("#FF6094"),
+            simplified_block_area_text_pale_color: hex_color("#FFFFFF"),
             block_area_reuse: false,
             block_area_force_position: false,
             block_area_force_height: 0.2,
@@ -864,8 +898,8 @@ impl Default for Config {
             water_death_particles: 8.,
             water_sfx_volume: 0.5,
             water_sfx_max: 500.,
-            block_area_color: [0.9, 0.1, 0.1],
-            block_area_normal_color: [0.9, 0.1, 0.1],
+            block_area_color: hex_color("#E61A1A"),
+            block_area_normal_color: hex_color("#E61A1A"),
             block_area_alpha: 0.25,
             block_area_density: 2.5,
             block_area_spark: true,

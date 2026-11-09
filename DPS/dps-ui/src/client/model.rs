@@ -1,6 +1,8 @@
 mod chart;
 pub use chart::*;
 
+// 在线 collection 还没接进界面，模型先留着。
+#[allow(dead_code)]
 mod collection;
 pub use collection::*;
 
@@ -82,6 +84,8 @@ impl From<MusicPosition> for String {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(try_from = "u8")]
 #[repr(u8)]
+// 谱面难度类型（服务端字段），界面还没显示它。
+#[allow(dead_code)]
 pub enum LevelType {
     EZ = 0,
     HD,

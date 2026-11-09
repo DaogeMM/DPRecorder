@@ -200,7 +200,7 @@ function mixedOf<T>(get: (it: TextNoiseEffect) => T): boolean {
 /** 每个字段是否「多个值」：键名与 `TextNoiseEffect` / `NoiseMaterial` 一致。 */
 const mixed = computed<Record<string, boolean>>(() => {
   const out: Record<string, boolean> = {};
-  for (const key of ['text', 'fontFamily', 'color', 'fontSize', 'lineHeight', 'letterSpacing', 'x', 'y', 'rotation', 'invert', 'subtract', 'blend'] as const) {
+  for (const key of ['text', 'fontFamily', 'color', 'fontSize', 'lineHeight', 'letterSpacing', 'x', 'y', 'rotation', 'enable', 'invert', 'subtract', 'blend'] as const) {
     out[key] = mixedOf((it) => it[key]);
   }
   for (const key of Object.keys(DEFAULT_NOISE_MATERIAL) as (keyof NoiseMaterial)[]) {
@@ -630,6 +630,23 @@ function clearSelected() {
           <h3 class="editbar__group-title">{{ t('editor-effect-more') }}</h3>
 
           <div class="editbar__switches">
+            <!-- 激活：关掉这一段就不生成噪域（谱面里留着、引擎跳过），默认开着 -->
+            <button
+              type="button"
+              role="switch"
+              class="editbar__toggle"
+              :class="{
+                'editbar__toggle--on': effect.enable && !mixed.enable,
+                'editbar__toggle--mixed': mixed.enable,
+              }"
+              :aria-checked="mixed.enable ? 'mixed' : effect.enable"
+              :title="t('editor-effect-enable-tip')"
+              @click="setEffect({ enable: !effect.enable })"
+            >
+              <span class="editbar__toggle-label">{{ t('editor-effect-enable') }}</span>
+              <span class="editbar__toggle-track"><span class="editbar__toggle-thumb"></span></span>
+            </button>
+
             <!-- 融入原谱：不写颜色 / 材质，跟着谱面自己的噪域设置走 -->
             <button
               type="button"

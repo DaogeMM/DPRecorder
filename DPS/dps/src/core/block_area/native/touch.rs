@@ -132,13 +132,6 @@ impl TouchMask {
         }
     }
 
-    /// 给顺序稳定的确定性探针用。
-    #[cfg(test)]
-    pub fn update_positions(&mut self, touches: &[Vec2], time: f32) {
-        let fingers: Vec<_> = touches.iter().copied().enumerate().map(|(index, point)| (index as u64, point)).collect();
-        self.update_fingers(&fingers, time);
-    }
-
     pub fn visible(&self) -> bool {
         self.slots.iter().any(|slot| slot.finger.is_some() || slot.scale > 0.0)
     }

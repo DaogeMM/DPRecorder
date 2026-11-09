@@ -3,7 +3,7 @@
 //! 根目录由外壳（DPRecorder 主程序）决定 —— 设置里填了「临时文件目录」就用它，否则是
 //! `<程序目录>/tmp`；两种情况下外壳都会把根写进 `DPRECORDER_TEMP_DIR` 交给子进程，
 //! 所以这里与 DPR 那条线看到的是同一个根，只是各用根下的一层子目录：
-//! DPR 用 `DPR`（`DPR/src-tauri/src/common.rs` 的 `get_temp_dir`），DPE 用 `DPE`。
+//! DPR 用 `DPR`（`DPR/src-tauri/src/common.rs` 的 `temp_root`），DPE 用 `DPE`。
 //!
 //! 从命令行直接起 `dpr dpe-preview`（没有外壳传环境变量）时按 `<程序目录>/tmp` 处理，
 //! 那里也写不进去才退回系统临时目录。

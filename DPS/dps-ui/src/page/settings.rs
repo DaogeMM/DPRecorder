@@ -124,10 +124,9 @@ impl Page for SettingsPage {
                 .buttons(vec![tl!("cancel").to_string(), tl!("reset").to_string()])
                 .listener(|pos| {
                     if pos == 1 {
-                        let mut data = get_data_mut();
+                        let data = get_data_mut();
                         data.config = Default::default();
                         macroquad::window::set_fullscreen(data.config.fullscreen_mode);
-                        drop(data);
                         BGM_VOLUME_UPDATED.store(true, Ordering::Relaxed);
                         if let Err(err) = save_data() {
                             show_error(err);
@@ -355,7 +354,7 @@ impl GeneralList {
         Ok(None)
     }
 
-    pub fn update(&mut self, t: f32) -> Result<bool> {
+    pub fn update(&mut self, _t: f32) -> Result<bool> {
         let data = get_data_mut();
         if let Some((id, text)) = take_input() {
             if id == "mp_addr" {

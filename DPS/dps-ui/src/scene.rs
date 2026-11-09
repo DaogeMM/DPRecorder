@@ -3,6 +3,8 @@ dps::tl_file!("import" itl);
 mod chart_order;
 pub use chart_order::{ChartOrder, ORDERS};
 
+// 活动场景还没接进选曲流程，整块先留着。
+#[allow(dead_code)]
 pub(crate) mod event;
 pub use event::EventScene;
 

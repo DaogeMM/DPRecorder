@@ -104,9 +104,91 @@ pub fn pack(name: &str) -> Option<PathBuf> {
 
 /// 从包里读一条资源。包不存在、或包里没有这条，都返回 `None`。
 pub fn entry(name: &str, path: &str) -> Option<Vec<u8>> {
-    read_entry(&pack(name)?, path)
+    // 浏览器里没有磁盘：包由页面在起预览之前摊进 wasm 的内存文件表（`__dprw_files`），
+    // 键名是 `<appendant>/<包名>/<包内路径>`，见 `DPDebugger` 那边灌资源的写法。
+    #[cfg(target_arch = "wasm32")]
+    {
+        return crate::fs::memory_file(&format!("{APPENDANT_DIR}/{name}/{path}"));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        read_entry(&pack(name)?, path)
+    }
 }
 
+/// 从**指定的**包（路径，不按包名找）里读一条资源。
+///
+/// 和 `entry` 的区别只是「包已经找到了」：调试窗口先列过包里的文件，再按文件逐条取字节。
+pub fn entry_file(pack: &Path, path: &str) -> Option<Vec<u8>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = pack;
+        return crate::fs::memory_file(path);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        read_entry(pack, path)
+    }
+}
+
+/// 包里的全部文件（`/` 分隔的包内路径）。
+///
+/// 给「把包原样交给浏览器里的引擎」用：那边读的是内存文件表，得先知道摊哪些键。
+/// zip 里套了一层文件夹时把那段公共前缀削掉，与 `read_entry` 的「以 `/路径` 结尾」容忍一致。
+pub fn entry_names(pack: &Path) -> Vec<String> {
+    if pack.is_dir() {
+        let mut names = Vec::new();
+        walk_dir(pack, "", &mut names);
+        names.sort();
+        return names;
+    }
+    let Some(zip) = open_zip(pack) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = (0..zip.len())
+        .filter_map(|index| zip.name_for_index(index).map(str::to_owned))
+        .filter(|name| !name.ends_with('/') && !name.is_empty())
+        .collect();
+    strip_common_dir(&mut names);
+    names.sort();
+    names
+}
+
+/// 递归收集目录下的文件（`prefix` 是已经走过的相对路径）。
+fn walk_dir(root: &Path, prefix: &str, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+        if entry.path().is_dir() {
+            walk_dir(&entry.path(), &path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+/// 削掉所有条目共有的那一层目录（例如解压时多出的一层 `appendant.spas/`）。
+fn strip_common_dir(names: &mut [String]) {
+    let Some(slash) = names.first().and_then(|name| name.find('/')) else {
+        return;
+    };
+    let prefix = names[0][..slash].to_owned();
+    let cut = slash + 1;
+    let all_under = names.iter().all(|name| {
+        name.len() > cut && name.starts_with(&prefix) && name.as_bytes()[prefix.len()] == b'/'
+    });
+    if all_under {
+        for name in names.iter_mut() {
+            name.drain(..cut);
+        }
+    }
+}
+
+// wasm 上 `entry` 走内存文件表，这里只剩桌面端与测试在用。
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn read_entry(pack: &Path, path: &str) -> Option<Vec<u8>> {
     if pack.is_dir() {
         return std::fs::read(dir_entry(pack, path)?).ok();
@@ -310,6 +392,39 @@ mod tests {
         let mut fs = crate::fs::fs_from_file(&pack).unwrap();
         assert_eq!(runtime.block_on(fs.load_file("info.yml")).unwrap(), "name: 皮肤\n".as_bytes());
         assert_eq!(runtime.block_on(fs.load_file("noise_on.png")).unwrap(), b"png");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 列出包里的文件：zip 里那层公共目录要削掉，目录包按 `/` 递归拼路径。
+    /// 浏览器里的引擎按这张表往内存文件表里摊键名，路径多一层、少一层都读不到素材。
+    #[test]
+    fn entry_names_are_relative_to_the_pack_root() {
+        let root = temp_root("names");
+        let zip_path = root.join(format!("{SPAS}.zip"));
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let entries = [
+            format!("{SPAS}/spasmodic_chan.png"),
+            format!("{SPAS}/guang.png"),
+            format!("{SPAS}/sub/mopemope.png"),
+        ];
+        for entry in entries {
+            zip.start_file(entry, zip::write::SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut zip, b"x").unwrap();
+        }
+        zip.finish().unwrap();
+
+        assert_eq!(entry_names(&zip_path), vec!["guang.png", "spasmodic_chan.png", "sub/mopemope.png"]);
+        assert_eq!(entry_file(&zip_path, "sub/mopemope.png").as_deref(), Some(&b"x"[..]));
+
+        // 同名目录包：没有公共前缀这一层，直接就是包内路径。
+        let folder = root.join(SPAS);
+        std::fs::create_dir_all(folder.join("sub")).unwrap();
+        std::fs::write(folder.join("guang.png"), b"x").unwrap();
+        std::fs::write(folder.join("sub").join("mopemope.png"), b"x").unwrap();
+        assert_eq!(entry_names(&folder), vec!["guang.png", "sub/mopemope.png"]);
+        assert_eq!(entry_file(&folder, "guang.png").as_deref(), Some(&b"x"[..]));
 
         let _ = std::fs::remove_dir_all(&root);
     }

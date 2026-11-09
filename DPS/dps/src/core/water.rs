@@ -216,15 +216,15 @@ fn init_hit_sfx(res: &mut Resource, per_material: usize) {
             match sasa::AudioClip::new(bytes.clone()) {
                 Ok(clip) => match res.audio.create_sfx(clip, Some(crate::core::BUFFER_SIZE)) {
                     Ok(sfx) => list.push(sfx),
-                    Err(err) => {
+                    Err(_err) => {
                         #[cfg(debug_assertions)]
-                        eprintln!("[water] create_sfx 失败：{err:?}");
+                        eprintln!("[water] create_sfx 失败：{_err:?}");
                         break;
                     }
                 },
-                Err(err) => {
+                Err(_err) => {
                     #[cfg(debug_assertions)]
-                    eprintln!("[water] 受伤音效解码失败：{err:?}");
+                    eprintln!("[water] 受伤音效解码失败：{_err:?}");
                     break;
                 }
             }

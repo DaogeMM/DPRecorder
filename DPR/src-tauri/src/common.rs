@@ -247,14 +247,6 @@ fn ensure_subdir(dir: PathBuf) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// DPR（录制与渲染这条线）用的临时目录：临时目录根下的 `DPR`。
-///
-/// 调用方把中间产物先写这里，成型后再搬进输出目录 —— 转换半路失败时输出目录里
-/// 不会留下半套文件，大文件的中间产物也能指到别的盘上。
-pub fn get_temp_dir() -> Result<PathBuf> {
-    ensure_subdir(temp_root()?.join("DPR"))
-}
-
 /// DPE（谱面编辑这条线）用的临时目录：临时目录根下的 `DPE`。
 ///
 /// 主要用来缓存解包出来的谱面文件（谱面目录与 `.pez` 都要先摊成一堆文件才好改）。
@@ -639,9 +631,51 @@ pub fn get_tasks_file() -> Result<PathBuf> {
 /// 不会出现「两份数据看起来相等、写出来却不一样」。
 fn config_table<T: Serialize>(value: &T, default: &T) -> Result<toml::Value> {
     let mut table: toml::Value = toml::from_str(&toml::to_string(value)?)?;
-    let reference: toml::Value = toml::from_str(&toml::to_string(default)?)?;
+    let mut reference: toml::Value = toml::from_str(&toml::to_string(default)?)?;
+    // 先取整再比较：两边取同样的位数，`0.15` 与 `0.15000000596046448` 才不会一边留下、一边被当成改动
+    round_floats(&mut table);
+    round_floats(&mut reference);
     strip_default(&mut table, &reference);
     Ok(table)
+}
+
+/// 配置里的浮点值最多留三位小数。
+///
+/// 配置读进内存是 f32，写成 TOML / JSON 时被抬成 f64，`0.15` 就变成 `0.15000000596046448`。
+/// 三位小数对渲染参数足够：颜色最终按 8 位色深算（见 [`color8`]），舍入误差不到半个色阶。
+pub fn round_float(value: f64) -> f64 {
+    (value * 1000.).round() / 1000.
+}
+
+/// 递归把 TOML 表里的浮点值取到三位小数（整数、字符串、日期不动）。
+pub fn round_floats(value: &mut toml::Value) {
+    match value {
+        toml::Value::Float(it) => *it = round_float(*it),
+        toml::Value::Array(items) => items.iter_mut().for_each(round_floats),
+        toml::Value::Table(table) => table.iter_mut().for_each(|(_, value)| round_floats(value)),
+        _ => {}
+    }
+}
+
+/// 递归把 JSON 里的浮点值取到三位小数（整数不动）。
+pub fn round_floats_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Number(number) => {
+            // 整数（采样数、复制次数、分辨率……）不能被抹成浮点
+            if number.is_i64() || number.is_u64() {
+                return;
+            }
+            let Some(it) = number.as_f64() else {
+                return;
+            };
+            if let Some(rounded) = serde_json::Number::from_f64(round_float(it)) {
+                *number = rounded;
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(round_floats_json),
+        serde_json::Value::Object(object) => object.values_mut().for_each(round_floats_json),
+        _ => {}
+    }
 }
 
 /// 递归删掉与默认值相同的项：子表继续往下比，数组和标量整块比。
@@ -677,6 +711,10 @@ pub fn strip_default_json(actual: &mut serde_json::Value, reference: &serde_json
 }
 
 fn same_value(a: &toml::Value, b: &toml::Value) -> bool {
+    // 颜色一头是色号、一头是三分量数组（旧文件）：两种写法认成同一种颜色（见 `color_hex`）
+    if let (Some(a), Some(b)) = (toml_color_key(a), toml_color_key(b)) {
+        return a == b;
+    }
     match (a, b) {
         (toml::Value::Float(a), toml::Value::Float(b)) => floats_close(*a, *b),
         (toml::Value::Array(a), toml::Value::Array(b)) => {
@@ -697,6 +735,10 @@ fn array_floats(values: &[toml::Value]) -> Option<Vec<f64>> {
 }
 
 fn same_json(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    // 与 `same_value` 同理：色号与三分量数组认成同一种颜色（旧 `tasks.json` 里还是数组）
+    if let (Some(a), Some(b)) = (json_color_key(a), json_color_key(b)) {
+        return a == b;
+    }
     match (a, b) {
         (serde_json::Value::Number(a), serde_json::Value::Number(b)) => match (a.as_f64(), b.as_f64()) {
             (Some(a), Some(b)) => floats_close(a, b),
@@ -729,10 +771,45 @@ fn same_color(a: Option<&[f64]>, b: Option<&[f64]>) -> Option<bool> {
     Some(a.iter().zip(b).all(|(a, b)| color8(*a) == color8(*b)))
 }
 
-fn color8(value: f64) -> i32 {
+pub(crate) fn color8(value: f64) -> i32 {
     // 加一点地板再取整：默认值是以十进制写出来的（`0.9` 存成 f32 是 0.89999998，
     // 乘 255 得 229.49999），正好卡在两档中间；不加这点就会和 `230/255` 判成不同的颜色
     (value * 255. + 1e-3).round() as i32
+}
+
+/// 一个 TOML 值如果是颜色，换成统一的色号写法（`#rrggbb`），方便与另一种写法比较。
+///
+/// 配置里的颜色读进来是三分量数组，落盘是色号（见 [`crate::color_hex`]）；比「与默认值是否相同」
+/// 时两边写法可能不一样 —— 旧的 `presets.toml` / `tasks.json` 里存的还是数组。
+fn toml_color_key(value: &toml::Value) -> Option<String> {
+    match value {
+        toml::Value::String(it) => crate::color_hex::from_hex(it).map(|rgb| crate::color_hex::to_hex(&rgb)),
+        toml::Value::Array(items) => {
+            let floats: Vec<f64> = items.iter().map(|it| it.as_float()).collect::<Option<_>>()?;
+            color_key(&floats)
+        }
+        _ => None,
+    }
+}
+
+/// JSON 版的 [`toml_color_key`]。
+fn json_color_key(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(it) => crate::color_hex::from_hex(it).map(|rgb| crate::color_hex::to_hex(&rgb)),
+        serde_json::Value::Array(items) => {
+            let floats: Vec<f64> = items.iter().map(|it| it.as_f64()).collect::<Option<_>>()?;
+            color_key(&floats)
+        }
+        _ => None,
+    }
+}
+
+/// 三个 0~1 的浮点数 → 色号；不是这个形状就返回 `None`。
+fn color_key(floats: &[f64]) -> Option<String> {
+    if floats.len() != 3 || !floats.iter().all(|it| (0. ..=1.).contains(it)) {
+        return None;
+    }
+    Some(crate::color_hex::to_hex(&[floats[0] as f32, floats[1] as f32, floats[2] as f32]))
 }
 
 /// 两个浮点数是否算「同一个值」。
@@ -783,7 +860,7 @@ pub struct AppConfig {
     /// 是否在「渲染」页显示「游玩」按钮（进入游戏内试玩）。默认 `false`。
     pub enable_play_button: bool,
 
-    /// 预览 / 试玩 / 调整偏移的窗口是否全屏。默认 `true`。
+    /// 预览 / 试玩 / 调整偏移的窗口是否全屏。默认 `false`。
     pub preview_fullscreen: bool,
     /// 高性能模式（默认关闭）：只影响渲染进程**怎么跑**，不改画面像素。
     /// 勾选后在提交渲染 / 游玩时套用到那个渲染进程上，做两件事：
@@ -808,8 +885,8 @@ impl Default for AppConfig {
             print_stderr: false,
             print_preview_stats: false,
             show_detailed_log: true,
-            enable_play_button: true,
-            preview_fullscreen: true,
+            enable_play_button: false,
+            preview_fullscreen: false,
             // 默认关闭：默认渲染流程与从前逐字节一致
             // （「高性能模式」只让渲染进程更偏向 GPU，不该在用户没勾的时候改变行为）
             high_performance: false,
@@ -1149,6 +1226,35 @@ mod tests {
             RenderConfig::default().judge_range_fade_time
         );
         assert_eq!(back.mopemope_sp_color_a, RenderConfig::default().mopemope_sp_color_a);
+    }
+
+    /// 配置文件里的浮点值最多留三位小数：f32 抬成 f64 的尾巴（`0.17000000178813934`）不该落盘。
+    #[test]
+    fn config_table_rounds_floats() {
+        let changed = RenderConfig {
+            block_area_displace_strength: 0.17,
+            block_area_normal_color: [0.007843137718737125, 0.43921568989753723, 0.8745098114013672],
+            ..RenderConfig::default()
+        };
+        let text = toml::to_string(&config_table(&changed, &RenderConfig::default()).unwrap()).unwrap();
+        assert!(text.contains("blockAreaDisplaceStrength = 0.17"), "{text}");
+        // 颜色不落盘成数组，写的是色号（见 `color_hex`）
+        assert!(text.contains("blockAreaNormalColor = \"#0270DF\""), "{text}");
+        assert!(!text.contains("blockAreaNormalColor = ["), "{text}");
+        // 取整后仍然是同一个颜色、同一个值，读回来不该被当成改动
+        let back: RenderConfig = toml::from_str(&text).unwrap();
+        assert_eq!(super::color8(back.block_area_normal_color[2] as f64), super::color8(0.8745098114013672));
+
+        // JSON 侧（tasks.json）：浮点取整，整数原样
+        let mut value = serde_json::json!({
+            "judgeRangeFadeTime": 0.30000001192092896,
+            "mopemopeSpColorA": [0.4117647111415863, 0.2980392277240753],
+            "chartModCopyTimes": 3,
+        });
+        round_floats_json(&mut value);
+        assert_eq!(value["judgeRangeFadeTime"], serde_json::json!(0.3));
+        assert_eq!(value["mopemopeSpColorA"], serde_json::json!([0.412, 0.298]));
+        assert_eq!(value["chartModCopyTimes"], serde_json::json!(3));
     }
 
     /// 真正落盘的 presets.toml：只留改过的项，全默认的那份留一个空表，且都能原样读回来。

@@ -1312,6 +1312,7 @@ mod tests {
             index: 0,
             judge_cover: 0,
             color: None,
+            material: None,
         };
         assert!(!zone.is_colored());
         zone.set_color(Some(DEFAULT_BLOCK_COLOR));
@@ -1340,6 +1341,7 @@ mod tests {
             index: 0,
             judge_cover: 0,
             color: None,
+            material: None,
         };
         zone.set_color(Some([-1., 2., 0.5]));
         assert_eq!(zone.color, Some([0., 1., 0.5]));

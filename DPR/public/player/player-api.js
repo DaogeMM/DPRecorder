@@ -76,13 +76,20 @@ const bgm = {
 };
 
 /// 引擎的 `volume` 之类不在这里管，只认 `info.txt` 里这几行。
-function parseInfo(text) {
+///
+/// `withPreview` 为 false 时忽略试听区间：宿主把谱面包直接塞进内存文件系统时，谱面时间 0
+/// 就是音乐 0（引擎那边的 `play_start_time` 被压成 0），再按 `previewS/E` 算区间整条桥都会偏。
+function parseInfo(text, withPreview = true) {
   for (const line of text.split(/\r?\n/)) {
     const colon = line.indexOf(":");
     if (colon < 0) continue;
     const key = line.slice(0, colon).trim();
     const value = line.slice(colon + 1).trim();
     const num = Number(value);
+    if (!withPreview) {
+      if ((key === "Song" || key === "Music") && value) bgm.song = value;
+      continue;
+    }
     if ((key === "previewS" || key === "previewStart") && Number.isFinite(num) && num > 0) {
       bgm.previewStart = num;
     } else if ((key === "previewE" || key === "previewEnd") && Number.isFinite(num) && num > 0) {
@@ -173,15 +180,54 @@ function kickAudio() {
   });
 }
 
-async function initAudio() {
+/// 宿主塞进内存文件系统的那份谱面包里的一个文件。
+///
+/// `player.html` 在实例化之前把宿主挂在 `__dprwPendingChart` 上的字节装进 `__dprw_files`
+/// （Map）。DPDebugger 的预览没有自己的 `assets/` 目录 —— 曲目信息与音乐都只能从这里取。
+function bundledFile(name) {
+  const map = globalThis.__dprw_files;
+  if (!map || typeof map.get !== "function" || !name) return null;
+  let bytes = null;
   try {
-    const res = await fetch("./assets/info.txt");
-    if (res.ok) parseInfo(await res.text());
+    bytes = map.get(name);
   } catch (err) {
-    console.warn("[dprw] 读不到 assets/info.txt，按默认曲目处理:", err);
+    return null;
+  }
+  return bytes instanceof Uint8Array ? bytes : null;
+}
+
+/// 谱面包里的音频转成能直接喂 `<audio>` 的 Blob URL；没有这个文件就返回空串。
+function bundledAudioUrl(name) {
+  const bytes = bundledFile(name);
+  if (!bytes) return "";
+  try {
+    return URL.createObjectURL(new Blob([bytes]));
+  } catch (err) {
+    console.warn("[dprw] 谱面包里的音乐转 Blob 失败:", err);
+    return "";
+  }
+}
+
+async function initAudio() {
+  // 谱面包自带的 `info.txt` 优先：它写的 `Song:` 指向包内那份音乐，BGM 桥直接读它的字节。
+  const bundledInfo = bundledFile("info.txt");
+  if (bundledInfo) {
+    try {
+      parseInfo(new TextDecoder().decode(bundledInfo), false);
+    } catch (err) {
+      console.warn("[dprw] 谱面包里的 info.txt 读不动:", err);
+    }
+  } else {
+    try {
+      const res = await fetch("./assets/info.txt");
+      if (res.ok) parseInfo(await res.text());
+    } catch (err) {
+      console.warn("[dprw] 读不到 assets/info.txt，按默认曲目处理:", err);
+    }
   }
   const el = document.createElement("audio");
-  el.src = assetRoot + bgm.song;
+  // 包内音乐优先；单页版（`index.html`）没有内存文件表，仍走 `assets/` 目录。
+  el.src = bundledAudioUrl(bgm.song) || assetRoot + bgm.song;
   el.preload = "auto";
   el.style.display = "none";
   // `?mute=1`：静音跟随（静音的音频不受浏览器自动播放拦截，也就不会挂出「点一下开始」的遮罩），
@@ -343,6 +389,19 @@ function reload(files) {
       dps.wm_reload();
     } catch (err) {
       console.warn("[dprw] 重载谱面失败:", err);
+    }
+  });
+}
+
+/// 换一份渲染配置（DPDebugger 调参数用）：只把配置交给引擎替换 `Resource.config`，
+/// 不重载谱面，播放头与播放态都不动 —— 演出参数每帧现读配置，改完下一帧就生效。
+/// `json` 是 `dps::config::Config` 的 JSON 字符串（缺键取默认值，未知键忽略）。
+function setConfig(json) {
+  whenReady(() => {
+    try {
+      dps.wm_set_config(String(json ?? "{}"));
+    } catch (err) {
+      console.warn("[dprw] 换配置失败:", err);
     }
   });
 }
@@ -572,6 +631,7 @@ window.DPRWPlayer = {
   toggle,
   seek,
   setRate,
+  setConfig,
   reload,
   setVolume,
   getVolume,

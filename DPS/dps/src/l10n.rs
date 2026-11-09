@@ -216,6 +216,9 @@ macro_rules! tl_file {
                     };
                 }
 
+                // 不导出也能用（`macro_rules!` 在同一模块的文本作用域里可见），
+                // 只有从别的模块按 `crate::xxx!` 调用时这个再导出才有人用。
+                #[allow(unused_imports)]
                 pub(crate) use $macro_name;
             }
         }

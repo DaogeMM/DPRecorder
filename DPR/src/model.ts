@@ -1,4 +1,7 @@
+import { invoke } from '@tauri-apps/api/core';
+
 export interface ChartInfo {
+
   name: string;
   difficulty: string;
   lvl: number;
@@ -431,7 +434,7 @@ export interface RenderConfig {
   blockAreaForceKeepNoise: boolean;
   /** 简化取消合并：每个简化噪域各画一趟，重叠的 enable 噪域不合并成一个连通区域 */
   blockAreaColor: [number, number, number];
-  /** 噪域颜色：普通（完整）噪域的颜色（rgb 0~1），只取色相去整体旋转官方配色，默认 0.9 / 0.1 / 0.1 */
+  /** 噪域颜色：普通（完整）噪域的颜色（rgb 0~1），只取色相去整体旋转官方配色，默认 #E61A1A */
   blockAreaNormalColor: [number, number, number];
   /** 噪域文字颜色：简化噪域编号在 enable 之后的颜色（rgb 0~1），默认 #FF6094（1 / 0.3765 / 0.5804） */
   simplifiedBlockAreaTextColor: [number, number, number];
@@ -773,9 +776,9 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   blockAreaForceDelay: 0.3,
   blockAreaForceInvert: false,
   blockAreaForceKeepNoise: false,
-  blockAreaColor: [0.9, 0.1, 0.1],
-  blockAreaNormalColor: [0.9, 0.1, 0.1],
-  simplifiedBlockAreaTextColor: [1, 0.3765, 0.5804],
+  blockAreaColor: [0xe6 / 255, 0x1a / 255, 0x1a / 255],
+  blockAreaNormalColor: [0xe6 / 255, 0x1a / 255, 0x1a / 255],
+  simplifiedBlockAreaTextColor: [0xff / 255, 0x60 / 255, 0x94 / 255],
   simplifiedBlockAreaTextPaleColor: [1, 1, 1],
   blockAreaAlpha: 0.25,
   blockAreaDensity: 2.5,
@@ -861,6 +864,23 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   alphaTint: false,
 };
 
+/**
+ * 用后端那份演出动画默认值覆盖 `DEFAULT_RENDER_CONFIG` 里对应的字段。
+ *
+ * 七套演出的默认值只在 `assets/chart-animation.toml` 里写一份，后端读的就是它（`RenderConfig`
+ * 的默认值转手取自 `dps::config::Config::default()`）；这份 TS 字面量只是兜底，启动时被覆盖掉，
+ * 免得改了 TOML 之后两边对不上。要在任何组件读默认值之前调用（`main.ts` 的启动流程负责）。
+ */
+export async function syncChartAnimationDefaults(): Promise<void> {
+  try {
+    const defaults = await invoke<Record<string, unknown>>('chart_animation_defaults');
+    Object.assign(DEFAULT_RENDER_CONFIG, defaults);
+  } catch (err) {
+    // 拿不到就继续用字面量：这些默认值只是兜底，不影响主流程。
+    console.warn('[model] 读取演出动画默认值失败，沿用前端字面量:', err);
+  }
+}
+
 export interface AppConfig {
   rpeDir: string | null;
   outputDir: string | null;
@@ -874,7 +894,9 @@ export interface AppConfig {
   /** 是否把预览帧率（每秒一行 AVG / NOW / MIN）打到控制台。默认关闭。 */
   printPreviewStats: boolean;
   showDetailedLog: boolean;
+  /** 是否在渲染页显示「游玩」按钮（默认关闭）。 */
   enablePlayButton: boolean;
+  /** 预览 / 试玩 / 调整偏移的窗口是否全屏（默认关闭）。 */
   previewFullscreen: boolean;
   /** 高性能模式（默认关闭）：只影响渲染进程**怎么跑**，不改画面。
    *  勾选后提交渲染 / 游玩时由后端套用到那个渲染进程上：Windows 下优先挑高性能显卡
@@ -893,8 +915,8 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   printStderr: false,
   printPreviewStats: false,
   showDetailedLog: true,
-  enablePlayButton: true,
-  previewFullscreen: true,
+  enablePlayButton: false,
+  previewFullscreen: false,
   // 高性能模式默认关闭：默认渲染流程保持与从前一致
   highPerformance: false,
 }
@@ -1038,6 +1060,12 @@ export interface TextNoiseEffect {
   letterSpacing: number;
   /** 整段文字绕自己的中心转多少度（正数顺时针）。 */
   rotation: number;
+  /**
+   * 激活：关掉这一段就不生成噪域（谱面里留着，预览与成片都不画）。
+   *
+   * 只在这一段没激活时才把 `enable: false` 写进谱面，缺省（不写）就是激活。
+   */
+  enable: boolean;
   /** 反转：噪域铺满整屏，文字的位置挖空（用补集矩形拼出来，不依赖引擎的减算通道）。 */
   invert: boolean;
   /**

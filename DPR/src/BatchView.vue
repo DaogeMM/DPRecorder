@@ -28,7 +28,7 @@ import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 
 import { toastError, toast } from './common';
-import { formatLvlInText } from './lvl';
+import { formatLvl, formatLvlInText } from './lvl';
 import { diffTier, diffLvl } from './tasks';
 import { DEFAULT_RENDER_CONFIG, type ChartInfo, type RenderConfig, type RenderChart, type Preset, type FileDropEvent, type Task } from './model';
 import { sameRenderConfig } from './config/useRenderConfig';
@@ -542,14 +542,14 @@ function textCompare(a: string | null | undefined, b: string | null | undefined)
   return (a ?? '').localeCompare(b ?? '', undefined, { numeric: true, sensitivity: 'case', caseFirst: 'upper' });
 }
 
-/** 同一档定数里再分级的次级键：谱面写了 `difficulty` 就用它（定数补成一位小数），否则拿渲染出的档位凑 */
+/** 同一档定数里再分级的次级键：谱面写了 `difficulty` 就用它（定数按显示格式规整），否则拿渲染出的档位凑 */
 function difficultyText(chart: RenderChart): string {
   const text = (chart.chartInfo.difficulty ?? '').trim();
   if (text) return formatLvlInText(text);
   const lvl = chartLevel(chart);
   const diff = (chart.chartInfo.diff ?? '').trim();
-  if (diff && lvl > 0) return `${diff} Lv.${lvl.toFixed(1)}`;
-  return diff || (lvl > 0 ? `Lv.${lvl.toFixed(1)}` : '');
+  if (diff && lvl > 0) return `${diff} Lv.${formatLvl(lvl)}`;
+  return diff || (lvl > 0 ? `Lv.${formatLvl(lvl)}` : '');
 }
 
 /** 定数相同再按难度文本、曲名，免得同一档的谱面在两种方向下顺序看起来随机 */

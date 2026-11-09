@@ -1,0 +1,22 @@
+{
+  "identifier": "debugger",
+  "description": "「调试窗口」那个独立 webview（label = debugger）的权限：自己读谱面包、读后端配置、把调好的参数发回主窗口，弹文件选择框挑对比视频，并像 DPEditor 那样自己画标题栏（拖拽、最小化、最大化、关闭）。",
+  "local": true,
+  "windows": [
+    "debugger"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-start-dragging",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-title",
+    "dialog:allow-open",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

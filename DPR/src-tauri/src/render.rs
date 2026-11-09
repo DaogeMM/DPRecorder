@@ -89,6 +89,8 @@ impl Drop for TempPath {
 ///    此时 DPS 侧还要另加字段并在 `DPS/dps/src/core/` 里读取）。
 /// 3. `impl Default for RenderConfig` 加默认值 —— **必须和前端 `src/model.ts` 的 `DEFAULT_RENDER_CONFIG` 一致**，
 ///    否则「界面显示的默认值」和「命令行直接渲染的默认值」会对不上。
+///    例外是七套谱面演出动画的参数：它们的默认值只在 `assets/chart-animation.toml` 里写一份，
+///    这里与前端都从 `dps::config::Config::default()` 取（前端启动时向后端要一份）。
 /// 4. `config.toml` 加一行 `camelCaseKey = 值   # 中文说明`。注意只有 CLI 不带 `--config` 时才读 toml，
 ///    且 dev 时实际被读的是 exe 同目录那份 `src-tauri/target/debug/config.toml`
 ///    （见本文件下面 `current_exe()?.parent().unwrap().join("config.toml")` 那段），两份都要同步。
@@ -192,6 +194,7 @@ pub struct RenderConfig {
     /// 待判按键：把最近一个将要判定的按键染成 `pending_note_color` 再画一遍，画在噪域之上。
     pub render_pending_note: bool,
     /// 待判按键染色用的 rgb（0~1），默认红色
+    #[serde(with = "crate::color_hex")]
     pub pending_note_color: [f32; 3],
     pub render_ui_pause: bool,
     pub render_ui_name: bool,
@@ -297,7 +300,9 @@ pub struct RenderConfig {
     /// `to_config()` 把它透传成 `dps::config::Config::rr_sp`；那三项打击特效调试只在它开启时生效。
     pub rr_sp: bool,
     /// 「もぺもぺSP」演出：第一种红（闪）/ 第二种红（长段）的乘算系数 rgb（0~1），乘到背景上
+    #[serde(with = "crate::color_hex")]
     pub mopemope_sp_color_a: [f32; 3],
+    #[serde(with = "crate::color_hex")]
     pub mopemope_sp_color_b: [f32; 3],
     /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启（见 `is_xuejiang_sp_chart`），
     /// 不是配置项 —— 前端不传，配置文件里写了也会在 `generate_resource` 里按文件名覆盖。
@@ -341,7 +346,7 @@ pub struct RenderConfig {
     pub render_bg_dim: bool,
     /// 「纯色背景」：给了颜色就不画谱面背景贴图，整屏直接铺这一个颜色（rgb，0~1）。
     /// `None`（默认）= 照旧画背景图；界面上留空即关。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "crate::color_hex::option")]
     pub solid_bg: Option<[f32; 3]>,
     /// 「背景暗淡」：黑色遮罩的不透明度（0~1）。作为渲染参数时会**覆盖**谱面信息里的同名值。
     pub background_dim: f32,
@@ -431,11 +436,16 @@ pub struct RenderConfig {
     pub water_sfx_volume: f32,
     /// 受伤 / 死亡音效的并发上限（1~512）。默认 `500.`。
     pub water_sfx_max: f32,
+    /// 「噪域颜色」：简化噪域的颜色，默认 `#E61A1A`
+    #[serde(with = "crate::color_hex")]
     pub block_area_color: [f32; 3],
     /// 「噪域颜色」：普通（完整）噪域的颜色，只取它的**色相**去整体旋转官方配色
-    ///（饱和度与明度保持官方值）；默认纯红 ⇒ 旋转 0 ⇒ 与改动前逐位一致
+    ///（饱和度与明度保持官方值）；默认 `#E61A1A` ⇒ 旋转 0 ⇒ 与改动前逐位一致
+    #[serde(with = "crate::color_hex")]
     pub block_area_normal_color: [f32; 3],
+    #[serde(with = "crate::color_hex")]
     pub simplified_block_area_text_color: [f32; 3],
+    #[serde(with = "crate::color_hex")]
     pub simplified_block_area_text_pale_color: [f32; 3],
     pub block_area_alpha: f32,
     pub block_area_density: f32,
@@ -461,6 +471,7 @@ pub struct RenderConfig {
     pub judge_range_time: f64,
     pub judge_range_fade_time: f64,
     pub judge_range_alpha: f32,
+    #[serde(with = "crate::color_hex")]
     pub judge_range_color: [f32; 3],
     /// 判定范围与噪域重合的部分是否让给噪域（官方行为 = 开）
     pub judge_range_noise_occlusion: bool,
@@ -855,6 +866,9 @@ impl RenderConfig {
 
 impl Default for RenderConfig {
     fn default() -> Self {
+        // 七套演出（雪降 / 报应 / 痉挛 / QZKAGO / Clock Paradox / もぺもぺ / Rr）的参数默认值
+        // 以 `assets/chart-animation.toml` 为唯一来源，这里只照抄，不再各写一份。
+        let base = dps::config::Config::default();
         Self {
             resolution: (1920, 1080),
             ending_length: 0.0,
@@ -904,9 +918,9 @@ impl Default for RenderConfig {
             touch_sim_width: 0.12,
             watermark: "".to_string(),
             notecolor: "".to_string(),
-            rr_hit_fx_color: "#FBA373".to_string(),
-            rr_hit_fx_scale: 1.,
-            rr_hit_fx_speed: 1.,
+            rr_hit_fx_color: base.rr_hit_fx_color.clone(),
+            rr_hit_fx_scale: base.rr_hit_fx_scale,
+            rr_hit_fx_speed: base.rr_hit_fx_speed,
             hitcolor: "".to_string(),
             linecolor: "".to_string(),
             roman: false,
@@ -933,87 +947,87 @@ impl Default for RenderConfig {
             render_ui_combo: true,
             render_ui_bar: true,
             baoying_sp: false,
-            baoying_sp_wow_height: 0.043,
-            baoying_sp_wow_offset_x: 0.02,
-            baoying_sp_wow_offset_y: 0.02,
-            baoying_sp_title_height: 0.056,
-            baoying_sp_title_offset_x: 0.03,
-            baoying_sp_title_offset_y: 0.,
-            baoying_sp_score_offset_x: 0.,
-            baoying_sp_score_offset_y: 0.01,
-            baoying_sp_score_height: 0.05,
-            baoying_sp_score_gap: 0.003,
-            baoying_sp_score_squeeze: 1.1,
-            baoying_sp_combo_offset_x: 0.,
-            baoying_sp_combo_offset_y: 0.01,
-            baoying_sp_combo_height: 0.055,
-            baoying_sp_combo_gap: 0.,
-            baoying_sp_combo_squeeze: 1.1,
-            baoying_sp_combo_label_height: 0.055,
-            baoying_sp_combo_label_offset_x: 0.,
-            baoying_sp_combo_label_offset: 0.01,
-            baoying_sp_diff_height: 0.05,
-            baoying_sp_diff_gap_sp_lv: 0.1,
-            baoying_sp_diff_gap_lv_question: 0.,
-            baoying_sp_diff_squeeze: 1.2,
-            baoying_sp_diff_offset_x: -0.05,
-            baoying_sp_diff_offset_y: 0.029,
-            baoying_sp_digits_rtl: true,
-            baoying_sp_hit_fx_scale: 0.5,
-            baoying_sp_hit_fx_rotate: false,
-            baoying_sp_particle_count: 0,
+            baoying_sp_wow_height: base.baoying_sp_wow_height,
+            baoying_sp_wow_offset_x: base.baoying_sp_wow_offset_x,
+            baoying_sp_wow_offset_y: base.baoying_sp_wow_offset_y,
+            baoying_sp_title_height: base.baoying_sp_title_height,
+            baoying_sp_title_offset_x: base.baoying_sp_title_offset_x,
+            baoying_sp_title_offset_y: base.baoying_sp_title_offset_y,
+            baoying_sp_score_offset_x: base.baoying_sp_score_offset_x,
+            baoying_sp_score_offset_y: base.baoying_sp_score_offset_y,
+            baoying_sp_score_height: base.baoying_sp_score_height,
+            baoying_sp_score_gap: base.baoying_sp_score_gap,
+            baoying_sp_score_squeeze: base.baoying_sp_score_squeeze,
+            baoying_sp_combo_offset_x: base.baoying_sp_combo_offset_x,
+            baoying_sp_combo_offset_y: base.baoying_sp_combo_offset_y,
+            baoying_sp_combo_height: base.baoying_sp_combo_height,
+            baoying_sp_combo_gap: base.baoying_sp_combo_gap,
+            baoying_sp_combo_squeeze: base.baoying_sp_combo_squeeze,
+            baoying_sp_combo_label_height: base.baoying_sp_combo_label_height,
+            baoying_sp_combo_label_offset_x: base.baoying_sp_combo_label_offset_x,
+            baoying_sp_combo_label_offset: base.baoying_sp_combo_label_offset,
+            baoying_sp_diff_height: base.baoying_sp_diff_height,
+            baoying_sp_diff_gap_sp_lv: base.baoying_sp_diff_gap_sp_lv,
+            baoying_sp_diff_gap_lv_question: base.baoying_sp_diff_gap_lv_question,
+            baoying_sp_diff_squeeze: base.baoying_sp_diff_squeeze,
+            baoying_sp_diff_offset_x: base.baoying_sp_diff_offset_x,
+            baoying_sp_diff_offset_y: base.baoying_sp_diff_offset_y,
+            baoying_sp_digits_rtl: base.baoying_sp_digits_rtl,
+            baoying_sp_hit_fx_scale: base.baoying_sp_hit_fx_scale,
+            baoying_sp_hit_fx_rotate: base.baoying_sp_hit_fx_rotate,
+            baoying_sp_particle_count: base.baoying_sp_particle_count,
             jingluan_sp: false,
-            jingluan_sp_chan_height: 0.99,
-            jingluan_sp_chan_offset_y: -0.1,
-            jingluan_sp_chan_fade_in: 0.,
-            jingluan_sp_chan_fade_out: 0.,
-            jingluan_sp_guang_height: 1.,
-            jingluan_sp_guang_offset_y: 0.,
-            jingluan_sp_guang_fade_in: 0.,
-            jingluan_sp_guang_fade_out: 0.,
-            jingluan_sp_mopemope_height: 1.,
-            jingluan_sp_mopemope_offset_y: 0.,
-            jingluan_sp_mopemope_fade_in: 0.,
-            jingluan_sp_mopemope_fade_out: 0.,
-            jingluan_sp_dim: 0.18,
+            jingluan_sp_chan_height: base.jingluan_sp_chan_height,
+            jingluan_sp_chan_offset_y: base.jingluan_sp_chan_offset_y,
+            jingluan_sp_chan_fade_in: base.jingluan_sp_chan_fade_in,
+            jingluan_sp_chan_fade_out: base.jingluan_sp_chan_fade_out,
+            jingluan_sp_guang_height: base.jingluan_sp_guang_height,
+            jingluan_sp_guang_offset_y: base.jingluan_sp_guang_offset_y,
+            jingluan_sp_guang_fade_in: base.jingluan_sp_guang_fade_in,
+            jingluan_sp_guang_fade_out: base.jingluan_sp_guang_fade_out,
+            jingluan_sp_mopemope_height: base.jingluan_sp_mopemope_height,
+            jingluan_sp_mopemope_offset_y: base.jingluan_sp_mopemope_offset_y,
+            jingluan_sp_mopemope_fade_in: base.jingluan_sp_mopemope_fade_in,
+            jingluan_sp_mopemope_fade_out: base.jingluan_sp_mopemope_fade_out,
+            jingluan_sp_dim: base.jingluan_sp_dim,
             qzkago_sp: false,
-            qzkago_sp_start: 77.07,
-            qzkago_sp_white_in: 65. / 60.,
-            qzkago_sp_white_out: 30. / 60.,
+            qzkago_sp_start: base.qzkago_sp_start,
+            qzkago_sp_white_in: base.qzkago_sp_white_in,
+            qzkago_sp_white_out: base.qzkago_sp_white_out,
             clock_paradox_sp: false,
-            clock_paradox_sp_scale: 1.,
-            clock_paradox_sp_offset_x: 0.,
-            clock_paradox_sp_offset_y: 0.,
-            clock_paradox_sp_flash1_on: 108.020,
-            clock_paradox_sp_flash2_on: 109.720,
-            clock_paradox_sp_flash3_on: 111.42,
-            clock_paradox_sp_flash4_on: 142.287,
-            clock_paradox_sp_flash1_fade: 108.453,
-            clock_paradox_sp_flash2_fade: 110.170,
-            clock_paradox_sp_flash3_fade: 111.870,
-            clock_paradox_sp_flash4_fade: 145.077,
+            clock_paradox_sp_scale: base.clock_paradox_sp_scale,
+            clock_paradox_sp_offset_x: base.clock_paradox_sp_offset_x,
+            clock_paradox_sp_offset_y: base.clock_paradox_sp_offset_y,
+            clock_paradox_sp_flash1_on: base.clock_paradox_sp_flash1_on,
+            clock_paradox_sp_flash2_on: base.clock_paradox_sp_flash2_on,
+            clock_paradox_sp_flash3_on: base.clock_paradox_sp_flash3_on,
+            clock_paradox_sp_flash4_on: base.clock_paradox_sp_flash4_on,
+            clock_paradox_sp_flash1_fade: base.clock_paradox_sp_flash1_fade,
+            clock_paradox_sp_flash2_fade: base.clock_paradox_sp_flash2_fade,
+            clock_paradox_sp_flash3_fade: base.clock_paradox_sp_flash3_fade,
+            clock_paradox_sp_flash4_fade: base.clock_paradox_sp_flash4_fade,
             mopemope_sp: false,
             rr_sp: false,
-            mopemope_sp_color_a: [0.4118, 0.2980, 0.1412],
-            mopemope_sp_color_b: [0.3412, 0.2314, 0.0588],
+            mopemope_sp_color_a: base.mopemope_sp_color_a,
+            mopemope_sp_color_b: base.mopemope_sp_color_b,
             xuejiang_sp: false,
-            xuejiang_sp_fake_notes: 305.,
-            xuejiang_sp_fake_bar_seconds: 120.,
-            xuejiang_sp_burst_combo: 240,
-            xuejiang_sp_roll_scale: 0.75,
-            xuejiang_sp_diff_fake: "IN Lv.I2".to_owned(),
-            xuejiang_sp_diff_real: "SP Lv.?".to_owned(),
-            xuejiang_sp_volume_percentile: 0.99,
-            xuejiang_sp_volume_gamma: 1.05,
-            xuejiang_sp_volume_smooth: 0.07,
-            xuejiang_sp_face_hit_start: 170.7692,
-            xuejiang_sp_face_period: 4.1026,
-            xuejiang_sp_face_rounds: 4,
-            xuejiang_sp_face_lead_show: 3.5897,
-            xuejiang_sp_face_lead_roll: 2.8205,
-            xuejiang_sp_face_text_show: "(⊙o⊙)".to_owned(),
-            xuejiang_sp_face_text_roll: "(⊙ω⊙)".to_owned(),
-            xuejiang_sp_face_text_hit: "Ｏ(≧▽≦)Ｏ".to_owned(),
+            xuejiang_sp_fake_notes: base.xuejiang_sp_fake_notes,
+            xuejiang_sp_fake_bar_seconds: base.xuejiang_sp_fake_bar_seconds,
+            xuejiang_sp_burst_combo: base.xuejiang_sp_burst_combo,
+            xuejiang_sp_roll_scale: base.xuejiang_sp_roll_scale,
+            xuejiang_sp_diff_fake: base.xuejiang_sp_diff_fake.clone(),
+            xuejiang_sp_diff_real: base.xuejiang_sp_diff_real.clone(),
+            xuejiang_sp_volume_percentile: base.xuejiang_sp_volume_percentile,
+            xuejiang_sp_volume_gamma: base.xuejiang_sp_volume_gamma,
+            xuejiang_sp_volume_smooth: base.xuejiang_sp_volume_smooth,
+            xuejiang_sp_face_hit_start: base.xuejiang_sp_face_hit_start,
+            xuejiang_sp_face_period: base.xuejiang_sp_face_period,
+            xuejiang_sp_face_rounds: base.xuejiang_sp_face_rounds,
+            xuejiang_sp_face_lead_show: base.xuejiang_sp_face_lead_show,
+            xuejiang_sp_face_lead_roll: base.xuejiang_sp_face_lead_roll,
+            xuejiang_sp_face_text_show: base.xuejiang_sp_face_text_show.clone(),
+            xuejiang_sp_face_text_roll: base.xuejiang_sp_face_text_roll.clone(),
+            xuejiang_sp_face_text_hit: base.xuejiang_sp_face_text_hit.clone(),
             render_bg: true,
             render_bg_dim: true,
             solid_bg: None,
@@ -1061,10 +1075,10 @@ impl Default for RenderConfig {
             water_death_particles: 8.,
             water_sfx_volume: 0.5,
             water_sfx_max: 500.,
-            block_area_color: [0.9, 0.1, 0.1],
-            block_area_normal_color: [0.9, 0.1, 0.1],
-            simplified_block_area_text_color: [1.0, 0.3765, 0.5804],
-            simplified_block_area_text_pale_color: [1.0, 1.0, 1.0],
+            block_area_color: dps::config::hex_color("#E61A1A"),
+            block_area_normal_color: dps::config::hex_color("#E61A1A"),
+            simplified_block_area_text_color: dps::config::hex_color("#FF6094"),
+            simplified_block_area_text_pale_color: dps::config::hex_color("#FFFFFF"),
             block_area_alpha: 0.25,
             block_area_density: 2.5,
             block_area_spark: true,
@@ -1747,11 +1761,35 @@ fn baoying_sp_respack_path() -> Option<String> {
 /// 打击特效颜色是「配置里的 `hitcolor` 非空就盖过资源包的 `colorPerfectFx`」，所以这里直接写死，
 /// 免得用户自己设过的颜色把演出改掉。
 fn apply_rr_chart(config: &mut RenderConfig) {
+    apply_rr_look(config);
+    config.res_pack_path = rr_respack_path().or_else(crate::common::default_respack_path);
+}
+
+/// 「Rr」演出里与皮肤无关的那部分固定配置（皮肤由调用方决定：成片给磁盘路径，调试窗口给内存表目录名）。
+fn apply_rr_look(config: &mut RenderConfig) {
     config.rr_sp = true;
     config.render_bg = false;
     config.particle_square = false;
     config.hitcolor = "#FBA373".to_string();
-    config.res_pack_path = rr_respack_path().or_else(crate::common::default_respack_path);
+}
+
+/// 按谱面名把七套演出里对应的那一族强开（成片与调试窗口共用同一套判据）。
+///
+/// 皮肤也跟着钉：「报应」钉 `appendant.retri`、「Rr」钉 `appendant.rr`；缺包退回默认皮肤。
+fn apply_chart_animations(config: &mut RenderConfig, path: &Path) {
+    config.xuejiang_sp = is_xuejiang_sp_chart(path);
+    config.jingluan_sp = is_jingluan_sp_chart(path);
+    config.mopemope_sp = is_mopemope_sp_chart(path);
+    config.qzkago_sp = is_qzkago_chart(path);
+    config.clock_paradox_sp = is_clock_paradox_chart(path);
+    if is_baoying_sp_chart(path) {
+        config.baoying_sp = true;
+        // 缺 `appendant.retri` 时退回默认皮肤，别拿着加载不了的路径去读
+        config.res_pack_path = baoying_sp_respack_path().or_else(crate::common::default_respack_path);
+    }
+    if is_rr_chart(path) {
+        apply_rr_chart(config);
+    }
 }
 
 pub async fn generate_resource(
@@ -1800,19 +1838,7 @@ pub async fn generate_resource(
         };
 
         let path = args_input.unwrap();
-        config.xuejiang_sp = is_xuejiang_sp_chart(Path::new(&path));
-        config.jingluan_sp = is_jingluan_sp_chart(Path::new(&path));
-        config.mopemope_sp = is_mopemope_sp_chart(Path::new(&path));
-        config.qzkago_sp = is_qzkago_chart(Path::new(&path));
-        config.clock_paradox_sp = is_clock_paradox_chart(Path::new(&path));
-        if is_baoying_sp_chart(Path::new(&path)) {
-            config.baoying_sp = true;
-            // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
-            config.res_pack_path = baoying_sp_respack_path().or_else(crate::common::default_respack_path);
-        }
-        if is_rr_chart(Path::new(&path)) {
-            apply_rr_chart(&mut config);
-        }
+        apply_chart_animations(&mut config, Path::new(&path));
 
         let mut fs = fs::fs_from_file(path.as_ref())
             .with_context(|| tl!("load-chart-failed", "path" => path.clone()))?;
@@ -1866,19 +1892,7 @@ pub async fn generate_resource(
             .with_context(|| tl!("load-chart-failed", "path" => path.display().to_string()))?;
 
         let mut config = params.config;
-        config.xuejiang_sp = is_xuejiang_sp_chart(&path);
-        config.jingluan_sp = is_jingluan_sp_chart(&path);
-        config.mopemope_sp = is_mopemope_sp_chart(&path);
-        config.qzkago_sp = is_qzkago_chart(&path);
-        config.clock_paradox_sp = is_clock_paradox_chart(&path);
-        if is_baoying_sp_chart(&path) {
-            config.baoying_sp = true;
-            // 缺 `appendant.retri` 时退回默认皮肤，别拿着 `None` 之外的坏路径去加载
-            config.res_pack_path = baoying_sp_respack_path().or_else(crate::common::default_respack_path);
-        }
-        if is_rr_chart(&path) {
-            apply_rr_chart(&mut config);
-        }
+        apply_chart_animations(&mut config, &path);
         let info = params.info;
 
         Ok((fs, output_path, config, info))
@@ -3264,4 +3278,385 @@ fn mix_water_sfx(
         output_path.display()
     );
     Ok(())
+}
+
+/// 演出动画默认值里属于七套演出的那些键的前缀。
+///
+/// 只有这些键来自 `assets/chart-animation.toml`：前端 `model.ts` 里那份字面量是
+/// 「文件读不到」时的兜底，两边各写各的迟早会不一致，所以启动时按这些前缀整批覆盖。
+const CHART_ANIMATION_PREFIXES: [&str; 8] = [
+    "xuejiangSp",
+    "baoyingSp",
+    "jingluanSp",
+    "qzkagoSp",
+    "clockParadoxSp",
+    "mopemopeSp",
+    "rrSp",
+    "rrHitFx",
+];
+
+/// 七套演出动画的默认值（扁平的一个 JSON 对象，键名与 `RenderConfig` 的字段同名）。
+///
+/// 默认值的唯一来源是 `assets/chart-animation.toml`：`RenderConfig::default()` 从
+/// `dps::config::Config::default()` 取，后者又读那个文件。前端启动时拉一次，覆盖自己那份。
+#[tauri::command]
+pub fn chart_animation_defaults() -> serde_json::Value {
+    let Ok(serde_json::Value::Object(all)) = serde_json::to_value(RenderConfig::default()) else {
+        return serde_json::Value::Object(serde_json::Map::new());
+    };
+    let picked = all
+        .into_iter()
+        .filter(|(key, _)| CHART_ANIMATION_PREFIXES.iter().any(|p| key.starts_with(p)))
+        .collect::<serde_json::Map<_, _>>();
+    serde_json::Value::Object(picked)
+}
+
+/// 七套演出在 `assets/chart-animation.toml` 里所属的表：`RenderConfig` 的键名去掉族名、
+/// 再摘掉 `Sp` 就是表里的键（`xuejiangSpFakeNotes` → `[xuejiang] fakeNotes`，
+/// `rrHitFxColor` → `[rr] hitFxColor`）。
+const CHART_ANIMATION_FAMILIES: [(&str, &str); 7] = [
+    ("xuejiang", "xuejiang"),
+    ("baoying", "baoying"),
+    ("jingluan", "jingluan"),
+    ("qzkago", "qzkago"),
+    ("clockParadox", "clockParadox"),
+    ("mopemope", "mopemope"),
+    ("rr", "rr"),
+];
+
+/// 把调试窗口调好的七套演出参数写回 `assets/chart-animation.toml`，返回写到的文件。
+///
+/// 只替换现有键的**值**：文件里每个键上面都有一行说明，整篇重新序列化会把注释全丢掉。
+/// 落盘前先按 `dps::chart_animation::ChartAnimation` 反序列化一遍（`deny_unknown_fields`
+/// 加上全字段必填），拼坏了当场报错、不覆盖原文件。
+///
+/// 默认值在引擎里是启动时读一次、之后用缓存，所以写完要重启程序才生效。
+#[tauri::command]
+pub async fn save_chart_animation(
+    config: RenderConfig,
+) -> Result<String, tauri::ipc::InvokeError> {
+    crate::wrap_async(async move { write_chart_animation(&config) }).await
+}
+
+fn write_chart_animation(config: &RenderConfig) -> Result<String> {
+    let path = dps::chart_animation::source_path().context("找不到 assets/chart-animation.toml")?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("读取 {} 失败", path.display()))?;
+    let values = chart_animation_values(config);
+    let patched = patch_chart_animation(&text, &values);
+    let _: dps::chart_animation::ChartAnimation =
+        toml::from_str(&patched).context("改完的 chart-animation.toml 解析不了，没有写盘")?;
+    std::fs::write(&path, patched).with_context(|| format!("写入 {} 失败", path.display()))?;
+    Ok(path.display().to_string())
+}
+
+/// 从渲染配置里挑出七套演出的参数，整理成 `表名 → 键名 → 值`。
+fn chart_animation_values(config: &RenderConfig) -> FxHashMap<String, FxHashMap<String, toml::Value>> {
+    let mut out: FxHashMap<String, FxHashMap<String, toml::Value>> = FxHashMap::default();
+    let Ok(serde_json::Value::Object(all)) = serde_json::to_value(config) else {
+        return out;
+    };
+    for (key, value) in all {
+        let Some((table, rest)) = CHART_ANIMATION_FAMILIES.iter().find_map(|(family, table)| {
+            key.strip_prefix(family).map(|rest| (*table, rest))
+        }) else {
+            continue;
+        };
+        let rest = rest.strip_prefix("Sp").unwrap_or(rest);
+        let Some(name) = lower_first(rest) else {
+            continue;
+        };
+        let Some(value) = json_to_toml(&value) else {
+            continue;
+        };
+        out.entry(table.to_string()).or_default().insert(name, value);
+    }
+    out
+}
+
+/// `FakeNotes` → `fakeNotes`；空串（键名就是族名本身）返回 `None`。
+fn lower_first(text: &str) -> Option<String> {
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    Some(first.to_lowercase().chain(chars).collect())
+}
+
+/// JSON 值转 TOML 值，与全局配置同一套写法：浮点最多三位小数（f32 抬成 f64 会带一长串
+/// 尾巴），整数保持整数（`burstCombo = 240` 不该写成 `240.0`），颜色统一成大写 `#RRGGBB`
+/// （`colorA` / `colorB` / `hitFxColor` 都按色号存，旧文件里的三浮点数组仍然读得懂）。
+fn json_to_toml(value: &serde_json::Value) -> Option<toml::Value> {
+    use serde_json::Value as Json;
+    Some(match value {
+        Json::Bool(it) => toml::Value::Boolean(*it),
+        Json::Number(it) => match it.as_i64() {
+            Some(int) => toml::Value::Integer(int),
+            None => toml::Value::Float(crate::common::round_float(it.as_f64()?)),
+        },
+        Json::String(it) => match color_text(it) {
+            Some(hex) => toml::Value::String(hex),
+            None => toml::Value::String(it.clone()),
+        },
+        Json::Array(items) => toml::Value::Array(items.iter().filter_map(json_to_toml).collect()),
+        Json::Null | Json::Object(_) => return None,
+    })
+}
+
+/// 颜色统一写成大写色号；不像颜色的字符串原样返回。
+fn color_text(text: &str) -> Option<String> {
+    let rgb = crate::color_hex::from_hex(text)?;
+    Some(crate::color_hex::to_hex(&rgb))
+}
+
+/// 按 `表名 → 键名 → 新值` 逐行改写 TOML 文本，注释、空行与键的顺序原样保留。
+fn patch_chart_animation(
+    text: &str,
+    values: &FxHashMap<String, FxHashMap<String, toml::Value>>,
+) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut table = String::new();
+    for line in text.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        let trimmed = body.trim_start();
+        let indent = &body[..body.len() - trimmed.len()];
+        if let Some(name) = trimmed.strip_prefix('[').and_then(|it| it.split(']').next()) {
+            table = name.trim().to_string();
+            out.push_str(line);
+            continue;
+        }
+        let replaced = trimmed.split_once('=').and_then(|(key, rest)| {
+            let name = key.trim();
+            let value = values.get(&table)?.get(name)?;
+            let mut line = format!("{indent}{name} = {value}");
+            if let Some(comment) = split_comment(rest) {
+                line.push(' ');
+                line.push_str(comment.trim_end());
+            }
+            Some(line)
+        });
+        match replaced {
+            Some(mut line) => {
+                if line.ends_with('\n') {
+                    line.pop();
+                }
+                out.push_str(&line);
+                out.push('\n');
+            },
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// 从 TOML 一行的「等号后面」里切出注释：只认引号外的 `#`
+/// （`hitFxColor = "#FBA373"` 的值里就有一个 `#`，找第一个 `#` 会把值本身切断）。
+fn split_comment(rest: &str) -> Option<&str> {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (offset, ch) in rest.char_indices() {
+        match ch {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '#' if !quoted => return Some(&rest[offset..]),
+            _ => {},
+        }
+    }
+    None
+}
+
+/// 调试窗口预览要额外灌进网页版引擎的一个附带资源包。
+///
+/// 网页版引擎读不到磁盘（`appendant::entry`、`ResourcePack::from_path` 在 wasm 上都改查
+/// wasm 的内存文件表），所以特殊演出的贴图与皮肤得由调试窗口先读成字节、按
+/// `<prefix>/<name>/<包内路径>` 挂到 `__dprw_files` 上。
+#[derive(Serialize)]
+pub struct DebugPreviewPack {
+    /// 包名（`appendant.spas` 这类）
+    pub name: String,
+    /// 内存文件表里的目录：演出包是 `appendant`，皮肤包是 `respack`
+    pub prefix: String,
+    /// 包里的文件（`/` 分隔的包内路径）
+    pub files: Vec<String>,
+    /// 磁盘上包在不在、必需的文件齐不齐；不齐时引擎只会看到「没素材」，界面据此提示
+    pub present: bool,
+}
+
+/// 调试窗口左侧预览要用的东西。
+#[derive(Serialize)]
+pub struct DebugPreview {
+    /// 引擎配置 JSON（`RenderConfig::to_config` 再序列化），交给播放页的 `wm_set_config`
+    pub config: String,
+    /// 强开族开关之后的 `RenderConfig`：调试窗口拿它替换本地配置，之后每次推参数都带着
+    /// 正确的族开关与演出皮肤，不必再按谱面名算一遍。
+    pub render: serde_json::Value,
+    /// 要摊进网页版引擎的附带资源包（没给谱面路径时是空的）
+    pub packs: Vec<DebugPreviewPack>,
+}
+
+/// 把渲染配置翻成引擎配置的 JSON，给 DPDebugger 左侧那个网页版播放器（`wm_set_config`）用。
+///
+/// 走的是渲染同一条 `to_config()`：调试窗口里看到的画面必须和成片一致，
+/// 在调试窗口里另拼一份配置会让「调好了但渲染出来不一样」。
+///
+/// 成片那两条路径（CLI 与 stdin）会按输入文件名强开特殊演出，这里同样按 `path` 强开 ——
+/// 不然调试窗口里那七套演出全是关着的，什么都看不到。`path` 为空（后面推参数时）就只做
+/// 序列化与资源包之外的换算。
+#[tauri::command]
+pub fn debug_preview_config(config: RenderConfig, path: Option<String>) -> DebugPreview {
+    let mut config = config;
+    let packs = path
+        .as_deref()
+        .map(|path| apply_debug_animations(&mut config, Path::new(path)))
+        .unwrap_or_default();
+    let render = serde_json::to_value(&config).unwrap_or_else(|err| {
+        error!("[调试窗口] 配置序列化失败：{err}");
+        serde_json::Value::Null
+    });
+    let config = serde_json::to_string(&config.to_config()).unwrap_or_else(|err| {
+        error!("[调试窗口] 配置序列化失败：{err}");
+        "{}".to_owned()
+    });
+    DebugPreview { config, render, packs }
+}
+
+/// 调试窗口版的族开关：判据与成片一样，但**演出皮肤钉的是内存文件表里的目录名**。
+///
+/// 网页版引擎读不到磁盘上的包，报应 / Rr 那份皮肤只能由前端把包摊进内存表；包不在就退回
+/// 内置默认皮肤 —— `Resource::new` 加载皮肤失败是硬错误，整个场景会建不起来。
+/// 返回这一族要摊的包，`files` 由调用方按 `<prefix>/<name>/<file>` 拼成键名。
+fn apply_debug_animations(config: &mut RenderConfig, path: &Path) -> Vec<DebugPreviewPack> {
+    config.xuejiang_sp = is_xuejiang_sp_chart(path);
+    config.jingluan_sp = is_jingluan_sp_chart(path);
+    config.mopemope_sp = is_mopemope_sp_chart(path);
+    config.qzkago_sp = is_qzkago_chart(path);
+    config.clock_paradox_sp = is_clock_paradox_chart(path);
+    config.baoying_sp = is_baoying_sp_chart(path);
+    config.rr_sp = is_rr_chart(path);
+    let mut packs = Vec::new();
+    let mut skin: Option<&str> = None;
+    if config.baoying_sp {
+        let pack = debug_preview_pack(dps::core::appendant::RETRI, "respack", dps::core::appendant::SKIN_FILES);
+        skin = pack.present.then_some(dps::core::appendant::RETRI);
+        packs.push(pack);
+    }
+    if config.rr_sp {
+        // 背景、方形粒子、打击特效色与成片一致，只有皮肤换成内存表里的那份
+        apply_rr_look(config);
+        let pack = debug_preview_pack(dps::core::appendant::RR, "respack", dps::core::appendant::SKIN_FILES);
+        skin = pack.present.then_some(dps::core::appendant::RR);
+        packs.push(pack);
+    }
+    if config.jingluan_sp {
+        packs.push(debug_preview_pack(dps::core::appendant::SPAS, "appendant", dps::core::appendant::SPAS_FILES));
+    }
+    if config.qzkago_sp {
+        packs.push(debug_preview_pack(dps::core::appendant::QZK, "appendant", dps::core::appendant::QZK_FILES));
+    }
+    if config.clock_paradox_sp {
+        packs.push(debug_preview_pack(dps::core::appendant::CP, "appendant", dps::core::appendant::CP_FILES));
+    }
+    // 没有专属皮肤（普通谱面，或者报应 / Rr 的包不在）时用官方皮肤包：桌面端成片本来就是
+    // 这个默认（`default_respack_path` 先找 `appendant.official`），网页版读不到 exe 旁边的
+    // `appendant/`，只能由预览把这一份摊进内存表。包不在就退回编进 `assets` 的内置皮肤。
+    if skin.is_none() {
+        let pack = debug_preview_pack(
+            dps::core::appendant::OFFICIAL,
+            "respack",
+            dps::core::appendant::SKIN_FILES,
+        );
+        if pack.present {
+            skin = Some(dps::core::appendant::OFFICIAL);
+            packs.push(pack);
+        }
+    }
+    config.res_pack_path = skin.map(|name| format!("respack/{name}"));
+    packs
+}
+
+/// 一个要在预览里摊进内存文件表的包：列出它的文件，并标出磁盘上齐不齐。
+pub(crate) fn debug_preview_pack(name: &str, prefix: &str, required: &[&'static str]) -> DebugPreviewPack {
+    let pack = crate::common::appendant_dir()
+        .ok()
+        .and_then(|dir| dps::core::appendant::pack_in(&dir, name));
+    let present = pack
+        .as_deref()
+        .is_some_and(|pack| dps::core::appendant::has_files(pack, required));
+    let files = pack
+        .as_deref()
+        .map(dps::core::appendant::entry_names)
+        .unwrap_or_default();
+    DebugPreviewPack {
+        name: name.to_owned(),
+        prefix: prefix.to_owned(),
+        files,
+        present,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 改写只换值：键上面的说明、键的顺序、缩进都留着；字符串里的 `#` 不是注释。
+    #[test]
+    fn chart_animation_patch_keeps_comments() {
+        let text = "\
+# 雪降 SP
+[xuejiang]
+# 伪造分数用的音符数
+fakeNotes = 1.0
+burstCombo = 1
+diffFake = \"IN Lv.I2\"
+
+[rr]
+# 打击特效颜色
+hitFxColor = \"#000000\"
+hitFxScale = 1.0
+";
+        let mut xuejiang = FxHashMap::default();
+        xuejiang.insert("fakeNotes".to_string(), toml::Value::Float(305.0));
+        xuejiang.insert("burstCombo".to_string(), toml::Value::Integer(240));
+        xuejiang.insert("diffFake".to_string(), toml::Value::String("SP Lv.?".into()));
+        let mut rr = FxHashMap::default();
+        rr.insert("hitFxColor".to_string(), toml::Value::String("#FBA373".into()));
+        let mut values: FxHashMap<String, FxHashMap<String, toml::Value>> = FxHashMap::default();
+        values.insert("xuejiang".to_string(), xuejiang);
+        values.insert("rr".to_string(), rr);
+
+        let patched = patch_chart_animation(text, &values);
+
+        assert!(patched.contains("# 伪造分数用的音符数"));
+        assert!(patched.contains("fakeNotes = 305.0"));
+        assert!(patched.contains("burstCombo = 240"));
+        assert!(patched.contains("diffFake = \"SP Lv.?\""));
+        // 值里带 `#` 的颜色不能被当成注释切掉
+        assert!(patched.contains("hitFxColor = \"#FBA373\""));
+        assert!(patched.contains("# 打击特效颜色"));
+        // 没给新值的键原样留着
+        assert!(patched.contains("hitFxScale = 1.0"));
+        // 行数不变（没有多余的换行被塞进来或吞掉）
+        assert_eq!(patched.lines().count(), text.lines().count());
+    }
+
+    /// 颜色键在配置里是 `#RRGGBB`，写回文件也按色号（大写），不再变回三浮点数组；
+    /// 浮点最多三位小数。
+    #[test]
+    fn chart_animation_values_write_hex_colors() {
+        let values = chart_animation_values(&RenderConfig::default());
+
+        assert!(matches!(
+            values.get("mopemope").and_then(|it| it.get("colorA")),
+            Some(toml::Value::String(text)) if *text == text.to_uppercase() && text.len() == 7
+        ));
+        assert!(matches!(
+            values.get("rr").and_then(|it| it.get("hitFxColor")),
+            Some(toml::Value::String(text)) if text.starts_with('#')
+        ));
+        for value in values.values().flat_map(|table| table.values()) {
+            assert!(
+                matches!(value, toml::Value::Float(it) if (*it * 1000.).round() / 1000. == *it),
+                "浮点没收到三位小数：{value}"
+            );
+        }
+    }
 }

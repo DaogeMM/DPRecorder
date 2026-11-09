@@ -138,6 +138,36 @@ fn dpr_preview_config() -> Config {
     config
 }
 
+// 页面通过 `wm_set_config` 塞进来的整份渲染配置（DPDebugger 用）。
+//
+// 有它的时候就不再用 `dpr_preview_config()`：那份配置是为「编辑器预览只看谱面」把关掉的
+// 界面元素关掉、把强度调低用的，而调试窗口要看的就是成片那一刻的画面。
+thread_local! {
+    static PAGE_CONFIG: RefCell<Option<Config>> = const { RefCell::new(None) };
+}
+
+/// 把一份配置修成网页播放器能跑的样子：强制 autoplay、关掉自动校时、时间轴铺满整张谱面。
+///
+/// 这几项不管配置从哪儿来都得压上（见 `run()` 里那段注释），
+/// 所以首次建场景与 `wm_reload()` 都走这里，免得两处各写一遍。
+fn prepare_config(mut config: Config) -> Config {
+    config.mods.insert(Mods::AUTOPLAY);
+    // 谱面时间默认会按「音乐播放位置」纠正（`TimeManager::update` 只在 `auto_tweak_offset`
+    // 打开时生效），而 wasm 的静音音频后端从来没有音频线程去推进 `MusicClock::position`，
+    // 那个位置永远停在最后一次 seek 的地方 ⇒ 谱面时间被摁住不动。关掉它，时间就只剩
+    // `performance.now()` 一条来源；音乐由页面侧 `<audio>` 按 `wm_time()` 对齐。
+    config.auto_tweak_offset = false;
+    // 调试窗口要预览整张谱面，不套用谱面自带的试听区间（info.txt 的 previewS / previewE）。
+    config.play_start_time = 0.0;
+    config.play_end_time = None;
+    // 页面地址带 `?start=<秒>` 时用那个起播点（`?start=0` 即从头放）。
+    #[cfg(target_arch = "wasm32")]
+    if let Some(start) = url_start_seconds() {
+        config.play_start_time = start.max(0.0);
+    }
+    config
+}
+
 /// 编辑器预览的场景壳：只做一件事——把引擎在谱面结尾推上来的结算页（`NextScene::Overlay`）
 /// 丢掉。编辑窗口里播放头由页面控制，放完停在最后一帧比弹一个「再来一次 / 继续」的
 /// 结算界面更合适（那套按钮在预览里也没法用）。
@@ -220,22 +250,11 @@ async fn run() -> Result<()> {
     }
     set_status(format!("chart {} / {}", info.name, info.chart));
 
-    let mut config = dpr_preview_config();
-    config.mods.insert(Mods::AUTOPLAY);
-    // 谱面时间默认会按「音乐播放位置」纠正（`TimeManager::update` 只在 `auto_tweak_offset`
-    // 打开时生效），而 wasm 的静音音频后端从来没有音频线程去推进 `MusicClock::position`，
-    // 那个位置永远停在最后一次 seek 的地方 ⇒ 谱面时间被摁住不动。关掉它，时间就只剩
-    // `performance.now()` 一条来源；音乐由页面侧 `<audio>` 按 `wm_time()` 对齐。
-    config.auto_tweak_offset = false;
-    // 编辑器要预览整张谱面，不套用谱面自带的试听区间（info.txt 的 previewS / previewE）：
-    // 那两个字段是给「预览小窗」截一段用的，套在时间轴上只会让后半段点不到。
-    config.play_start_time = 0.0;
-    config.play_end_time = None;
-    // 页面地址带 `?start=<秒>` 时用那个起播点（`?start=0` 即从头放）。
-    #[cfg(target_arch = "wasm32")]
-    if let Some(start) = url_start_seconds() {
-        config.play_start_time = start.max(0.0);
-    }
+    let config = prepare_config(
+        PAGE_CONFIG
+            .with(|it| it.borrow().clone())
+            .unwrap_or_else(dpr_preview_config),
+    );
     set_status(format!(
         "preview {} -> {:?}",
         config.play_start_time, config.play_end_time
@@ -355,6 +374,8 @@ enum Request {
     SetRate(f64),
     /// 音乐 / 音效音量，两者都是 0~1。
     SetVolume(f32, f32),
+    /// 换一份渲染配置（DPDebugger 调参数用）：能直接落到已经在跑的场景上，不必重建。
+    SetConfig(Config),
     /// 重新解析内存文件表里的谱面，原地换掉当前那张（编辑器改完参数调它）。
     Reload,
 }
@@ -524,6 +545,9 @@ async fn apply_requests(main: &mut Main) {
             }),
             // 音量不碰时钟与位置，直接落到场景上。
             Request::SetVolume(music, sfx) => with_game_scene(main, |game, _| game.set_volume(music, sfx)),
+            // 演出参数都是每帧现读 `res.config` 的，换掉它就立刻生效：调试时改一个数字
+            // 下一帧就能看到，不必重建场景（重建会重载纹理、把播放头推回原处）。
+            Request::SetConfig(config) => with_game_scene(main, |game, _| game.res.config = config),
             // 重载要重新解析谱面（异步读文件 + 建纹理），所以放在这个 async 函数里做。
             Request::Reload => reload_now(main).await,
         }
@@ -567,12 +591,35 @@ async fn reload_now(main: &mut Main) {
         set_status("reload unavailable");
         return;
     };
+    // 页面可能在上次建场景之后又改了参数：重载要以最新那份为准。
+    if let Some(config) = PAGE_CONFIG.with(|it| it.borrow().clone()) {
+        source.config = prepare_config(config);
+    }
     match GameScene::load_chart(source.fs.as_mut(), &source.info, &source.config).await {
         Ok((chart, _format)) => with_game_scene(main, |game, _| match game.reload_chart(chart) {
             Ok(()) => set_status("chart reloaded"),
             Err(err) => set_status(format!("reload failed: {err:?}")),
         }),
         Err(err) => set_status(format!("reload parse failed: {err:?}")),
+    }
+}
+
+/// 用页面给的整份渲染配置（JSON，`dps::config::Config` 的 camelCase 形式）重建场景。
+///
+/// 要在 `init()` 之后、引擎恢复执行之前调用才赶得上首次建场景；之后调就要配合
+/// `wm_reload()` 才会生效（重载会重新读一次这份配置）。
+///
+/// 解析失败只记状态、不改已有配置：页面那边漏一个键就整份作废，调试窗口里看起来
+/// 像「参数没反应」，比留着上一份还能看要好查。
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wm_set_config(json: &str) {
+    match serde_json::from_str::<Config>(json) {
+        Ok(config) => {
+            let config = prepare_config(config);
+            PAGE_CONFIG.with(|it| *it.borrow_mut() = Some(config.clone()));
+            REQUESTS.with(|it| it.borrow_mut().push(Request::SetConfig(config)));
+        },
+        Err(err) => set_status(format!("config parse failed: {err}")),
     }
 }
 

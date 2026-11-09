@@ -152,11 +152,11 @@ const diffBadge = computed(() => {
   const tier = diffTier.value;
   const lvl = lvlText.value;
   if (tier && lvl) return `${tier} Lv.${lvl}`;
-  // 只有谱面里写的那串 `difficulty` 时，也把里面的 `Lv.x` 补成一位小数
+  // 只有谱面里写的那串 `difficulty` 时，也把里面的 `Lv.x` 规整成定数格式
   return tier || formatLvlInText(String(props.info?.difficulty ?? '').trim());
 });
 
-/** 定数：0 或缺失时不显示；有值就强制一位小数 */
+/** 定数：0 或缺失时不显示；有值按定数格式显示（整数不带小数位） */
 const lvlText = computed(() => formatLvl(props.info?.lvl));
 
 // 难度徽章不按档位配色（配色直接写在 `<style>` 的 `.chart-hero__diff` 里），这里不需要额外计算。

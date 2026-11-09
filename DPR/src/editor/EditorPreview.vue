@@ -37,13 +37,9 @@ const props = withDefaults(
     info?: DraftInfo | null;
     /** 特效轨铺出来的噪域方块：并进谱面字节里，引擎没有别的入口能加噪域。 */
     blockAreas?: BlockAreaEntry[];
-    /** 是否已经占满整窗（窗口全屏 + 编辑窗口只剩预览）。图标跟着它换，实际开关由父级做。 */
-    fullscreen?: boolean;
   }>(),
-  { musicPath: '', coverPath: '', info: null, blockAreas: () => [], fullscreen: false },
+  { musicPath: '', coverPath: '', info: null, blockAreas: () => [] },
 );
-
-const emit = defineEmits<{ 'toggle-fullscreen': [] }>();
 
 const frame = ref<HTMLIFrameElement | null>(null);
 /** 轨道上的文件读完了才挂 iframe：播放页一起来就会去读这些字节。 */
@@ -141,6 +137,34 @@ async function readMedia(path: string): Promise<Uint8Array | null> {
 }
 /** 「谱面加载中」等第一帧用的轮询（见 `waitPlayerReady`）。 */
 let readyTimer = 0;
+
+/** 后端 `default_skin_pack` 的返回：默认皮肤包的名字、内存表目录与包内文件表。 */
+interface SkinPack {
+  name: string;
+  prefix: string;
+  files: string[];
+}
+
+/**
+ * 把默认皮肤摊进播放页的文件表。
+ *
+ * 桌面端默认皮肤是 `appendant.official.zip`（exe 旁边那份），网页版引擎读不到磁盘，只能由
+ * 这里读成字节、按 `respack/<包名>/<包内路径>` 挂上去 —— 引擎在 wasm 下会先找这个目录，
+ * 找不到才退回编进 `assets/respack` 的内置皮肤。包不在就什么都不做。
+ */
+async function injectDefaultSkin(files: Record<string, Uint8Array>) {
+  try {
+    const pack = await invoke<SkinPack | null>('default_skin_pack');
+    if (!pack) return;
+    for (const file of pack.files) {
+      const raw = await invoke<ArrayBuffer>('debug_appendant_file', { name: pack.name, file });
+      files[`${pack.prefix}/${pack.name}/${file}`] = new Uint8Array(raw);
+    }
+  } catch (err) {
+    // 皮肤读不动不该让预览整块黑掉：引擎会退回内置那份
+    console.warn('default skin pack failed', err);
+  }
+}
 
 function stopWait() {
   if (readyTimer) window.clearInterval(readyTimer);
@@ -262,6 +286,7 @@ async function buildFiles(): Promise<BuiltFiles | null> {
   if (info?.charter.trim()) manifest.push(`Charter: ${info.charter.trim()}`);
   if (info?.composer.trim()) manifest.push(`Composer: ${info.composer.trim()}`);
   files['info.txt'] = new TextEncoder().encode(manifest.join('\n'));
+  await injectDefaultSkin(files);
   return { files, chart, music, musicBytes };
 }
 
@@ -657,13 +682,6 @@ watch(ratio, () => fitScreen());
         ></v-select>
         <i class="mdi mdi-menu-down preview__ratio-arrow"></i>
       </div>
-      <v-btn
-        variant="text"
-        size="small"
-        :icon="fullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'"
-        :title="fullscreen ? t('editor-fullscreen-exit') : t('editor-fullscreen')"
-        @click="emit('toggle-fullscreen')"
-      ></v-btn>
     </footer>
   </section>
 </template>

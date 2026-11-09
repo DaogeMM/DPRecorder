@@ -534,7 +534,8 @@ pub fn create_audio_manger(config: &Config) -> Result<AudioManager> {
             ..Default::default()
         }))
     }
-    #[cfg(not(target_os = "android"))]
+    // wasm 走上面那个分支（它自己 `return`），这里只给剩下的桌面平台兜底。
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     {
         use sasa::backend::cpal::*;
         Ok(AudioManager::new(CpalBackend::new(CpalSettings {

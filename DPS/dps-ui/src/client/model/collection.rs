@@ -250,8 +250,7 @@ impl LocalCollection {
     }
 
     #[must_use]
-    pub fn update(mut self, uuid: Uuid, charts: &[ChartRef], add: bool) -> CollectionUpdate {
-        let data = get_data();
+    pub fn update(mut self, _uuid: Uuid, charts: &[ChartRef], add: bool) -> CollectionUpdate {
         if self.id.is_some() && charts.iter().any(|it| !it.is_online()) {
             let dir = dir::charts().unwrap();
             let charts: Vec<_> = charts

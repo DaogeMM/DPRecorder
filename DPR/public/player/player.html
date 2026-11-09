@@ -37,6 +37,14 @@
       console.warn("[dps-wasm] 读不到宿主的谱面资源:", e);
     }
     window.__dprw_files = files;
+    // 同一套约定：`__dprwPendingConfig` 是宿主挂在父窗口上的渲染配置 JSON 字符串（DPDebugger 用）。
+    // 有些项（界面开关、资源包、节奏参数）只在建场景时读一次，晚到的 `DPRWPlayer.setConfig`
+    // 补不上，所以趁实例化之前先接住，`init()` 之后立刻交给引擎。
+    try {
+      window.__dprwConfig = window.parent !== window ? window.parent.__dprwPendingConfig || null : null;
+    } catch (e) {
+      window.__dprwConfig = null;
+    }
   })();
 </script>
 <script>
@@ -110,7 +118,7 @@
 <script src="./gl.js"></script>
 <script type="module" src="./player-api.js"></script>
 <script type="module">
-  import init, { wm_status, wm_take_hitsounds, wm_debug_files, wm_time, wm_paused, wm_toggle_pause, wm_audio_native } from "./wasm/dps_player.js";
+  import init, { wm_status, wm_take_hitsounds, wm_debug_files, wm_time, wm_paused, wm_toggle_pause, wm_set_config, wm_audio_native } from "./wasm/dps_player.js";
 
   // gl.js 顶层的 importObject.env 就是 wasm 的 env 导入表（canvas_width / glGenBuffers / ...）。
   // 打过 patch 的 wasm-bindgen 胶水不再自己提供 env，改成从这个全局对象取。
@@ -465,6 +473,15 @@
     // main()，所以 miniquad 需要的 wasm_memory / wasm_exports 由 patch 在那一行之前填好。
     // 事件监听不在 load() 里装：那些挂在 run_animation_loop 上，由 rust 侧启动时调。
     await init(mod);
+    // 宿主给的配置要在第一轮主循环之前交出去：`wm_set_config` 只把配置塞进引擎的请求队列，
+    // 首次建场景时读的就是它（`wasm_player.rs` 的 `PAGE_CONFIG`）。
+    if (window.__dprwConfig) {
+      try {
+        wm_set_config(String(window.__dprwConfig));
+      } catch (e) {
+        console.warn("[dps-wasm] 应用宿主配置失败:", e);
+      }
+    }
     // `?paused=1`：编辑器预览默认停住。wm_toggle_pause 只往队列里塞一条请求，由引擎主循环的
     // 第一轮应用 —— 那时时钟刚起跑、一帧都还没走，所以停在 0 秒，也不会先漏出一小段 BGM。
     if (/[?&]paused(?:[=&]|$)/.test(location.search)) wm_toggle_pause();

@@ -1004,7 +1004,10 @@ defineExpose({ zoomIn, zoomOut });
                 v-for="clip in clipsIn(track)"
                 :key="clip.id"
                 class="timeline__clip timeline__clip--lane"
-                :class="{ 'timeline__clip--active': clipActive(track.id, clip.id) }"
+                :class="{
+                  'timeline__clip--active': clipActive(track.id, clip.id),
+                  'timeline__clip--off': clip.effect?.enable === false,
+                }"
                 :style="clipStyleOf(clip)"
                 :data-lane-id="track.id"
                 :data-clip-id="clip.id"
@@ -1393,6 +1396,12 @@ defineExpose({ zoomIn, zoomOut });
 .timeline__clip--lane.timeline__clip--empty {
   background: none;
   border-color: rgb(255 176 96 / 32%);
+}
+
+/* 没激活的片段：压暗成虚线框，一眼看出这一段不生成噪域（谱面里还留着） */
+.timeline__clip--lane.timeline__clip--off {
+  opacity: 0.45;
+  border-style: dashed;
 }
 
 /* 左右两条把手：整块能拖起点，抓住两头拉长度 */

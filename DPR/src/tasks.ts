@@ -74,7 +74,7 @@ export function diffTier(info?: ChartInfo): string {
 }
 
 export function diffLvl(info?: ChartInfo): string {
-  // 定数统一一位小数（见 `lvl.ts`）
+  // 定数显示格式统一走 `lvl.ts`（整数不带小数位）
   return formatLvl(info?.lvl);
 }
 

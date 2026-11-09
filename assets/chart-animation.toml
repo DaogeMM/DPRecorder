@@ -1,0 +1,162 @@
+# 谱面演出动画的默认值
+#
+# 这里放的是七套特殊演出——「雪降SP」「报应SP」「痉挛SP」「QZKAGO」「Clock Paradox」
+# 「もぺもぺSP」「Rr」——的可调参数默认值。**改默认值改这个文件就行**：程序启动时读一次，
+# 不用动 `config.rs`、也不用重新编译。
+#
+# 查找顺序（先找到的算）：
+#   1. 环境变量 `DPR_CHART_ANIMATION` 指定的文件；
+#   2. 开发构建的仓库路径 `assets/chart-animation.toml`；
+#   3. 程序目录（exe 旁边）的 `assets/chart-animation.toml`；
+#   4. 编译时内嵌进程序的那一份（就是本文件）。
+# 所以开发时改仓库这一份就直接生效；安装版改 exe 旁的 `assets/chart-animation.toml`。
+#
+# 约定：
+#   * 七套演出的开关（`xuejiang_sp_mode` 之类）由输入谱面的文件名强制开启，不在这里配置；
+#     下面每一组只描述那一套演出本身长什么样。
+#   * 时间单位是秒，跟 `Resource::time`（音乐时间）一致。
+#   * 高度、间距是界面单位（还会再乘界面缩放）；偏移正值 = 右移 / 下移，
+#     只有 Clock Paradox 的 `offsetY` 是正值向上。
+#   * 从设置页或 DPDebugger 调过的值会写进渲染配置，只在没有覆盖时才用这里的默认值。
+
+# 「雪降SP」：右下角难度文本与分数先伪装成一张 305 音符的谱面，240 COMBO 处把分数滚回真实值，
+# 之后的进度条改按音乐响度伸缩，连击数在最后四轮里换成表情。
+[xuejiang]
+# 伪装谱面的音符数。分数按 `combo / 这个数 × score_total` 算。
+fakeNotes = 305.0
+# 伪装阶段进度条按音乐时间匀速走满所需的秒数；120 秒时 240 COMBO 处约在 0.72。
+fakeBarSeconds = 120.0
+# 揭开伪装的 COMBO 数（谱面上这一处是两个 FLICK）。
+burstCombo = 240
+# 分数倒滚窗口的倍率：1 = 滚到下一个音符判定的那一刻，0.5 = 提前一半结束，0 = 立刻跳到真实分数。
+rollScale = 0.75
+# 伪装阶段右下角的难度文本。
+diffFake = "IN Lv.I2"
+# 揭开伪装后右下角的难度文本。
+diffReal = "SP Lv.?"
+# 音量进度条的归一化分位（0~1）：取整首各窗口响度的这个分位当满条。
+volumePercentile = 0.99
+# 音量进度条响应的指数：1 = 线性（条长期在 0.8 以上），2 = 平方。
+volumeGamma = 1.05
+# 音量进度条的平滑时间常数（秒），越小越跟手、越大越抖不动。
+volumeSmooth = 0.07
+# 连击数换成表情的第一次判定时刻（秒）。
+faceHitStart = 170.769
+# 表情轮次的间隔（秒）。
+facePeriod = 4.103
+# 表情一共几轮，0 表示不显示表情。
+faceRounds = 4
+# 每轮从「展示」到判定要提前多少秒开始。
+faceLeadShow = 3.59
+# 每轮从「开始滚动」到判定要提前多少秒开始。
+faceLeadRoll = 2.821
+# 音符刚出现 / 开始滚动 / 被判定时，连击数位置的表情。
+faceTextShow = "(⊙o⊙)"
+faceTextRoll = "(⊙ω⊙)"
+faceTextHit = "Ｏ(≧▽≦)Ｏ"
+
+# 「报应SP」：分数、连击数、难度、曲名改用资源包里的手绘贴图。
+# 高度都是界面单位，偏移正值 = 右移 / 下移，`squeeze` 小于 1 会变窄。
+[baoying]
+# 左上角 WOW! 贴图。
+wowHeight = 0.043
+wowOffsetX = 0.02
+wowOffsetY = 0.02
+# 左下角曲名贴图。
+titleHeight = 0.056
+titleOffsetX = 0.03
+titleOffsetY = 0.0
+# 右上角分数。
+scoreOffsetX = 0.0
+scoreOffsetY = 0.01
+scoreHeight = 0.05
+scoreGap = 0.003
+scoreSqueeze = 1.1
+# 中上连击数字。
+comboOffsetX = 0.0
+comboOffsetY = 0.01
+comboHeight = 0.055
+comboGap = 0.0
+comboSqueeze = 1.1
+# 连击数下方 `COMBO` 贴图（`comboLabelOffset` 是它和数字的间距）。
+comboLabelHeight = 0.055
+comboLabelOffsetX = 0.0
+comboLabelOffset = 0.01
+# 右下角 `SP LV.?` 贴图（`diffGapSpLv` = SP 与 LV. 的间距，`diffGapLvQuestion` = LV. 与 ? 的间距）。
+diffHeight = 0.05
+diffGapSpLv = 0.1
+diffGapLvQuestion = 0.0
+diffSqueeze = 1.2
+diffOffsetX = -0.05
+diffOffsetY = 0.029
+# 分数与连击数从右往左排（实机上这串数字是倒着写的）。
+digitsRtl = true
+# 打击特效：贴图缩放覆盖（小于等于 0 沿用资源包）、是否随判定线旋转、粒子数（0 = 不画）。
+hitFxScale = 0.5
+hitFxRotate = false
+particleCount = 0
+
+# 「痉挛SP」：正中判定线在几个时间段里换成插画（`SpasmodicChan` / 「光」 / 「もぺもぺ」）。
+# 插画由 `appendant/appendant.spas.zip` 提供，缺包时这段演出静默不画。
+[jingluan]
+# 第一段插画：占画面高度的比例、上下偏移（正数向下）、淡入 / 淡出秒数（0 = 直接出现 / 到点消失）。
+chanHeight = 0.99
+chanOffsetY = -0.1
+chanFadeIn = 0.0
+chanFadeOut = 0.0
+# 第二段插画（「光」）。
+guangHeight = 1.0
+guangOffsetY = 0.0
+guangFadeIn = 0.0
+guangFadeOut = 0.0
+# 第三段插画（「もぺもぺ」）。
+mopemopeHeight = 1.0
+mopemopeOffsetY = 0.0
+mopemopeFadeIn = 0.0
+mopemopeFadeOut = 0.0
+# 插画压暗程度：0 = 不压暗，1 = 全黑（和背景压暗无关，单独设置）。
+dim = 0.18
+
+# 「QZKAGO」：从 `start` 起整屏换成 7 张静图来回硬切，共 7.10 秒，最后一张淡出。
+[qzkago]
+# 整段起点（秒）。
+start = 77.07
+# 白屏渐入时长（秒），0 就是硬切；65/60 ≈ 1.083。
+whiteIn = 1.083
+# 白屏渐出时长（秒），整段总长跟着它走；30/60 = 0.5。
+whiteOut = 0.5
+
+# 「Clock Paradox」：画面正中那只白线大表盘在四个时刻硬切出现、停留、再淡出。
+[clockParadox]
+# 表盘大小倍率（1 = 与参考录像一致）。
+scale = 1.0
+# 表盘圆心的像素偏移（按 1920×1080 计；`offsetY` 正值向上）。
+offsetX = 0.0
+offsetY = 0.0
+# 第 1~4 次出现的亮起时刻（秒）。
+flash1On = 108.02
+flash2On = 109.72
+flash3On = 111.42
+flash4On = 142.287
+# 第 1~4 次出现开始淡出的时刻（秒）。
+flash1Fade = 108.453
+flash2Fade = 110.17
+flash3Fade = 111.87
+flash4Fade = 145.077
+
+# 「もぺもぺSP」：整屏乘一层红（`背景 × 颜色`），只压背景。
+[mopemope]
+# 第一种红，用在那一串「闪」上（每段只有几帧，出现在长段红色区间的开头 / 结尾，
+# 以及 62~65.5 秒的频闪里）；默认 #694C24。
+colorA = "#694C24"
+# 第二种红，用在三段长镜头上，比 A 更暗更纯；默认 #573B0F。
+colorB = "#573B0F"
+
+# 「Rr」：只换打击特效的观感。
+[rr]
+# 颜色覆盖（`#RRGGBB`）。留空则用全局的 `hitcolor`，再没有就用资源包里的 AP 色。
+hitFxColor = "#FBA373"
+# 大小倍率，乘在资源包自带的 `hitFxScale` 上（1.0 为原值）。
+hitFxScale = 1.0
+# 动画速度倍率：1.0 为资源包自带的时长，2.0 则整段动画快一倍。
+hitFxSpeed = 1.0

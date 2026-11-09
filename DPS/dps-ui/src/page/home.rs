@@ -27,6 +27,8 @@ use serde::Deserialize;
 use tracing::warn;
 
 const BOARD_SWITCH_TIME: f32 = 4.;
+// 板子的过场动画暂时注释掉了（见 `render` 里那段），时长先留着。
+#[allow(dead_code)]
 const BOARD_TRANSIT_TIME: f32 = 1.2;
 
 pub struct HomePage {
@@ -275,7 +277,6 @@ impl Page for HomePage {
 
     fn render(&mut self, ui: &mut Ui, s: &mut SharedState) -> Result<()> {
         let t = s.t;
-        let pad = 0.04;
 
         let offset = s.gyro_offset;
 

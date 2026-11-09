@@ -181,3 +181,58 @@ export function isRrChart(path: string | null | undefined): boolean {
   const name = path.replace(/\\/g, '/').split('/').pop() ?? '';
   return name.startsWith('Rrharil.TeamGrimoire.100');
 }
+
+/** 路径最后一段，去掉 `.pez`；「按整名相等」的那几种谱面（雪降、もぺもぺ）用得上。 */
+function chartStem(path: string | null | undefined): string {
+  if (!path) return '';
+  const name = path.replace(/\\/g, '/').split('/').pop() ?? '';
+  return name.endsWith('.pez') ? name.slice(0, -'.pez'.length) : name;
+}
+
+/**
+ * 「雪降」SP 谱面：伪装分数、音量条与表情演出全部在引擎里，没有附带包；这个判据只用来决定
+ * 渲染页要不要露出调试入口。
+ *
+ * 判据与后端 `render.rs::is_xuejiang_sp_chart` 一致：最后一段正好是谱面名（目录名不带扩展名，
+ * 包名带 `.pez`）。
+ */
+export function isXuejiangSpChart(path: string | null | undefined): boolean {
+  return chartStem(path) === '今年も「雪降り、メリクリ」目指して頑張ります！！.100.SP';
+}
+
+/**
+ * 「もぺもぺ」谱面：整屏红色压暗取自谱面动画参数，没有附带包。
+ *
+ * 判据与后端 `render.rs::is_mopemope_sp_chart` 一致。
+ */
+export function isMopemopeSpChart(path: string | null | undefined): boolean {
+  return chartStem(path) === 'もぺもぺ.LeaF.100.SP';
+}
+
+/** 演出动画的族名，与 `assets/chart-animation.toml` 的表名、`RenderConfig` 的字段前缀一一对应。 */
+export type ChartAnimationFamily =
+  | 'xuejiang'
+  | 'baoying'
+  | 'jingluan'
+  | 'qzkago'
+  | 'clockParadox'
+  | 'mopemope'
+  | 'rr';
+
+/**
+ * 输入谱面用的是哪一套演出动画；不是那七张谱面之一时给 `null`。
+ *
+ * DPDebugger 的入口按钮按它决定显示与否，窗口里也按它决定右侧列出哪一组参数。
+ */
+export function chartAnimationFamily(path: string | null | undefined): ChartAnimationFamily | null {
+  if (!path) return null;
+  if (isXuejiangSpChart(path)) return 'xuejiang';
+  if (isBaoyingSpChart(path)) return 'baoying';
+  if (isJingluanSpChart(path)) return 'jingluan';
+  if (isQzkagoChart(path)) return 'qzkago';
+  if (isClockParadoxChart(path)) return 'clockParadox';
+  if (isMopemopeSpChart(path)) return 'mopemope';
+  if (isRrChart(path)) return 'rr';
+  return null;
+}
+

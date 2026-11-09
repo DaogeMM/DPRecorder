@@ -52,16 +52,8 @@ export function snapTime(seconds: number): number {
   return Math.round(value / TIME_SNAP) * TIME_SNAP;
 }
 
-/** 秒数换成 `mm:ss.mmm`：播放头读数要能看出毫秒级的差别。 */
-export function formatTimecode(seconds: number): string {
-  const value = Math.max(0, seconds || 0);
-  const minutes = Math.floor(value / 60);
-  const rest = value - minutes * 60;
-  // 四舍五入到毫秒后可能进位成整 60000，先按毫秒取整再拆秒，避免出现 `0:60.000`
-  const millis = Math.round(rest * 1000);
-  const secs = Math.floor(millis / 1000);
-  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(millis % 1000).padStart(3, '0')}`;
-}
+/** 秒数换成 `mm:ss.mmm`：播放头读数要能看出毫秒级的差别（与调试窗口共用一份实现）。 */
+export { formatTimecode } from '../timecode';
 
 /** 输入框给回来的可能是字符串（清空时是空串），统一收成非负的秒数。 */
 export function toSeconds(value: unknown): number {

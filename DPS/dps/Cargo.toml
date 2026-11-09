@@ -8,12 +8,20 @@ repository.workspace = true
 
 [lib]
 
+# 浏览器播放器的 bin 只编 wasm32（`DPR/public/player/build.ps1` 就是这么调的）。宿主构建靠
+# `required-features` 跳过它：wasm_bindgen 等依赖按 target 门控，Windows 上根本不存在。
+[[bin]]
+name = "wasm_player"
+path = "src/bin/wasm_player.rs"
+required-features = ["wasm_player"]
+
 [features]
 default = ["log", "play", "video"]
 closed = []
 log = ["dep:tracing-subscriber", "dep:colored"]
 play = []
 video = ["dep:prpr-avc"]
+wasm_player = []
 
 [dependencies]
 chinese-number = "0.7.7"
@@ -48,6 +56,9 @@ serde_yaml = "0.9.33"
 symphonia = { version = "0.5", features = ["flac", "mp3", "ogg", "vorbis", "wav", "pcm"] }
 sys-locale = "0.3.2"
 tempfile = "3.3.0"
+# 谱面演出动画的默认值放在 assets/chart-animation.toml，运行期读；版本与 DPR 那边保持一致，
+# 免得 lock 里出现两份 toml。
+toml = "0.7.3"
 tracing = "0.1.37"
 unic-langid = { version = "0.9.1", features = ["macros"] }
 zip = { version = "8.3.0", default-features = false, features = ["deflate-flate2"] }

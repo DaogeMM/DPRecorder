@@ -171,6 +171,8 @@ impl Popup {
     }
 }
 
+// 带下拉选择的按钮还没接进设置页，先留着。
+#[allow(dead_code)]
 pub struct ChooseButton {
     btn: DRectButton,
     popup: Popup,
@@ -179,6 +181,7 @@ pub struct ChooseButton {
     need_to_show: bool,
 }
 
+#[allow(dead_code)]
 impl ChooseButton {
     pub fn new() -> Self {
         Self {

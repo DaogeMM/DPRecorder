@@ -1345,24 +1345,6 @@ async function closeWindow() {
   void editorWindow.close();
 }
 
-/**
- * 预览全屏：窗口进系统全屏，编辑窗口只剩预览 —— 标题栏、处理区、时间轴一起收起来，
- * 退出按钮仍是预览工具条上那颗（`EditorPreview` 按 `fullscreen` 换图标）。
- *
- * 走窗口全屏而不是 DOM 的 `requestFullscreen()`：WebView2 里 DOM 全屏只是把元素撑满这个
- * webview，窗口本身还是原来那么大一块，看着不叫全屏。
- */
-const previewFullscreen = ref(false);
-
-async function togglePreviewFullscreen() {
-  previewFullscreen.value = !previewFullscreen.value;
-  try {
-    await editorWindow.setFullscreen(previewFullscreen.value);
-  } catch (err) {
-    toastError(err);
-  }
-}
-
 /* ---- 键盘热键 ----
  *
  * 只在这个窗口里生效。文本输入框 / 下拉框里按下的键一律放行（该打字的打字、该撤文本的撤文本），
@@ -1478,12 +1460,8 @@ async function alignClipEnd() {
   await updateClip(hit.lane.id, hit.clip.id, { length });
 }
 
-/** 热键总表：Esc（全屏退出）与输入框放行先处理，其余按键按组合分发。 */
+/** 热键总表：输入框放行先处理，其余按键按组合分发。 */
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && previewFullscreen.value) {
-    void togglePreviewFullscreen();
-    return;
-  }
   if (typingInField(event.target)) return;
 
   const mod = event.ctrlKey || event.metaKey;
@@ -1552,10 +1530,10 @@ function onKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="editor-window" :class="{ 'editor-window--focus': previewFullscreen }">
+  <div class="editor-window">
     <!-- 标题栏：窗口没有系统标题栏（和主窗口一样由页面自己画），这条同时是拖拽区。
          左边是 DPEditor，接着是草稿名（点开是草稿菜单），右边依次是谱面路径、导出与窗口按钮。 -->
-    <header v-if="!previewFullscreen" class="editor-titlebar" data-tauri-drag-region>
+    <header class="editor-titlebar" data-tauri-drag-region>
       <div class="editor-titlebar__brand" data-tauri-drag-region>
         <img src="../assets/favicon.png" alt="icon" class="editor-titlebar__logo" />
         <span class="editor-titlebar__name">DPEditor</span>
@@ -1642,37 +1620,34 @@ function onKeydown(event: KeyboardEvent) {
     </header>
 
     <div class="editor-body">
-      <!-- 左边：功能栏（信息 / 素材库 / 效果）。宽度由它右边那条分隔条拖。
-           全屏预览时两侧栏连分隔条一起收起来，只剩中间的画面 -->
-      <template v-if="!previewFullscreen">
-        <EditorInspector
-          ref="inspector"
-          class="editor-body__inspector"
-          :style="{ width: `${inspectorWidth}px` }"
-          :draft="draft"
-          :info="chartInfo"
-          :cover-url="coverUrl"
-          @import="importMedia"
-          @import-folder="importFolder"
-          @add-folder="createFolder"
-          @assign="assignMedia"
-          @remove="removeMedia"
-          @clear="clearTrack"
-          @update-info="onUpdateInfo"
-          @move-media="moveMedia"
-          @rename-folder="renameFolder"
-          @delete-folder="deleteFolder"
-          @reveal="revealMedia"
-          @add-effect="addLane('effect')"
-        />
-        <div
-          class="editor-splitter editor-splitter--v"
-          @pointerdown="startDrag('x', $event, 'inspector')"
-          @pointermove="dragTo"
-          @pointerup="endDrag"
-          @pointercancel="endDrag"
-        ></div>
-      </template>
+      <!-- 左边：功能栏（信息 / 素材库 / 效果）。宽度由它右边那条分隔条拖 -->
+      <EditorInspector
+        ref="inspector"
+        class="editor-body__inspector"
+        :style="{ width: `${inspectorWidth}px` }"
+        :draft="draft"
+        :info="chartInfo"
+        :cover-url="coverUrl"
+        @import="importMedia"
+        @import-folder="importFolder"
+        @add-folder="createFolder"
+        @assign="assignMedia"
+        @remove="removeMedia"
+        @clear="clearTrack"
+        @update-info="onUpdateInfo"
+        @move-media="moveMedia"
+        @rename-folder="renameFolder"
+        @delete-folder="deleteFolder"
+        @reveal="revealMedia"
+        @add-effect="addLane('effect')"
+      />
+      <div
+        class="editor-splitter editor-splitter--v"
+        @pointerdown="startDrag('x', $event, 'inspector')"
+        @pointermove="dragTo"
+        @pointerup="endDrag"
+        @pointercancel="endDrag"
+      ></div>
 
       <!-- 中间：实时谱面预览 -->
       <EditorPreview
@@ -1683,77 +1658,71 @@ function onKeydown(event: KeyboardEvent) {
         :cover-path="draft?.cover?.path ?? ''"
         :info="draft?.info ?? null"
         :block-areas="blockAreas"
-        :fullscreen="previewFullscreen"
-        @toggle-fullscreen="togglePreviewFullscreen"
       />
 
       <!-- 右边：编辑栏 —— 时间轴上选中哪条轨道，就在这里编辑那份素材 -->
-      <template v-if="!previewFullscreen">
-        <div
-          class="editor-splitter editor-splitter--v"
-          @pointerdown="startDrag('x', $event, 'edit')"
-          @pointermove="dragTo"
-          @pointerup="endDrag"
-          @pointercancel="endDrag"
-        ></div>
-        <EditorEditBar
-          class="editor-body__editbar"
-          :style="{ width: `${editWidth}px` }"
-          :draft="draft"
-          :track-id="selectedTrack"
-          :clip-id="selectedClip"
-          :multi="multiClips"
-          :duration="duration"
-          :cover-url="coverUrl"
-          @reveal="revealMedia"
-          @clear="clearTrack"
-          @pick-media="pickMediaForTrack"
-          @update-lane="updateLane"
-          @update-clip="updateClip(selectedTrack ?? '', selectedClip ?? '', $event)"
-          @update-clips="updateClips"
-          @update-clips-time="updateClipsTime"
-        />
-      </template>
-    </div>
-
-    <template v-if="!previewFullscreen">
-      <!-- 主体与时间轴之间的分隔条：上下拖改时间轴高度 -->
       <div
-        class="editor-splitter editor-splitter--h"
-        @pointerdown="startDrag('y', $event)"
+        class="editor-splitter editor-splitter--v"
+        @pointerdown="startDrag('x', $event, 'edit')"
         @pointermove="dragTo"
         @pointerup="endDrag"
         @pointercancel="endDrag"
       ></div>
-
-      <!-- 底部：进度条 + 时间轴（素材从功能栏拖到这里的轨道上） -->
-      <EditorTimeline
-        ref="timeline"
-        class="editor-footer"
-        :style="{ height: `${timelineHeight}px` }"
+      <EditorEditBar
+        class="editor-body__editbar"
+        :style="{ width: `${editWidth}px` }"
         :draft="draft"
-        :playing="playing"
-        :time="time"
-        :duration="duration"
-        :selected="selectedTrack"
-        :selected-clip="selectedClip"
+        :track-id="selectedTrack"
+        :clip-id="selectedClip"
         :multi="multiClips"
-        @toggle-play="togglePlay"
-        @seek="seek"
-        @assign="assignMedia"
+        :duration="duration"
+        :cover-url="coverUrl"
+        @reveal="revealMedia"
         @clear="clearTrack"
-        @select="selectClipEvent"
-        @select-many="selectManyClips"
-        @remove-lane="removeLane"
-        @drop-effect="addEffectAt"
-        @drop-lyrics="addLyrics"
-        @resize-lane="resizeLane"
-        @resize-clip="resizeClip"
-        @move-clip="moveClip"
-        @remove-clip="removeClip"
-        @add-clip="addClip"
+        @pick-media="pickMediaForTrack"
+        @update-lane="updateLane"
+        @update-clip="updateClip(selectedTrack ?? '', selectedClip ?? '', $event)"
+        @update-clips="updateClips"
+        @update-clips-time="updateClipsTime"
       />
-    </template>
+    </div>
+
+    <!-- 主体与时间轴之间的分隔条：上下拖改时间轴高度 -->
+    <div
+      class="editor-splitter editor-splitter--h"
+      @pointerdown="startDrag('y', $event)"
+      @pointermove="dragTo"
+      @pointerup="endDrag"
+      @pointercancel="endDrag"
+    ></div>
+
+    <!-- 底部：进度条 + 时间轴（素材从功能栏拖到这里的轨道上） -->
+    <EditorTimeline
+      ref="timeline"
+      class="editor-footer"
+      :style="{ height: `${timelineHeight}px` }"
+      :draft="draft"
+      :playing="playing"
+      :time="time"
+      :duration="duration"
+      :selected="selectedTrack"
+      :selected-clip="selectedClip"
+      :multi="multiClips"
+      @toggle-play="togglePlay"
+      @seek="seek"
+      @assign="assignMedia"
+      @clear="clearTrack"
+      @select="selectClipEvent"
+      @select-many="selectManyClips"
+      @remove-lane="removeLane"
+      @drop-effect="addEffectAt"
+      @drop-lyrics="addLyrics"
+      @resize-lane="resizeLane"
+      @resize-clip="resizeClip"
+      @move-clip="moveClip"
+      @remove-clip="removeClip"
+      @add-clip="addClip"
+    />
 
     <!-- 重命名草稿 -->
     <v-dialog v-model="renameOpen" width="auto" min-width="400px" class="log-card-bg">
@@ -2189,16 +2158,6 @@ function onKeydown(event: KeyboardEvent) {
 
 .editor-footer {
   flex: none;
-}
-
-/* 预览全屏：编辑窗口只剩预览，内边距与描边一并去掉，画面贴着屏幕边 */
-.editor-window--focus .editor-body {
-  padding: 0;
-}
-
-.editor-window--focus .editor-body__preview {
-  border: 0;
-  border-radius: 0;
 }
 </style>
 

@@ -12,10 +12,6 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::new(r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.)
 }
 
-const fn alpha(c: Color, a: f32) -> Color {
-    Color::new(c.r, c.g, c.b, a)
-}
-
 /// 页面底色（DPR `--phi-bg-page`，bluish-875 `#232324`）。
 pub const BG_PAGE: Color = rgb(0x15, 0x15, 0x17);
 /// 更暗的一层，用于弹窗背后压暗（DPR `--phi-bg-base`，bluish-950 `#151517`）。

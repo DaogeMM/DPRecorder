@@ -1,3 +1,5 @@
+// 活动页还没接进路由，整块先留着。
+#[allow(dead_code)]
 mod event;
 pub use event::EventPage;
 
@@ -7,8 +9,9 @@ pub use home::HomePage;
 mod library;
 pub use library::LibraryPage;
 
+// 消息页同样还没接线。
+#[allow(dead_code)]
 mod message;
-pub use message::MessagePage;
 
 mod offset;
 pub use offset::OffsetPage;
@@ -439,6 +442,8 @@ pub enum NextPage {
 }
 
 pub trait Page {
+    /// 页面标识。界面暂时没有地方显示它，留给以后的分页路由。
+    #[allow(dead_code)]
     fn label(&self) -> Cow<'static, str>;
 
     /// 页面顶部那行大标题；`None` 时页面铺满整屏。

@@ -6,7 +6,8 @@
 #
 # This is `cargo rustc` rather than a plain bin build because:
 #   - the engine's default features include `video` (ffmpeg static lib), which has no wasm build,
-#     hence --no-default-features --features play;
+#     hence --no-default-features --features play,wasm_player (`wasm_player` is the feature the bin
+#     requires, see DPS/dps/Cargo.toml);
 #   - miniquad's wasm backend imports host functions with no Rust declarations, so linking needs
 #     --allow-undefined.
 # tools/patch_bindgen.mjs is required afterwards: wasm-bindgen turns those imports into
@@ -34,7 +35,7 @@ $env:RUSTFLAGS = '--cfg getrandom_backend="wasm_js"'
 Push-Location $repo
 try {
     cargo rustc -p dps --bin wasm_player --release --target wasm32-unknown-unknown `
-        --no-default-features --features play -- -C link-arg=--allow-undefined
+        --no-default-features --features play,wasm_player -- -C link-arg=--allow-undefined
     if ($LASTEXITCODE -ne 0) { throw "cargo rustc failed" }
 
     & "$env:USERPROFILE\.cargo\bin\wasm-bindgen.exe" (Join-Path $wasmTarget "wasm_player.wasm") `

@@ -131,6 +131,11 @@ const percent = computed(() => {
   return Math.min(100, Math.round((current.frame / current.frames) * 100));
 });
 
+/** 横幅里读出来的数字：整数就不带小数位（`10` 而不是 `10.00`），有小数才按位数收。 */
+function infoNumber(value: number, digits: number) {
+  return String(Number(value.toFixed(digits)));
+}
+
 /** 进度条右边那行字：抽帧时给百分比和速度，其余阶段给一句当前动作。 */
 const progressText = computed(() => {
   const current = progress.value;
@@ -507,9 +512,9 @@ onUnmounted(() => {
             <span class="vn-hero__name" :title="videoPath">{{ videoName }}</span>
             <span class="vn-hero__path" :title="videoPath">{{ videoPath }}</span>
             <span class="vn-hero__info">
-              <span class="vn-hero__pair"><span class="vn-hero__k">{{ t('vn-duration') }}</span>{{ meta.duration.toFixed(2) }} s</span>
+              <span class="vn-hero__pair"><span class="vn-hero__k">{{ t('vn-duration') }}</span>{{ infoNumber(meta.duration, 2) }} s</span>
               <span class="vn-hero__pair"><span class="vn-hero__k">{{ t('vn-resolution') }}</span>{{ meta.width }}×{{ meta.height }}</span>
-              <span class="vn-hero__pair"><span class="vn-hero__k">{{ t('vn-fps') }}</span>{{ meta.fps.toFixed(2) }}</span>
+              <span class="vn-hero__pair"><span class="vn-hero__k">{{ t('vn-fps') }}</span>{{ infoNumber(meta.fps, 2) }}</span>
               <span class="vn-hero__pair"><span class="vn-hero__k">{{ t('vn-audio') }}</span>{{ meta.hasAudio ? t('vn-audio-yes') : t('vn-audio-no') }}</span>
             </span>
           </template>

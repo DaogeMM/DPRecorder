@@ -170,6 +170,10 @@ fn one() -> Percentage {
     Percentage { x: 1., y: 1. }
 }
 
+fn yes() -> bool {
+    true
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawScaleEvent {
@@ -275,6 +279,11 @@ pub struct RawBlockArea {
     /// `false` = Normal，`true` = Subtract（挖洞）
     #[serde(default)]
     pub is_subtract: bool,
+    /// 这块噪域是否激活：`false` 的条目整条不生成（谱面里留着，引擎不画也不判）。
+    ///
+    /// 官方谱面没有这个字段，缺省就是激活；编辑器「更多 → 激活」关掉时会写 `false`。
+    #[serde(default = "yes")]
+    pub enable: bool,
     /// 这块噪域的调色板颜色（0~1 的 RGB）。缺省 = 原生红。
     ///
     /// 官方谱面的 `blockAreaList` 没有颜色字段（参考实现里官方噪域也永远是原生红），
@@ -617,6 +626,7 @@ impl Default for BlockAreaRenderer {
 ///
 /// 同一个数组里可能混着 rpe-next v220 的条目（字段是 `bottomLeft` / `topRight`），那些归
 /// [`next::parse_next`] 管；这里显式跳过，免得两套字段互相污染。
+/// `enable: false` 的条目也一并跳过 —— 编辑器把没激活的噪域留在谱面里，但不该画出来。
 pub fn parse_block_areas(value: Option<&serde_json::Value>) -> Vec<BlockArea> {
     let Some(serde_json::Value::Array(list)) = value else {
         return Vec::new();
@@ -627,6 +637,7 @@ pub fn parse_block_areas(value: Option<&serde_json::Value>) -> Vec<BlockArea> {
         .filter_map(|(i, v)| {
             serde_json::from_value::<RawBlockArea>(v.clone())
                 .ok()
+                .filter(|raw| raw.enable)
                 .map(|raw| BlockArea::from_raw(raw, i))
         })
         .collect()

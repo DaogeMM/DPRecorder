@@ -1,4 +1,4 @@
-use super::{import_chart, itl, L10N_LOCAL};
+use super::{import_chart, L10N_LOCAL};
 use crate::{
     charts_view::NEED_UPDATE,
     data::LocalChart,
@@ -46,7 +46,6 @@ pub struct MainScene {
 
     background_blur: SafeTexture,
     btn_back: RectButton,
-    icon_back: SafeTexture,
 
     pages: Vec<Box<dyn Page>>,
 
@@ -112,7 +111,6 @@ impl MainScene {
             background_blur: TEX_BACKGROUND_BLUR.with(|it| it.borrow().clone().unwrap()),
 
             btn_back: RectButton::new(),
-            icon_back: TEX_ICON_BACK.with(|it| it.borrow().clone().unwrap()),
 
             pages: Vec::new(),
 

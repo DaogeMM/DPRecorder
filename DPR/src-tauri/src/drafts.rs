@@ -82,7 +82,7 @@ pub struct DraftInfo {
 pub const NATIVE_FONT: &str = "Phigros";
 
 /// 引擎原生噪域红（`block_area_color = [0.9, 0.1, 0.1]`）；等于它的颜色走原生材质。
-pub const NATIVE_NOISE_COLOR: &str = "#e61a1a";
+pub const NATIVE_NOISE_COLOR: &str = "#E61A1A";
 
 /// 文字噪域的参数：一段文字按字号、字体排出来，再按格子取成噪域方块。
 ///
@@ -110,6 +110,10 @@ pub struct TextNoiseEffect {
     pub letter_spacing: f64,
     /// 整段文字绕自己的中心转多少度（正数顺时针）。
     pub rotation: f64,
+    /// 激活：`false` 时这一段不生成噪域（谱面里留着，引擎跳过）。
+    ///
+    /// 缺省就是激活 —— 导出只在没激活时才写 `enable: false`，老草稿里没这个字段也照旧画。
+    pub enable: bool,
     /// 反转：铺「除文字之外」的整片噪域，把文字挖成空白（用补集矩形拼）。
     pub invert: bool,
     /// 反相：生成方块时把 `isSubtract` 标成 true（引擎的减算通道），几何不变，可与反转同开。
@@ -133,6 +137,7 @@ impl Default for TextNoiseEffect {
             line_height: 1.25,
             letter_spacing: 0.0,
             rotation: 0.0,
+            enable: true,
             invert: false,
             subtract: false,
             blend: false,
@@ -421,19 +426,19 @@ fn normalize_effect(effect: &mut TextNoiseEffect) {
     }
 }
 
-/// 颜色收成小写 `#rrggbb`：只认 3 / 6 位十六进制，认不出来就退回原生红。
+/// 颜色收成大写 `#RRGGBB`：只认 3 / 6 位十六进制，认不出来就退回原生红。
 ///
 /// 与前端 `text-noise.ts::normalizeNoiseColor` 同一套规则；两边各收一道，
 /// 免得手改过的草稿 JSON 把一个引擎解析不了的颜色写进谱面。
 fn normalize_color(color: &str) -> String {
     let digits = color.trim().trim_start_matches('#');
     let hex: Vec<u8> = digits.bytes().collect();
-    let lower = digits.to_ascii_lowercase();
+    let upper = digits.to_ascii_uppercase();
     if hex.len() == 6 && hex.iter().all(|it| it.is_ascii_hexdigit()) {
-        return format!("#{lower}");
+        return format!("#{upper}");
     }
     if hex.len() == 3 && hex.iter().all(|it| it.is_ascii_hexdigit()) {
-        let doubled: String = lower.chars().flat_map(|it| [it, it]).collect();
+        let doubled: String = upper.chars().flat_map(|it| [it, it]).collect();
         return format!("#{doubled}");
     }
     NATIVE_NOISE_COLOR.to_string()
@@ -990,6 +995,18 @@ mod tests {
             kind: kind.to_string(),
             folder: None,
         }
+    }
+
+    #[test]
+    fn normalize_color_writes_uppercase_hex() {
+        assert_eq!(normalize_color("#e61a1a"), "#E61A1A");
+        assert_eq!(normalize_color("e61a1a"), "#E61A1A");
+        assert_eq!(normalize_color(" #E61A1A "), "#E61A1A");
+        // 三位缩写补成六位，同样大写
+        assert_eq!(normalize_color("#f0a"), "#FF00AA");
+        // 认不出来退回原生红
+        assert_eq!(normalize_color("red"), NATIVE_NOISE_COLOR);
+        assert_eq!(NATIVE_NOISE_COLOR, "#E61A1A");
     }
 
     #[test]

@@ -92,12 +92,12 @@ export function setTitle(title: string) {
 export function toast(message: string, kind?: 'success' | 'info' | 'warning' | 'error') {
   sonnerToast(message, {
     duration: 2000,
-    // 提示一律走同一个位置（`<v-sonner>` 的 `position="bottom-right"`）：右下角贴着窗口边，
-    // 不挡上方的标题栏与谱面列表，错误提示也不例外。
+    // 提示一律走同一个位置（`<v-sonner>` 的 `position="top-right"`）：贴着标题栏下沿从右边滑进来，
+    // 不挡下方的列表与按钮。宽度按内容收（短消息就是一小条），最多撑到窗口的 95%，长错误也读得完。
     cardProps: {
       color: kind,
       // @ts-ignore
-      style: 'width: var(--width); user-select: text;',
+      style: 'width: max-content; max-width: 95vw; user-select: text;',
     },
   });
 }

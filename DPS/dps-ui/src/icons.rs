@@ -5,11 +5,15 @@ use dps::ext::SafeTexture;
 
 pub struct Icons {
     pub play: SafeTexture,
+    // 活动、消息、语言切换都没接线，这三个图标先跟着结构体留着。
+    #[allow(dead_code)]
     pub medal: SafeTexture,
     pub respack: SafeTexture,
+    #[allow(dead_code)]
     pub msg: SafeTexture,
     pub settings: SafeTexture,
     pub back: SafeTexture,
+    #[allow(dead_code)]
     pub lang: SafeTexture,
     pub download: SafeTexture,
     pub user: SafeTexture,

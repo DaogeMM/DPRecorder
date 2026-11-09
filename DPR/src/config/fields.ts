@@ -13,7 +13,7 @@
  * 检查表是否覆盖了 RenderConfig 的每一个键 —— 漏一个就直接报错点名。
  */
 import type { RenderConfig } from '../model';
-import { hexToRgb, rgbToHex } from './convert';
+import { hexToRgb, rgbToHex, roundFloat } from './convert';
 import type { FieldSpec, FieldTable, SectionId } from './types';
 
 /** 挑战模式颜色：界面上是本地化名字，落盘成这几个英文词（下标一一对应） */
@@ -475,7 +475,7 @@ const JUDGE = {
     integer: true,
     note: '界面单位是毫秒，配置单位是秒',
     toConfig: (ui) => parseInt(ui.judgeOffset) / 1000,
-    toUi: (value) => String(value * 1000),
+    toUi: (value) => String(Math.round(value * 1000)),
   },
   judgeRangeTime: { widget: 'number', uiValue: 'number' },
   judgeRangeAlpha: { widget: 'number' },
@@ -484,7 +484,7 @@ const JUDGE = {
     uiKey: 'judgeRangeTransition',
     note: '界面按「过渡时间」输入 = 显示时间 − 淡入结束时刻；配置存淡入结束时刻本身',
     toConfig: (ui) => Math.max(0, ui.judgeRangeTime - (parseFloat(String(ui.judgeRangeTransition)) || 0)),
-    toUi: (_value, config) => String(Math.max(0, config.judgeRangeTime - config.judgeRangeFadeTime)),
+    toUi: (_value, config) => String(roundFloat(Math.max(0, config.judgeRangeTime - config.judgeRangeFadeTime))),
   },
   judgeRangeWidth: { widget: 'number', uiValue: 'number' },
   judgeRangeWidthFlick: { widget: 'number', uiValue: 'number' },

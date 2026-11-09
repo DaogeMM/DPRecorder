@@ -28,7 +28,7 @@ const SUPERSAMPLE = 4;
  * 引擎把等于这个颜色的方块当作「没上色」（走原生材质，省掉一张颜色平面），所以
  * 谱面里不必写它，界面上的默认色也用这一个。
  */
-export const NATIVE_NOISE_COLOR = '#e61a1a';
+export const NATIVE_NOISE_COLOR = '#E61A1A';
 
 /** 默认字体：仓库根 `assets/font.ttf`，界面里注册成 `Phigros`，与引擎画面同一份。 */
 export const NATIVE_FONT = 'Phigros';
@@ -46,6 +46,7 @@ export function defaultTextNoise(): TextNoiseEffect {
     lineHeight: 1.25,
     letterSpacing: 0,
     rotation: 0,
+    enable: true,
     invert: false,
     subtract: false,
     blend: false,
@@ -54,17 +55,17 @@ export function defaultTextNoise(): TextNoiseEffect {
 }
 
 /**
- * 把界面上的颜色收成 `#rrggbb`：只认 3 / 6 位十六进制，认不出来就退回原生红。
+ * 把界面上的颜色收成大写 `#RRGGBB`：只认 3 / 6 位十六进制，认不出来就退回原生红。
  *
  * 引擎那边同一种写法也收（见 `RawBlockArea::color`），这里先收一道，免得手填的值
  * 让谱面解析在别人的播放器里报错。
  */
 export function normalizeNoiseColor(color: string): string {
   const digits = color.trim().replace(/^#/, '');
-  if (/^[0-9a-f]{6}$/i.test(digits)) return `#${digits.toLowerCase()}`;
+  if (/^[0-9a-f]{6}$/i.test(digits)) return `#${digits.toUpperCase()}`;
   if (/^[0-9a-f]{3}$/i.test(digits)) {
     return `#${digits
-      .toLowerCase()
+      .toUpperCase()
       .split('')
       .map((it) => it + it)
       .join('')}`;
@@ -263,6 +264,8 @@ export interface BlockAreaEntry {
   disableTime: number;
   disappearTime: number;
   isSubtract: boolean;
+  /** 只有这一段没激活时才写 `false`：引擎缺这个字段就按激活处理，写 `true` 白占体积。 */
+  enable?: boolean;
   /** 只有不是原生红时才写：引擎见到等于原生红的颜色也会退回无色材质，写上白占体积。 */
   color?: string;
   /** 这条特效轨自己的材质，只写与引擎默认值不同的键（见 `materialDelta`）。 */
@@ -299,6 +302,7 @@ function toEntry(
   color?: string,
   material?: Partial<NoiseMaterial>,
   subtract = false,
+  enable = true,
 ): BlockAreaEntry {
   return {
     bottomLeftPercentage: { x: round6(rect.x0 / cols), y: round6(1 - rect.y1 / rows) },
@@ -308,6 +312,7 @@ function toEntry(
     disableTime: end,
     disappearTime: end,
     isSubtract: subtract,
+    ...(enable ? {} : { enable: false }),
     ...(color ? { color } : {}),
     ...(material ? { material } : {}),
   };
@@ -347,7 +352,10 @@ export function clipBlockAreas(lane: DraftLane, clip: DraftClip, aspect = NOISE_
   const material = effect.blend ? undefined : materialDelta(effect.material ?? fallback ?? DEFAULT_NOISE_MATERIAL);
   // 「反相」只把每块标成减算（`isSubtract`），几何不变；和「反转」互不影响，可以同时开着
   const subtract = effect.subtract;
-  return noiseRects(effect, aspect).map((rect) => toEntry(rect, grid.cols, grid.rows, start, end, tint, material, subtract));
+  // 「激活」关掉的那一段照样写进谱面（`enable: false`），引擎读到就整段跳过；
+  // 这样时间轴上与谱面里的条目一一对应，回头再打开也不用重新铺一遍
+  const enable = effect.enable !== false;
+  return noiseRects(effect, aspect).map((rect) => toEntry(rect, grid.cols, grid.rows, start, end, tint, material, subtract, enable));
 }
 
 /**

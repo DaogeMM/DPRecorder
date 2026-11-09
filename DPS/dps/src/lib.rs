@@ -1,4 +1,5 @@
 pub mod bin;
+pub mod chart_animation;
 pub mod config;
 pub mod core;
 pub mod dir;

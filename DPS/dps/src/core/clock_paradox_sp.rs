@@ -15,7 +15,9 @@ use crate::core::{appendant, Resource};
 
 /// 四次出现的默认 `(亮起, 开始淡出)`，单位秒（`Resource::time`）。
 ///
-/// 这四对时刻可以在配置里改（`clock_paradox_sp_flash{1..4}_on/_fade`）。
+/// 这四对时刻可以在配置里改（`clock_paradox_sp_flash{1..4}_on/_fade`）；这里是
+/// `config.rs` 里那几处默认值的对照，测试直接拿它对表。
+#[cfg_attr(not(test), allow(dead_code))]
 const FLASH_DEFAULTS: [(f64, f64); 4] = [
     (108.020, 108.453),
     (109.720, 110.170),

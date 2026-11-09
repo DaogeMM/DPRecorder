@@ -4,7 +4,9 @@
 dps::tl_file!("main" mtl);
 
 mod chart_config;
+mod color_hex;
 mod common;
+mod debugger;
 mod dpe;
 mod drafts;
 mod ffmpeg_download;
@@ -247,9 +249,33 @@ fn copy_dir_if_absent(from: &Path, to: &Path) {
     }
 }
 
+/// 把整个进程的任务栏标识钉成同一个 `AppUserModelID`。
+///
+/// 主窗口、编辑器窗口、调试窗口是同一个进程里的三个窗口，任务栏开着「合并按钮」时
+/// 它们要归到同一枚图标下面。不显式设置的话，后建的窗口偶尔会被当成另一个程序的窗口
+/// 单独占一格；设成同一个 ID 就没有这个问题。
+#[cfg(target_os = "windows")]
+fn set_taskbar_app_id() {
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
+    }
+
+    let app_id: Vec<u16> = "DaogeMM.DPRecorder\0".encode_utf16().collect();
+    // SAFETY: 传进去的是一段以 0 结尾的 UTF-16 缓冲，调用期间一直有效；
+    // 返回值只是 HRESULT，失败（比如系统太老）也不影响程序继续跑。
+    unsafe {
+        SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_taskbar_app_id() {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() -> Result<()> {
     common::init_console();
+    set_taskbar_app_id();
 
     // 文案只有简体中文：不让 `sys_locale` 挑（英文系统上会挑到 en-US，提示就成英文了）。
     // 放在最前面 —— 下面任何 `mtl!` / `tl!` 都比这里晚。
@@ -361,6 +387,14 @@ pub fn run() -> Result<()> {
             malody_convert::dpe_malody_probe,
             malody_convert::dpe_malody_convert,
             malody_convert::get_dpe_malody_dir_path,
+            debugger::open_debug_window,
+            debugger::debug_context,
+            debugger::debug_chart_files,
+            debugger::debug_appendant_file,
+            debugger::default_skin_pack,
+            render::chart_animation_defaults,
+            render::save_chart_animation,
+            render::debug_preview_config,
                 get_app_dir,
                 get_respack_dir_path,
                 get_appendant_dir_path,
@@ -397,9 +431,11 @@ pub fn run() -> Result<()> {
                 merge::dpe_merge_charts,
             ])
             .on_window_event(|window, event| match event {
-                // 关主窗口 = 退出整个程序；编辑窗口是独立窗口，关掉它只关掉它自己。
+                // 关主窗口 = 退出整个程序；编辑窗口与调试窗口是独立窗口，关掉它们只关掉自己。
                 WindowEvent::CloseRequested { .. } => {
-                    if window.label() != EDITOR_WINDOW_LABEL {
+                    if window.label() != EDITOR_WINDOW_LABEL
+                        && window.label() != debugger::DEBUG_WINDOW_LABEL
+                    {
                         exit_program(0);
                     }
                 }
@@ -1124,7 +1160,7 @@ async fn dpe_preview(path: String, config: render::RenderConfig) -> Result<(), I
             .arg("--standalone");
         cmd.arg("--config").arg(&config_path);
         // 与 DPR 自己的预览同一条设置：全屏谱面预览开着就全屏起窗
-        if common::read_config().map(|it| it.preview_fullscreen).unwrap_or(true) {
+        if common::read_config().map(|it| it.preview_fullscreen).unwrap_or(false) {
             cmd.arg("--fullscreen");
         }
         cmd.stdin(Stdio::null())
@@ -1733,7 +1769,7 @@ async fn open_editor_window(
             return Ok(());
         }
 
-        tauri::WebviewWindowBuilder::new(
+        let window = tauri::WebviewWindowBuilder::new(
             &app,
             EDITOR_WINDOW_LABEL,
             tauri::WebviewUrl::App("index.html?editor=1".into()),
@@ -1745,6 +1781,11 @@ async fn open_editor_window(
         .inner_size(1600.0, 1000.0)
         .min_inner_size(1100.0, 700.0)
         .build()?;
+
+        // 后建的窗口不一定拿到前台激活，显式抬到前面。
+        window.unminimize()?;
+        window.show()?;
+        window.set_focus()?;
 
         info!("[编辑窗口] 打开编辑窗口：草稿 {id}");
         Ok(())

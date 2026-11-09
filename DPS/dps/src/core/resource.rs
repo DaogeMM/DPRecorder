@@ -1,14 +1,16 @@
 use super::{MSRenderTarget, Matrix, Point, NOTE_WIDTH_RATIO_BASE};
 use crate::{
     config::Config,
-    core::{tween::Tweenable, HitSound},
+    core::tween::Tweenable,
     ext::{create_audio_manger, nalgebra_to_glm, tex_from_rgba, SafeTexture},
     fs::FileSystem,
-    health::Health,
     info::ChartInfo,
     particle::{AtlasConfig, ColorCurve, Curve, Emitter, EmitterConfig, Interpolation, ParticleShape},
     ui::TextPainter,
 };
+// 只有 `play` 构建里才有 `health` 字段（见下面的 `Resource`）。
+#[cfg(feature = "play")]
+use crate::health::Health;
 use anyhow::{bail, Context, Result};
 use macroquad::prelude::*;
 use miniquad::{
@@ -300,17 +302,49 @@ pub struct ResourcePack {
     pub noise: Option<NoiseSkin>,
 }
 
+/// 皮肤包对应的文件系统：`None` 是内置那份（`respack/`），`Some` 是用户 / 演出指定的包。
+///
+/// 桌面端按磁盘路径读（zip 或目录）；浏览器里没有磁盘，所以把路径当成**内存文件表的目录名**
+/// 用 —— DPDebugger 的预览会把包摊进 `__dprw_files`，键名就是 `<目录名>/<包内路径>`
+/// （`respack/appendant.retri/info.yml` 这种），引擎只认这个名字，认不出就退回内置皮肤。
+fn pack_fs<T: AsRef<Path>>(path: Option<T>) -> Result<Box<dyn FileSystem + Send + Sync + 'static>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // 内存文件表按「前缀原样拼路径」查（`WasmFileSystem::get` 只是字符串相接），
+        // 所以这里得自己补上分隔符，否则查到的会是 `respackinfo.yml` 这种键。
+        let name = match path {
+            Some(path) => path.as_ref().to_string_lossy().replace('\\', "/"),
+            None => default_skin_dir(),
+        };
+        crate::fs::fs_from_assets(format!("{}/", name.trim_end_matches('/')))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(path) = path {
+            crate::fs::fs_from_file(path.as_ref())
+        } else {
+            crate::fs::fs_from_assets(format!("respack{}", std::path::MAIN_SEPARATOR))
+        }
+    }
+}
+
+/// 网页版没指定皮肤时用哪一份：内存表里摊了官方皮肤包（`appendant.official.zip`）就用它，
+/// 没摊就退回编进 `assets` 的内置皮肤。
+///
+/// 官方包在桌面端本来就是默认皮肤（`common::default_respack_path`），网页版读不到 exe 旁边
+/// 的 `appendant/`，只能靠预览窗口把包摊成 `respack/<包名>/…`，所以这里按内存表探一下。
+#[cfg(target_arch = "wasm32")]
+fn default_skin_dir() -> String {
+    let official = format!("respack/{}/", crate::core::appendant::OFFICIAL);
+    if crate::fs::memory_file(&format!("{official}info.yml")).is_some() {
+        return official;
+    }
+    "respack/".to_owned()
+}
+
 impl ResourcePack {
     pub async fn from_path<T: AsRef<Path>>(path: Option<T>) -> Result<Self> {
-        Self::load(
-            if let Some(path) = path {
-                crate::fs::fs_from_file(path.as_ref())?
-            } else {
-                crate::fs::fs_from_assets(format!("respack{}", std::path::MAIN_SEPARATOR))?
-            }
-            .deref_mut(),
-        )
-        .await
+        Self::load(pack_fs(path)?.deref_mut()).await
     }
 
     pub async fn load(fs: &mut dyn FileSystem) -> Result<Self> {

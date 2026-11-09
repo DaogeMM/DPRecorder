@@ -704,10 +704,10 @@ impl Uml {
         }
     }
 
-    fn push(&self, ui: &mut Ui, layer: StackLayer) {
+    fn push(&self, _ui: &mut Ui, _layer: StackLayer) {
         
     }
-    fn pop(&self, ui: &mut Ui) {
+    fn pop(&self, _ui: &mut Ui) {
         
     }
 

@@ -36,7 +36,7 @@ use lyon::{
         StrokeVertexConstructor, VertexBuffers,
     },
     math as lm,
-    path::{builder::BorderRadii, LineCap, Path, PathEvent, Winding},
+    path::{builder::BorderRadii, Path, PathEvent, Winding},
 };
 use macroquad::prelude::*;
 use miniquad::PassAction;

@@ -364,7 +364,7 @@ impl FileSystem for ExternalFileSystem {
     async fn load_file(&mut self, path: &str) -> Result<Vec<u8>> {
         #[cfg(target_arch = "wasm32")]
         {
-            unimplemented!("cannot use external file system on wasm32")
+            unimplemented!("cannot use external file system on wasm32: {path}")
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -878,20 +878,29 @@ pub async fn load_info(fs: &mut dyn FileSystem) -> Result<ChartInfo> {
         info
     };
     
-    if !info.difficulty.is_empty() {
-        let raw_diff_text = &info.difficulty;
-        let mut parts = raw_diff_text.split_whitespace();
-        if let (Some(diff_tag), Some(lv_segment)) = (parts.next(), parts.next()) {
-            if let Some(lv_num_str) = lv_segment.strip_prefix("Lv.") {
-                if let Ok(lv_val) = lv_num_str.parse::<f32>() {
-                    info.diff = diff_tag.to_string();
-                    info.lvl = lv_val;
-                }
+    split_difficulty(&mut info);
+
+    Ok(info)
+}
+
+/// 把整串难度文本拆成档位与定数：`AT Lv.18.0` → `diff = AT`、`lvl = 18.0`。
+///
+/// 定数不一定是个数字（例如 `SP Lv.?`），解析不出来时只取档位、`lvl` 留原值 ——
+/// 不然整段都跳过，`diff` 会停在默认的 `UK`，界面上的「难度标识」就跟着错。
+fn split_difficulty(info: &mut ChartInfo) {
+    if info.difficulty.is_empty() {
+        return;
+    }
+    let raw_diff_text = &info.difficulty;
+    let mut parts = raw_diff_text.split_whitespace();
+    if let (Some(diff_tag), Some(lv_segment)) = (parts.next(), parts.next()) {
+        if let Some(lv_num_str) = lv_segment.strip_prefix("Lv.") {
+            info.diff = diff_tag.to_string();
+            if let Ok(lv_val) = lv_num_str.parse::<f32>() {
+                info.lvl = lv_val;
             }
         }
     }
-
-    Ok(info)
 }
 
 pub fn fs_from_file(path: &Path) -> Result<Box<dyn FileSystem + Send + Sync + 'static>> {
@@ -955,6 +964,16 @@ mod tests {
         assert_eq!(info.difficulty, "AT Lv.18.0");
         assert_eq!(info.level, "AT Lv.18.0");
         assert_eq!(info.name, "テスト");
+    }
+
+    /// 定数写成 `?` 的难度文本（`SP Lv.?`）也要取到档位，只把定数留成原值。
+    #[test]
+    fn difficulty_text_with_unknown_rating_keeps_tag() {
+        let mut info = ChartInfo::default();
+        info.difficulty = "SP Lv.?".to_string();
+        split_difficulty(&mut info);
+        assert_eq!(info.diff, "SP");
+        assert_eq!(info.lvl, ChartInfo::default().lvl);
     }
 
     /// `difficulty` 写成字符串时同样当定数；没有 `level` 就保留原串。

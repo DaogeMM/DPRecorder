@@ -244,6 +244,9 @@ pub fn write_generated(
             table.insert(key.clone(), value);
         }
     }
+    // 与预设、app 配置同一套浮点口径：`0.1` 不要写成 `0.10000000149011612`
+    let mut table = toml::Value::Table(table);
+    crate::common::round_floats(&mut table);
     writer.start_file(CONFIG_FILE, options)?;
     std::io::Write::write_all(&mut writer, toml::to_string(&table)?.as_bytes())?;
 

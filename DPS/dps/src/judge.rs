@@ -485,6 +485,60 @@ impl Judge {
         self.last_time = time;
     }
 
+    /// 播放头跳到 `time` 之后调用：把判定进度补到 `time`（AUTOPLAY 用）。
+    ///
+    /// 编辑器预览 / 网页版预览拖进度条时，判定是从落点重新开始的：不补的话连击数从零重新涨、
+    /// 分数一直是零。这里把 `time` 之前的音符全部记成已判，分数 / 连击 / 准确率与「从头播到
+    /// 同一位置」一致。只补判定，不出打击粒子、不放打击音效。
+    pub fn catch_up(&mut self, res: &mut Resource, chart: &mut Chart, time: f64) {
+        let t = time - res.config.judge_offset;
+        let judge_type = if res.config.all_bad {
+            Judgement::Bad
+        } else if res.config.all_good {
+            Judgement::Good
+        } else {
+            Judgement::Perfect
+        };
+        let mut judged = Vec::new();
+        for (line_id, (line, (idx, st))) in chart.lines.iter_mut().zip(self.notes.iter_mut()).enumerate() {
+            for id in idx[*st..].iter().map(|it| *it as usize) {
+                let note = &mut line.notes[id];
+                if note.time > t {
+                    break;
+                }
+                if !matches!(note.judge, JudgeStatus::NotJudged) {
+                    continue;
+                }
+                match note.kind {
+                    // 长条跨过 `time`：按「正在按住」记，剩下的等它自己结束
+                    NoteKind::Hold { end_time, .. } if t < end_time => {
+                        note.judge = JudgeStatus::Hold(true, note.time, 0., true, f64::INFINITY);
+                        // 长条的按下动作记成 `Err(..)`，不计入分数（与 AUTOPLAY 一致）
+                        self.judgements.borrow_mut().push((t, line_id as _, id as u32, Err(true)));
+                    }
+                    _ => {
+                        note.judge = JudgeStatus::Judged;
+                        judged.push((line_id, id));
+                        #[cfg(feature = "play")]
+                        if res.config.health_mode.is_some() {
+                            res.health.on_judge(judge_type);
+                        }
+                    }
+                }
+            }
+            while idx
+                .get(*st)
+                .map_or(false, |id| matches!(line.notes[*id as usize].judge, JudgeStatus::Judged))
+            {
+                *st += 1;
+            }
+        }
+        for (line_id, id) in judged {
+            let note_time = chart.lines[line_id].notes[id].time;
+            self.commit(note_time, judge_type, line_id as _, id as u32, 0.);
+        }
+    }
+
     pub fn commit(&mut self, t: f64, what: Judgement, line_id: u32, note_id: u32, diff: f64) {
         self.judgements.borrow_mut().push((t, line_id, note_id, Ok(what)));
         self.inner.commit(what, diff);

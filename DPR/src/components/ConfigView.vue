@@ -27,6 +27,7 @@ import * as dialog from '@tauri-apps/plugin-dialog';
 import { VForm } from 'vuetify/components';
 
 import { RULES, toast, anyFilter, toastError } from '../common';
+import { secondsFromText } from '../timecode';
 import { isOptionalAppendant } from '../appendant';
 import { DEFAULT_RENDER_CONFIG, type Preset, type RenderConfig } from '../model';
 import { useRenderConfig } from '../config/useRenderConfig';
@@ -41,6 +42,22 @@ import PhiSection from './PhiSection.vue';
 import PhiGroup from './PhiGroup.vue';
 import PhiSubMenu from './PhiSubMenu.vue';
 import WaterScreenSettings from './WaterScreenSettings.vue';
+
+/**
+ * 以秒为单位的时间输入框：既认秒数（`113.12`），也认从播放器抄来的时间码（`1:53.12`）。
+ * 填完（回车或点到别处）换成秒数 —— 配置里存的就是秒，落盘也一样。
+ * 认不出来原样留着，让表单校验去提示。
+ */
+function normalizeSecondsText(text: string): string {
+  const seconds = secondsFromText(text);
+  return seconds == null ? text : String(seconds);
+}
+
+/** 回车即提交：这些框的换算挂在 `change` 上，先让输入框失焦。 */
+function blurOnEnter(event: Event) {
+  const el = event.target as HTMLInputElement | null;
+  el?.blur();
+}
 
 /** 「判定线调试」文本可显示的项与顺序（对应 dps 侧 `core::line` 里拼文本的那段）。 */
 const LINE_DEBUG_FIELDS = ['id', 'parent', 'height', 'ulp', 'z', 'aui', 'anchor', 'kind', 'rot'] as const;
@@ -819,14 +836,14 @@ defineExpose({
           <!-- 这一格是最大粒子数；「偏移」「总分」在谱面信息里（见 RenderView 的 chart-info 插槽）。 -->
           <CfgField :label="t('max-particles')"><v-combobox density="compact" hide-details="auto" :disabled="!particle && !particleSquare" :rules="[RULES.notEmpty]" :title="t('max-particles-tip')" :items="maxParticlesTextList" v-model="maxParticlesText"></v-combobox></CfgField>
           <CfgField :label="t('info.previewStart')" :tip="t('info.previewStart-tip')">
-            <v-text-field type="number" density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" v-model="previewStart"></v-text-field>
+            <v-text-field type="text" density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" v-model="previewStart" @change="previewStart = normalizeSecondsText(previewStart)" @keydown.enter="blurOnEnter"></v-text-field>
           </CfgField>
           <CfgField :label="t('info.previewEnd')" :tip="t('info.previewEnd-tip')">
-            <v-text-field type="number" density="compact" hide-details="auto" v-model="previewEnd"></v-text-field>
+            <v-text-field type="text" density="compact" hide-details="auto" v-model="previewEnd" @change="previewEnd = normalizeSecondsText(previewEnd)" @keydown.enter="blurOnEnter"></v-text-field>
           </CfgField>
-          <CfgField :label="t('ending-length')" :tip="t('ending-length-tip')"><v-text-field density="compact" hide-details="auto" v-model="endingLength" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
-          <CfgField :label="t('render-start-time')" :tip="t('render-start-time-tip')"><v-text-field density="compact" hide-details="auto" v-model="playStartTime" type="number" :rules="[RULES.positiveOrZero]"></v-text-field></CfgField>
-          <CfgField :label="t('render-end-time')" :tip="t('render-end-time-tip')"><v-text-field density="compact" hide-details="auto" v-model="playEndTime" type="number" :rules="[RULES.positiveOrNull]"></v-text-field></CfgField>
+          <CfgField :label="t('ending-length')" :tip="t('ending-length-tip')"><v-text-field density="compact" hide-details="auto" v-model="endingLength" type="text" :rules="[RULES.notEmpty]" @change="endingLength = normalizeSecondsText(endingLength)" @keydown.enter="blurOnEnter"></v-text-field></CfgField>
+          <CfgField :label="t('render-start-time')" :tip="t('render-start-time-tip')"><v-text-field density="compact" hide-details="auto" v-model="playStartTime" type="text" :rules="[RULES.positiveOrZero]" @change="playStartTime = normalizeSecondsText(playStartTime)" @keydown.enter="blurOnEnter"></v-text-field></CfgField>
+          <CfgField :label="t('render-end-time')" :tip="t('render-end-time-tip')"><v-text-field density="compact" hide-details="auto" v-model="playEndTime" type="text" :rules="[RULES.positiveOrNull]" @change="playEndTime = normalizeSecondsText(playEndTime)" @keydown.enter="blurOnEnter"></v-text-field></CfgField>
         </div>
         <!-- ===== 文件名格式 + Tip（放在「参数」的最后）=====
              这两项都是整行宽的**长文本框**，**单独放一个「只有 full 条目」的网格**：
@@ -1226,10 +1243,13 @@ defineExpose({
         </div>
       </PhiSection>
 
-      <!-- 「谱面 · 调试」：整块只在设置页勾了「显示隐藏选项」时出现（`phi.debug.enabled`，
-           入口由 Ctrl+Shift+点击左栏「设置」露出）。里面每个调试项各占一行三级菜单
+      <!-- 「谱面 · 调试」：暂不显示 —— 这些演出参数已经在 DPDebugger 里调（参数栏 + 写回
+           `assets/chart-animation.toml`），留着两个入口容易调串。要恢复就把下面的
+           `v-if="false"` 改回 `v-if="debugEnabled"`。
+           原意：整块只在设置页勾了「显示隐藏选项」时出现（`phi.debug.enabled`，入口由
+           Ctrl+Shift+点击左栏「设置」露出）。里面每个调试项各占一行三级菜单
            （参数收进齿轮弹窗），以后再加别的调试就再摆一行。 -->
-      <PhiSection v-if="debugEnabled" id="sec-chart-debug" :title="t('title.xuejiang-sp-debug')">
+      <PhiSection v-if="false" id="sec-chart-debug" :title="t('title.xuejiang-sp-debug')">
         <div class="cfg-grid">
           <PhiSubMenu id="sec3-clock-paradox-sp" :label="t('clock-paradox-sp-group')" :tip="t('clock-paradox-sp-group-tip')" v-model="clockParadoxSpDebug" no-toggle>
             <div class="cfg-grid">
