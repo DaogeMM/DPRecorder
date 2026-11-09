@@ -1,6 +1,6 @@
 //! 谱面演出动画的默认值。
 //!
-//! 七套特殊演出（雪降 / 报应 / 痉挛 / QZKAGO / Clock Paradox / もぺもぺ / Rr）的可调参数
+//! 八套特殊演出（雪降 / 报应 / 痉挛 / QZKAGO / Clock Paradox / もぺもぺ / Message / Rr）的可调参数
 //! 默认值放在 `assets/chart-animation.toml`，运行期读一次、之后一直用缓存的那份 ——
 //! 所以调默认值只改这个文件、不用重新编译（改完要重启程序）。
 //!
@@ -35,6 +35,7 @@ pub struct ChartAnimation {
     pub qzkago: Qzkago,
     pub clock_paradox: ClockParadox,
     pub mopemope: Mopemope,
+    pub message: Message,
     pub rr: Rr,
 }
 
@@ -192,11 +193,113 @@ pub struct Mopemope {
     pub color_b: [f32; 3],
 }
 
+/// 「Message SP」：七趟整屏后处理 + 方块粒子
+///
+/// 每项都只是「初始值 / 固定模式下的取值」：时间轴模式打开时，随时间变化的那些量由
+/// `core::message_sp` 里的关键帧决定，这里只提供不随时间的部分（以及四个整体倍率）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Message {
+    /// 随时间变化的量走参考时间轴（关掉就全部用本结构的固定值）
+    pub timeline: bool,
+    /// 整体平移的秒数（正值 = 演出比音乐晚出现）
+    pub time_offset: f64,
+    /// 背景图藏掉的时刻（0 表示不藏）
+    pub bg_hide_time: f64,
+    pub pass_kaleido: bool,
+    pub pass_vignette: bool,
+    pub pass_glitch: bool,
+    pub pass_band: bool,
+    pub pass_lens: bool,
+    pub pass_esc: bool,
+    pub pass_bloom: bool,
+    pub pass_particles: bool,
+    /// 暗角：中心到边缘的过渡宽度
+    pub vignette_smoothness: f32,
+    /// 暗角：开始压暗的半径（负值 = 整屏压黑）
+    pub vignette_radius: f32,
+    /// 暗角：压暗强度
+    pub vignette_darkness: f32,
+    /// 暗角：噪点亮度
+    pub vignette_noise: f32,
+    /// 暗角：细横线亮度
+    pub vignette_line: f32,
+    /// 暗角：时间轴模式的整体倍率
+    pub vignette_strength: f32,
+    /// 镜头畸变：缩放半径（越大越弱）
+    pub lens_size: f32,
+    /// 镜头畸变：收敛量（负值向内缩）
+    pub lens_convergence: f32,
+    /// 镜头畸变：边缘羽化宽度
+    pub lens_edge: f32,
+    /// 镜头畸变：横向宽高比
+    pub lens_aspect: f32,
+    /// 故障：位移幅度
+    pub glitch_range: f32,
+    /// 故障：时间轴模式的整体倍率
+    pub glitch_strength: f32,
+    /// 光带：带宽（1 = 整屏反相）
+    pub band_width: f32,
+    /// 光带：带边羽化宽度
+    pub band_smoothness: f32,
+    /// 光带：亮度
+    pub band_brightness: f32,
+    /// 光带：true 时带是竖的
+    pub band_vertical: bool,
+    /// 万花筒：混合比例
+    pub kaleido_mix: f32,
+    /// 万花筒：时间轴模式的整体倍率
+    pub kaleido_strength: f32,
+    /// 万花筒：彩色贴图的对比度
+    pub kaleido_contrast: f32,
+    /// 万花筒：彩色贴图的饱和度
+    pub kaleido_saturation: f32,
+    /// 万花筒：色相偏移（0~1 是一整圈）
+    pub kaleido_hue: f32,
+    /// 万花筒：中心蒙板半径
+    pub kaleido_center: f32,
+    /// 万花筒：中心蒙板羽化宽度
+    pub kaleido_smoothness: f32,
+    /// 曝光：亮度
+    pub exposure: f32,
+    /// 曝光：饱和度
+    pub saturation: f32,
+    /// 曝光：对比度
+    pub contrast: f32,
+    /// 泛光：亮度（0 = 不跑这一趟）
+    pub bloom_brightness: f32,
+    /// 泛光：时间轴模式的整体倍率
+    pub bloom_strength: f32,
+    /// 泛光：合成强度
+    pub bloom_intensity: f32,
+    /// 泛光：亮部提取阈值
+    pub bloom_threshold: f32,
+    /// 泛光：采样半径
+    pub bloom_radius: f32,
+    /// 方块粒子：出场时刻（秒）
+    pub particle_start: f64,
+    /// 方块粒子：每个方块的存活秒数
+    pub particle_lifetime: f64,
+    /// 方块粒子：每层同时存在的个数
+    pub particle_count: u32,
+    /// 方块粒子：边长（按画面高度的一半计）
+    pub particle_size: f32,
+    /// 方块粒子：上飘速度（同上，每秒）
+    pub particle_speed: f32,
+    /// 方块粒子：这个高度以上的部分淡出（0 = 底边、1 = 顶边）
+    pub particle_hide_y: f32,
+    /// 方块粒子：淡出边界的羽化宽度
+    pub particle_hide_smoothness: f32,
+    /// 方块粒子：是否加一圈低透明光晕
+    pub particle_glow: bool,
+    /// 方块粒子：整体透明度
+    pub particle_opacity: f32,
+}
+
 /// 「Rr」：打击特效
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Rr {
-    /// 颜色覆盖（`#RRGGBB`），留空则用全局 `hitcolor`、再没有用资源包 AP 色
+pub struct Rr {    /// 颜色覆盖（`#RRGGBB`），留空则用全局 `hitcolor`、再没有用资源包 AP 色
     pub hit_fx_color: String,
     /// 大小倍率（乘在资源包的 `hitFxScale` 上）
     pub hit_fx_scale: f32,
@@ -359,6 +462,10 @@ mod tests {
         assert_eq!(v.clock_paradox.flash4_fade, 145.077);
         assert_eq!(color_hex::to_hex(&v.mopemope.color_a), "#694C24");
         assert_eq!(color_hex::to_hex(&v.mopemope.color_b), "#573B0F");
+        assert!(v.message.timeline);
+        assert_eq!(v.message.bg_hide_time, 109.0);
+        assert_eq!(v.message.particle_start, 114.538);
+        assert_eq!(v.message.particle_count, 90);
         assert_eq!(v.rr.hit_fx_color, "#FBA373");
     }
 

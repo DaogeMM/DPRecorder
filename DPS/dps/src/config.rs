@@ -361,6 +361,108 @@ pub struct Config {
     /// 「もぺもぺSP」演出：第二种红的乘算系数 rgb（0~1），用在三段长镜头上，
     /// 比 A 更暗更纯（绿蓝压得更狠），默认 `#573B0F`
     pub mopemope_sp_color_b: [f32; 3],
+    /// 「Message SP」演出：七趟整屏后处理（万花筒 → 暗角 → 故障 → 光带 → 镜头畸变 → 曝光 → 泛光）
+    /// 加一层方块粒子。由输入谱面文件名强制开启，不暴露成配置项。
+    ///
+    /// 贴图由 `appendant/appendant.message.zip` 提供（不随程序分发）。缺包时退化：万花筒与粒子不画，
+    /// 故障那一趟改用程序内生成的噪点，其余几趟不受影响。
+    pub message_sp_mode: bool,
+    /// 「Message SP」演出：随时间变化的量走参考时间轴。
+    /// 关掉就全部改用下面各项的固定值，方便单趟调参。
+    pub message_timeline: bool,
+    /// 「Message SP」演出：整体平移的秒数（正值 = 演出比音乐晚出现）
+    pub message_time_offset: f64,
+    /// 「Message SP」演出：这个时刻之后连背景图一起藏掉（0 表示不藏，整段一直画背景）
+    pub message_bg_hide_time: f64,
+    /// 「Message SP」演出：各趟后处理的总开关，关掉就整趟不跑（省一次全屏 pass，也便于逐趟对照）
+    pub message_pass_kaleido: bool,
+    pub message_pass_vignette: bool,
+    pub message_pass_glitch: bool,
+    pub message_pass_band: bool,
+    pub message_pass_lens: bool,
+    pub message_pass_esc: bool,
+    pub message_pass_bloom: bool,
+    pub message_pass_particles: bool,
+    /// 「Message SP」暗角：中心到边缘的过渡宽度
+    pub message_vignette_smoothness: f32,
+    /// 「Message SP」暗角：开始压暗的半径（负值 = 整屏压黑，`darkness` 大于 1 时反相）
+    pub message_vignette_radius: f32,
+    /// 「Message SP」暗角：压暗强度，同时乘在时间轴求出的值上（调 0 可关掉暗角本身）
+    pub message_vignette_darkness: f32,
+    /// 「Message SP」暗角：叠在画面上的噪点亮度
+    pub message_vignette_noise: f32,
+    /// 「Message SP」暗角：那层细横线的亮度
+    pub message_vignette_line: f32,
+    /// 「Message SP」暗角：时间轴模式的整体倍率
+    pub message_vignette_strength: f32,
+    /// 「Message SP」镜头畸变：缩放半径（数值越大畸变越弱，参考值 125）
+    pub message_lens_size: f32,
+    /// 「Message SP」镜头畸变：收敛量（负值向内缩，参考值 -8 ~ -16）
+    pub message_lens_convergence: f32,
+    /// 「Message SP」镜头畸变：边缘羽化的宽度
+    pub message_lens_edge: f32,
+    /// 「Message SP」镜头畸变：横向宽高比
+    pub message_lens_aspect: f32,
+    /// 「Message SP」故障：抽样位移的幅度
+    pub message_glitch_range: f32,
+    /// 「Message SP」故障：时间轴模式的整体倍率
+    pub message_glitch_strength: f32,
+    /// 「Message SP」光带：带宽（1 = 整屏都落在带内，于是整屏反相）
+    pub message_band_width: f32,
+    /// 「Message SP」光带：带边羽化宽度
+    pub message_band_smoothness: f32,
+    /// 「Message SP」光带：亮度
+    pub message_band_brightness: f32,
+    /// 「Message SP」光带：true 时带是竖着的（参考里是横带，即 false）
+    pub message_band_vertical: bool,
+    /// 「Message SP」万花筒：混合比例（0 = 全用原画面）
+    pub message_kaleido_mix: f32,
+    /// 「Message SP」万花筒：时间轴模式的整体倍率
+    pub message_kaleido_strength: f32,
+    /// 「Message SP」万花筒：彩色贴图的对比度
+    pub message_kaleido_contrast: f32,
+    /// 「Message SP」万花筒：彩色贴图的饱和度
+    pub message_kaleido_saturation: f32,
+    /// 「Message SP」万花筒：色相偏移（0~1 是一整圈）
+    pub message_kaleido_hue: f32,
+    /// 「Message SP」万花筒：中心蒙板半径（中心保留原画面）
+    pub message_kaleido_center: f32,
+    /// 「Message SP」万花筒：中心蒙板的羽化宽度
+    pub message_kaleido_smoothness: f32,
+    /// 「Message SP」曝光：亮度倍率
+    pub message_exposure: f32,
+    /// 「Message SP」曝光：饱和度倍率（同时乘在时间轴求出的值上）
+    pub message_saturation: f32,
+    /// 「Message SP」曝光：对比度倍率
+    pub message_contrast: f32,
+    /// 「Message SP」泛光：亮度（0 = 不跑这一趟）
+    pub message_bloom_brightness: f32,
+    /// 「Message SP」泛光：时间轴模式的整体倍率
+    pub message_bloom_strength: f32,
+    /// 「Message SP」泛光：合成强度（大于 1 时亮部会更糊）
+    pub message_bloom_intensity: f32,
+    /// 「Message SP」泛光：亮部提取的阈值
+    pub message_bloom_threshold: f32,
+    /// 「Message SP」泛光：采样半径
+    pub message_bloom_radius: f32,
+    /// 「Message SP」方块粒子：出场时刻（秒）
+    pub message_particle_start: f64,
+    /// 「Message SP」方块粒子：每个方块的存活秒数
+    pub message_particle_lifetime: f64,
+    /// 「Message SP」方块粒子：每层同时存在的个数（上下各一层）
+    pub message_particle_count: u32,
+    /// 「Message SP」方块粒子：方块边长（按画面高度的一半计）
+    pub message_particle_size: f32,
+    /// 「Message SP」方块粒子：往上飘的速度（同上，按画面高度的一半每秒计）
+    pub message_particle_speed: f32,
+    /// 「Message SP」方块粒子：屏幕这个高度（0 = 底边、1 = 顶边，按画面上半点归一化后）以上的部分淡出
+    pub message_particle_hide_y: f32,
+    /// 「Message SP」方块粒子：上面那条淡出边界的羽化宽度
+    pub message_particle_hide_smoothness: f32,
+    /// 「Message SP」方块粒子：是否在方块外再画一层低透明光晕
+    pub message_particle_glow: bool,
+    /// 「Message SP」方块粒子：整体透明度
+    pub message_particle_opacity: f32,
     pub render_bg: bool,
     pub render_bg_dim: bool,
     /// 「纯色背景」：`Some(rgb)`（0~1）时不画谱面背景贴图，整屏直接铺这一个颜色；
@@ -697,7 +799,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        // 七套演出的可调参数取自 assets/chart-animation.toml，改默认值改那个文件即可
+        // 八套演出的可调参数取自 assets/chart-animation.toml，改默认值改那个文件即可
         let a = crate::chart_animation::defaults();
         Self {
             #[cfg(not(feature = "play"))]
@@ -866,6 +968,58 @@ impl Default for Config {
             mopemope_sp_mode: false,
             mopemope_sp_color_a: a.mopemope.color_a,
             mopemope_sp_color_b: a.mopemope.color_b,
+            message_sp_mode: false,
+            message_timeline: a.message.timeline,
+            message_time_offset: a.message.time_offset,
+            message_bg_hide_time: a.message.bg_hide_time,
+            message_pass_kaleido: a.message.pass_kaleido,
+            message_pass_vignette: a.message.pass_vignette,
+            message_pass_glitch: a.message.pass_glitch,
+            message_pass_band: a.message.pass_band,
+            message_pass_lens: a.message.pass_lens,
+            message_pass_esc: a.message.pass_esc,
+            message_pass_bloom: a.message.pass_bloom,
+            message_pass_particles: a.message.pass_particles,
+            message_vignette_smoothness: a.message.vignette_smoothness,
+            message_vignette_radius: a.message.vignette_radius,
+            message_vignette_darkness: a.message.vignette_darkness,
+            message_vignette_noise: a.message.vignette_noise,
+            message_vignette_line: a.message.vignette_line,
+            message_vignette_strength: a.message.vignette_strength,
+            message_lens_size: a.message.lens_size,
+            message_lens_convergence: a.message.lens_convergence,
+            message_lens_edge: a.message.lens_edge,
+            message_lens_aspect: a.message.lens_aspect,
+            message_glitch_range: a.message.glitch_range,
+            message_glitch_strength: a.message.glitch_strength,
+            message_band_width: a.message.band_width,
+            message_band_smoothness: a.message.band_smoothness,
+            message_band_brightness: a.message.band_brightness,
+            message_band_vertical: a.message.band_vertical,
+            message_kaleido_mix: a.message.kaleido_mix,
+            message_kaleido_strength: a.message.kaleido_strength,
+            message_kaleido_contrast: a.message.kaleido_contrast,
+            message_kaleido_saturation: a.message.kaleido_saturation,
+            message_kaleido_hue: a.message.kaleido_hue,
+            message_kaleido_center: a.message.kaleido_center,
+            message_kaleido_smoothness: a.message.kaleido_smoothness,
+            message_exposure: a.message.exposure,
+            message_saturation: a.message.saturation,
+            message_contrast: a.message.contrast,
+            message_bloom_brightness: a.message.bloom_brightness,
+            message_bloom_strength: a.message.bloom_strength,
+            message_bloom_intensity: a.message.bloom_intensity,
+            message_bloom_threshold: a.message.bloom_threshold,
+            message_bloom_radius: a.message.bloom_radius,
+            message_particle_start: a.message.particle_start,
+            message_particle_lifetime: a.message.particle_lifetime,
+            message_particle_count: a.message.particle_count,
+            message_particle_size: a.message.particle_size,
+            message_particle_speed: a.message.particle_speed,
+            message_particle_hide_y: a.message.particle_hide_y,
+            message_particle_hide_smoothness: a.message.particle_hide_smoothness,
+            message_particle_glow: a.message.particle_glow,
+            message_particle_opacity: a.message.particle_opacity,
             render_bg: true,
             render_bg_dim: true,
             solid_bg: None,

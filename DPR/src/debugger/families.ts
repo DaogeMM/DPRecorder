@@ -1,5 +1,5 @@
 /**
- * DPDebugger 右侧那七套演出动画的参数表（与 `assets/chart-animation.toml` 的七张表一一对应）。
+ * DPDebugger 右侧那八套演出动画的参数表（与 `assets/chart-animation.toml` 的八张表一一对应）。
  *
  * 这里只放「界面怎么摆、叫什么、写回 TOML 时键是什么」这些静态描述 —— 数值始终从
  * `RenderConfig` 取（初值由主窗口传进来，默认值由 `DEFAULT_RENDER_CONFIG` 提供）。
@@ -267,6 +267,114 @@ export const FAMILIES = {
         fields: [
           { key: 'mopemopeSpColorA', label: '闪屏颜色', hint: '区间首尾与频闪段', kind: 'color3' },
           { key: 'mopemopeSpColorB', label: '长镜头颜色', hint: '三段长镜头，更暗更纯', kind: 'color3' },
+        ],
+      },
+    ],
+  },
+
+  // ── Message SP：七趟整屏后处理 + 方块粒子 ──────────────────────────────────
+  message: {
+    title: 'Message SP',
+    table: 'message',
+    prefix: 'message',
+    // 这一族的变动全挤在 75 秒之后，108.9 秒正好是「拍暗 + 饱和清零」那一刻，
+    // 从这里往后拖能连着看到黑场、白场、万花筒三段。
+    start: 108.9,
+    groups: [
+      {
+        title: '总览',
+        fields: [
+          { key: 'messageTimeline', label: '时间轴', hint: '关掉就全部用下面的固定值', kind: 'bool' },
+          { key: 'messageTimeOffset', label: '整体平移', hint: '秒，正 = 演出更晚', kind: 'number', step: 0.01 },
+          { key: 'messageBgHideTime', label: '藏起背景', hint: '秒，0 = 不藏', kind: 'number', step: 0.01 },
+        ],
+      },
+      {
+        title: '各趟开关',
+        fields: [
+          { key: 'messagePassKaleido', label: '万花筒', kind: 'bool' },
+          { key: 'messagePassVignette', label: '暗角', kind: 'bool' },
+          { key: 'messagePassGlitch', label: '故障', kind: 'bool' },
+          { key: 'messagePassBand', label: '光带', kind: 'bool' },
+          { key: 'messagePassLens', label: '镜头畸变', kind: 'bool' },
+          { key: 'messagePassEsc', label: '曝光 / 饱和', kind: 'bool' },
+          { key: 'messagePassBloom', label: '泛光', kind: 'bool' },
+          { key: 'messagePassParticles', label: '方块粒子', kind: 'bool' },
+        ],
+      },
+      {
+        title: '暗角',
+        fields: [
+          { key: 'messageVignetteSmoothness', label: '过渡宽度', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageVignetteRadius', label: '压暗半径', hint: '负值 = 整屏压黑', kind: 'number', step: 0.01 },
+          { key: 'messageVignetteDarkness', label: '压暗强度', hint: '大于 1 会反相', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageVignetteNoise', label: '噪点亮度', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageVignetteLine', label: '横线亮度', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageVignetteStrength', label: '时间轴倍率', kind: 'number', min: 0, step: 0.01 },
+        ],
+      },
+      {
+        title: '镜头畸变',
+        fields: [
+          { key: 'messageLensSize', label: '缩放半径', hint: '越大畸变越弱', kind: 'number', min: 1, step: 1 },
+          { key: 'messageLensConvergence', label: '收敛量', hint: '负值向内缩', kind: 'number', step: 0.1 },
+          { key: 'messageLensEdge', label: '边缘羽化', kind: 'number', min: 0, step: 0.001 },
+          { key: 'messageLensAspect', label: '宽高比', kind: 'number', min: 0.01, step: 0.01 },
+        ],
+      },
+      {
+        title: '故障',
+        fields: [
+          { key: 'messageGlitchRange', label: '位移幅度', kind: 'number', min: 0, step: 0.001 },
+          { key: 'messageGlitchStrength', label: '时间轴倍率', kind: 'number', min: 0, step: 0.01 },
+        ],
+      },
+      {
+        title: '光带',
+        fields: [
+          { key: 'messageBandWidth', label: '带宽', hint: '1 = 整屏反相', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageBandSmoothness', label: '带边羽化', kind: 'number', min: 0, step: 0.001 },
+          { key: 'messageBandBrightness', label: '亮度', kind: 'number', step: 0.01 },
+          { key: 'messageBandVertical', label: '竖带', kind: 'bool' },
+        ],
+      },
+      {
+        title: '万花筒',
+        fields: [
+          { key: 'messageKaleidoMix', label: '混合比例', hint: '0 = 全用原画面', kind: 'number', min: 0, max: 1, step: 0.01 },
+          { key: 'messageKaleidoStrength', label: '时间轴倍率', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageKaleidoContrast', label: '贴图对比度', kind: 'number', step: 0.01 },
+          { key: 'messageKaleidoSaturation', label: '贴图饱和度', kind: 'number', min: 0, step: 0.1 },
+          { key: 'messageKaleidoHue', label: '色相偏移', hint: '0~1 是一整圈', kind: 'number', step: 0.01 },
+          { key: 'messageKaleidoCenter', label: '中心半径', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageKaleidoSmoothness', label: '中心羽化', kind: 'number', min: 0, step: 0.01 },
+        ],
+      },
+      {
+        title: '曝光 / 泛光',
+        fields: [
+          { key: 'messageExposure', label: '亮度', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageSaturation', label: '饱和度', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageContrast', label: '对比度', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageBloomBrightness', label: '泛光亮度', hint: '0 = 不跑这一趟', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageBloomStrength', label: '泛光倍率', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageBloomIntensity', label: '合成强度', hint: '大于 1 更糊', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageBloomThreshold', label: '亮部阈值', kind: 'number', min: 0, max: 1, step: 0.001 },
+          { key: 'messageBloomRadius', label: '采样半径', kind: 'number', min: 0, step: 0.1 },
+        ],
+      },
+      {
+        title: '方块粒子',
+        fields: [
+          { key: 'messageParticleStart', label: '出场时刻', hint: '秒', kind: 'number', step: 0.01 },
+          { key: 'messageParticleLifetime', label: '存活秒数', hint: '秒', kind: 'number', min: 0.1, step: 0.1 },
+          { key: 'messageParticleCount', label: '每层个数', kind: 'int', min: 0, max: 400, step: 1 },
+          { key: 'messageParticleSize', label: '边长', hint: '按画面高度的一半计', kind: 'number', min: 0, step: 0.005 },
+          { key: 'messageParticleSpeed', label: '上飘速度', hint: '同上，每秒', kind: 'number', step: 0.01 },
+          { key: 'messageParticleHideY', label: '淡出起点', hint: '0 = 底边、1 = 顶边', kind: 'number', min: 0, max: 1, step: 0.01 },
+          { key: 'messageParticleHideSmoothness', label: '淡出羽化', kind: 'number', min: 0, step: 0.01 },
+          { key: 'messageParticleGlow', label: '光晕', kind: 'bool' },
+          { key: 'messageParticleOpacity', label: '透明度', kind: 'number', min: 0, max: 1, step: 0.01 },
         ],
       },
     ],

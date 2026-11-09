@@ -325,6 +325,110 @@ export interface RenderConfig {
   mopemopeSpColorA: [number, number, number];
   /** 「もぺもぺSP」演出第二种红的乘算系数 rgb（0~1，用在三段长镜头上，比第一种更暗更纯） */
   mopemopeSpColorB: [number, number, number];
+  /** 「MessageSP」演出总开关（只按谱面名强开，界面上不给） */
+  messageSp: boolean;
+  /** 「MessageSP」演出按 `assets/chart-animation.toml` 的时间轴走；关掉就全部用下面的固定值 */
+  messageTimeline: boolean;
+  /** 「MessageSP」整条时间轴的平移秒数（正 = 演出更晚） */
+  messageTimeOffset: number;
+  /** 「MessageSP」背景从第几秒起不再画（0 表示一直画） */
+  messageBgHideTime: number;
+  /** 「MessageSP」万花筒那趟开关 */
+  messagePassKaleido: boolean;
+  /** 「MessageSP」暗角那趟开关 */
+  messagePassVignette: boolean;
+  /** 「MessageSP」故障那趟开关 */
+  messagePassGlitch: boolean;
+  /** 「MessageSP」光带那趟开关 */
+  messagePassBand: boolean;
+  /** 「MessageSP」镜头畸变那趟开关 */
+  messagePassLens: boolean;
+  /** 「MessageSP」曝光 / 饱和 / 对比那趟开关 */
+  messagePassEsc: boolean;
+  /** 「MessageSP」泛光那趟开关 */
+  messagePassBloom: boolean;
+  /** 「MessageSP」方块粒子那趟开关 */
+  messagePassParticles: boolean;
+  /** 「MessageSP」暗角过渡宽度 */
+  messageVignetteSmoothness: number;
+  /** 「MessageSP」暗角压暗半径（负值 = 整屏压黑） */
+  messageVignetteRadius: number;
+  /** 「MessageSP」暗角压暗强度（大于 1 会反相） */
+  messageVignetteDarkness: number;
+  /** 「MessageSP」暗角噪点亮度 */
+  messageVignetteNoise: number;
+  /** 「MessageSP」暗角横线亮度 */
+  messageVignetteLine: number;
+  /** 「MessageSP」暗角部分乘在时间轴上的倍率 */
+  messageVignetteStrength: number;
+  /** 「MessageSP」镜头畸变的缩放半径（越大畸变越弱） */
+  messageLensSize: number;
+  /** 「MessageSP」镜头畸变的收敛量（负值向内缩） */
+  messageLensConvergence: number;
+  /** 「MessageSP」镜头畸变的边缘羽化 */
+  messageLensEdge: number;
+  /** 「MessageSP」镜头畸变按多宽的宽高比算 */
+  messageLensAspect: number;
+  /** 「MessageSP」故障位移幅度 */
+  messageGlitchRange: number;
+  /** 「MessageSP」故障部分乘在时间轴上的倍率 */
+  messageGlitchStrength: number;
+  /** 「MessageSP」光带宽度（1 = 整屏反相） */
+  messageBandWidth: number;
+  /** 「MessageSP」光带带边的羽化宽度 */
+  messageBandSmoothness: number;
+  /** 「MessageSP」光带亮度 */
+  messageBandBrightness: number;
+  /** 「MessageSP」光带是否竖着走 */
+  messageBandVertical: boolean;
+  /** 「MessageSP」万花筒混合比例（0 = 全用原画面） */
+  messageKaleidoMix: number;
+  /** 「MessageSP」万花筒部分乘在时间轴上的倍率 */
+  messageKaleidoStrength: number;
+  /** 「MessageSP」万花筒贴图的对比度 */
+  messageKaleidoContrast: number;
+  /** 「MessageSP」万花筒贴图的饱和度 */
+  messageKaleidoSaturation: number;
+  /** 「MessageSP」万花筒贴图的色相偏移（0~1 是一整圈） */
+  messageKaleidoHue: number;
+  /** 「MessageSP」万花筒中心蒙板的半径 */
+  messageKaleidoCenter: number;
+  /** 「MessageSP」万花筒中心蒙板的羽化宽度 */
+  messageKaleidoSmoothness: number;
+  /** 「MessageSP」亮度 */
+  messageExposure: number;
+  /** 「MessageSP」饱和度 */
+  messageSaturation: number;
+  /** 「MessageSP」对比度 */
+  messageContrast: number;
+  /** 「MessageSP」泛光亮度（0 = 不跑这一趟） */
+  messageBloomBrightness: number;
+  /** 「MessageSP」泛光乘在时间轴上的倍率 */
+  messageBloomStrength: number;
+  /** 「MessageSP」泛光合成强度（大于 1 更糊） */
+  messageBloomIntensity: number;
+  /** 「MessageSP」泛光取用的亮部阈值 */
+  messageBloomThreshold: number;
+  /** 「MessageSP」泛光采样半径 */
+  messageBloomRadius: number;
+  /** 「MessageSP」方块粒子的出场时刻（秒） */
+  messageParticleStart: number;
+  /** 「MessageSP」方块粒子的存活秒数 */
+  messageParticleLifetime: number;
+  /** 「MessageSP」每层方块粒子的个数 */
+  messageParticleCount: number;
+  /** 「MessageSP」方块边长（按画面高度的一半计） */
+  messageParticleSize: number;
+  /** 「MessageSP」方块每秒往上飘多少（同上单位） */
+  messageParticleSpeed: number;
+  /** 「MessageSP」方块淡出的起点（0 = 底边、1 = 顶边） */
+  messageParticleHideY: number;
+  /** 「MessageSP」方块淡出的羽化宽度 */
+  messageParticleHideSmoothness: number;
+  /** 「MessageSP」方块是否带一圈光晕 */
+  messageParticleGlow: boolean;
+  /** 「MessageSP」方块透明度 */
+  messageParticleOpacity: number;
   /** 「QZKAGO」演出：整段起点（秒） */
   qzkagoSpStart: number;
   /** 「QZKAGO」演出：白屏渐入时长（秒） */
@@ -718,6 +822,58 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   jingluanSpDim: 0.18,
   mopemopeSpColorA: [0.4118, 0.298, 0.1412],
   mopemopeSpColorB: [0.3412, 0.2314, 0.0588],
+  messageSp: false,
+  messageTimeline: true,
+  messageTimeOffset: 0,
+  messageBgHideTime: 109,
+  messagePassKaleido: true,
+  messagePassVignette: true,
+  messagePassGlitch: true,
+  messagePassBand: true,
+  messagePassLens: true,
+  messagePassEsc: true,
+  messagePassBloom: true,
+  messagePassParticles: true,
+  messageVignetteSmoothness: 0.5,
+  messageVignetteRadius: 0.3,
+  messageVignetteDarkness: 1.0,
+  messageVignetteNoise: 0.3,
+  messageVignetteLine: 0.03,
+  messageVignetteStrength: 1,
+  messageLensSize: 125,
+  messageLensConvergence: -8,
+  messageLensEdge: 0.05,
+  messageLensAspect: 1.12,
+  messageGlitchRange: 0,
+  messageGlitchStrength: 1,
+  messageBandWidth: 0,
+  messageBandSmoothness: 0,
+  messageBandBrightness: 1,
+  messageBandVertical: false,
+  messageKaleidoMix: 0,
+  messageKaleidoStrength: 1,
+  messageKaleidoContrast: 1,
+  messageKaleidoSaturation: 1,
+  messageKaleidoHue: 0,
+  messageKaleidoCenter: 0.6,
+  messageKaleidoSmoothness: 0.6,
+  messageExposure: 1,
+  messageSaturation: 0.75,
+  messageContrast: 1,
+  messageBloomBrightness: 0,
+  messageBloomStrength: 1,
+  messageBloomIntensity: 1.61,
+  messageBloomThreshold: 0.059,
+  messageBloomRadius: 1,
+  messageParticleStart: 114.538,
+  messageParticleLifetime: 6,
+  messageParticleCount: 90,
+  messageParticleSize: 0.06,
+  messageParticleSpeed: 0.12,
+  messageParticleHideY: 1,
+  messageParticleHideSmoothness: 0.1,
+  messageParticleGlow: true,
+  messageParticleOpacity: 1,
   qzkagoSpStart: 77.07,
   qzkagoSpWhiteIn: 65 / 60,
   qzkagoSpWhiteOut: 30 / 60,

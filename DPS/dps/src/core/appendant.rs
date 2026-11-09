@@ -43,6 +43,9 @@ pub const RR: &str = "appendant.rr";
 /// 演出包：「Clock Paradox」谱面里那只正中大表盘的贴图。
 pub const CP: &str = "appendant.cp";
 
+/// 演出包：「Message SP」谱面用的万花筒贴图、故障贴图与方块粒子贴图。
+pub const MESSAGE: &str = "appendant.message";
+
 /// 皮肤包里的必需文件：与 `core::resource::ResourcePack::load` 读的那几张一一对应，缺一个都加载失败。
 pub const SKIN_FILES: &[&str] = &[
     "info.yml",
@@ -71,6 +74,10 @@ pub const QZK_FILES: &[&str] = &["qzk_0.png", "qzk_1.png", "qzk_2.png", "qzk_3.p
 
 /// 「Clock Paradox」演出包的必需文件：那只白线表盘。
 pub const CP_FILES: &[&str] = &["clock.png"];
+
+/// 「Message SP」演出包的必需文件：万花筒的彩色/法线图、故障位移图、方块粒子的两张灰度图
+/// （`Cube_ch*.png` 是把 16 位灰度压成 8 位的版本，形状与辉光各一张）。
+pub const MESSAGE_FILES: &[&str] = &["KaleidoCol.png", "KaleidoNormal.png", "Glitch4in1.png", "Cube_ch0.png", "Cube_ch1.png"];
 
 /// 噪域皮肤「已激活」那一档的贴图名：`noise_on.gif`（动画）优先，没有就用 `noise_on.png`。
 pub const NOISE_ON_FILES: &[&str] = &["noise_on.png", "noise_on.gif"];
@@ -296,6 +303,12 @@ pub fn qzk_image(index: usize) -> Option<Vec<u8>> {
 /// 「Clock Paradox」演出包里的表盘贴图（白线，形状在 alpha 里）。
 pub fn cp_clock_image() -> Option<Vec<u8>> {
     entry(CP, "clock.png")
+}
+
+/// 「Message SP」演出包的任意一张图：`KaleidoCol.png`、`KaleidoNormal.png`、
+/// `Glitch4in1.png`、`Cube_ch0.png`、`Cube_ch1.png`（见 `MESSAGE_FILES`）。
+pub fn message_image(name: &str) -> Option<Vec<u8>> {
+    entry(MESSAGE, name)
 }
 
 #[cfg(test)]

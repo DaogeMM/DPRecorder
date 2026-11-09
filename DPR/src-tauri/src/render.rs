@@ -89,7 +89,7 @@ impl Drop for TempPath {
 ///    此时 DPS 侧还要另加字段并在 `DPS/dps/src/core/` 里读取）。
 /// 3. `impl Default for RenderConfig` 加默认值 —— **必须和前端 `src/model.ts` 的 `DEFAULT_RENDER_CONFIG` 一致**，
 ///    否则「界面显示的默认值」和「命令行直接渲染的默认值」会对不上。
-///    例外是七套谱面演出动画的参数：它们的默认值只在 `assets/chart-animation.toml` 里写一份，
+///    例外是八套谱面演出动画的参数：它们的默认值只在 `assets/chart-animation.toml` 里写一份，
 ///    这里与前端都从 `dps::config::Config::default()` 取（前端启动时向后端要一份）。
 /// 4. `config.toml` 加一行 `camelCaseKey = 值   # 中文说明`。注意只有 CLI 不带 `--config` 时才读 toml，
 ///    且 dev 时实际被读的是 exe 同目录那份 `src-tauri/target/debug/config.toml`
@@ -304,6 +304,114 @@ pub struct RenderConfig {
     pub mopemope_sp_color_a: [f32; 3],
     #[serde(with = "crate::color_hex")]
     pub mopemope_sp_color_b: [f32; 3],
+    /// 「Message SP」演出：七趟整屏后处理（万花筒 → 暗角 → 故障 → 光带 → 镜头畸变 → 曝光 → 泛光）+ 方块粒子，
+    /// 由输入谱面的文件名强制开启（见 `is_message_chart`），不是配置项。
+    /// `to_config()` 把它透传成 `dps::config::Config::message_sp_mode`。
+    pub message_sp: bool,
+    /// 「Message SP」演出：贴图来自 `appendant/appendant.message.zip`（不随程序分发），缺包时
+    /// 万花筒与粒子不画、故障退回程序内生成的噪点，其余几趟照旧。
+    /// 「Message SP」随时间变化的量走参考时间轴（关掉就全部用下面的固定值）
+    pub message_timeline: bool,
+    /// 「Message SP」整体平移的秒数（正值 = 演出比音乐晚出现）
+    pub message_time_offset: f64,
+    /// 「Message SP」这个时刻之后连背景图一起藏掉（0 表示不藏）
+    pub message_bg_hide_time: f64,
+    /// 「Message SP」万花筒那一趟
+    pub message_pass_kaleido: bool,
+    /// 「Message SP」暗角那一趟
+    pub message_pass_vignette: bool,
+    /// 「Message SP」故障那一趟
+    pub message_pass_glitch: bool,
+    /// 「Message SP」光带那一趟
+    pub message_pass_band: bool,
+    /// 「Message SP」镜头畸变那一趟
+    pub message_pass_lens: bool,
+    /// 「Message SP」曝光 / 饱和度 / 对比度那一趟
+    pub message_pass_esc: bool,
+    /// 「Message SP」泛光那一趟
+    pub message_pass_bloom: bool,
+    /// 「Message SP」方块粒子那一层
+    pub message_pass_particles: bool,
+    /// 「Message SP」暗角：中心到边缘的过渡宽度
+    pub message_vignette_smoothness: f32,
+    /// 「Message SP」暗角：开始压暗的半径（负值 = 整屏压黑）
+    pub message_vignette_radius: f32,
+    /// 「Message SP」暗角：压暗强度
+    pub message_vignette_darkness: f32,
+    /// 「Message SP」暗角：噪点亮度
+    pub message_vignette_noise: f32,
+    /// 「Message SP」暗角：细横线亮度
+    pub message_vignette_line: f32,
+    /// 「Message SP」暗角：时间轴模式的整体倍率
+    pub message_vignette_strength: f32,
+    /// 「Message SP」镜头畸变：缩放半径（越大越弱）
+    pub message_lens_size: f32,
+    /// 「Message SP」镜头畸变：收敛量（负值向内缩）
+    pub message_lens_convergence: f32,
+    /// 「Message SP」镜头畸变：边缘羽化宽度
+    pub message_lens_edge: f32,
+    /// 「Message SP」镜头畸变：横向宽高比
+    pub message_lens_aspect: f32,
+    /// 「Message SP」故障：位移幅度
+    pub message_glitch_range: f32,
+    /// 「Message SP」故障：时间轴模式的整体倍率
+    pub message_glitch_strength: f32,
+    /// 「Message SP」光带：带宽（1 = 整屏反相）
+    pub message_band_width: f32,
+    /// 「Message SP」光带：带边羽化宽度
+    pub message_band_smoothness: f32,
+    /// 「Message SP」光带：亮度
+    pub message_band_brightness: f32,
+    /// 「Message SP」光带：true 时带是竖的
+    pub message_band_vertical: bool,
+    /// 「Message SP」万花筒：混合比例
+    pub message_kaleido_mix: f32,
+    /// 「Message SP」万花筒：时间轴模式的整体倍率
+    pub message_kaleido_strength: f32,
+    /// 「Message SP」万花筒：彩色贴图的对比度
+    pub message_kaleido_contrast: f32,
+    /// 「Message SP」万花筒：彩色贴图的饱和度
+    pub message_kaleido_saturation: f32,
+    /// 「Message SP」万花筒：色相偏移（0~1 是一整圈）
+    pub message_kaleido_hue: f32,
+    /// 「Message SP」万花筒：中心蒙板半径
+    pub message_kaleido_center: f32,
+    /// 「Message SP」万花筒：中心蒙板羽化宽度
+    pub message_kaleido_smoothness: f32,
+    /// 「Message SP」曝光：亮度
+    pub message_exposure: f32,
+    /// 「Message SP」曝光：饱和度
+    pub message_saturation: f32,
+    /// 「Message SP」曝光：对比度
+    pub message_contrast: f32,
+    /// 「Message SP」泛光：亮度（0 = 不跑这一趟）
+    pub message_bloom_brightness: f32,
+    /// 「Message SP」泛光：时间轴模式的整体倍率
+    pub message_bloom_strength: f32,
+    /// 「Message SP」泛光：合成强度
+    pub message_bloom_intensity: f32,
+    /// 「Message SP」泛光：亮部提取阈值
+    pub message_bloom_threshold: f32,
+    /// 「Message SP」泛光：采样半径
+    pub message_bloom_radius: f32,
+    /// 「Message SP」方块粒子：出场时刻（秒）
+    pub message_particle_start: f64,
+    /// 「Message SP」方块粒子：每个方块的存活秒数
+    pub message_particle_lifetime: f64,
+    /// 「Message SP」方块粒子：每层同时存在的个数
+    pub message_particle_count: u32,
+    /// 「Message SP」方块粒子：边长（按画面高度的一半计）
+    pub message_particle_size: f32,
+    /// 「Message SP」方块粒子：上飘速度（同上，每秒）
+    pub message_particle_speed: f32,
+    /// 「Message SP」方块粒子：这个高度以上的部分淡出（0 = 底边、1 = 顶边）
+    pub message_particle_hide_y: f32,
+    /// 「Message SP」方块粒子：淡出边界的羽化宽度
+    pub message_particle_hide_smoothness: f32,
+    /// 「Message SP」方块粒子：是否加一圈低透明光晕
+    pub message_particle_glow: bool,
+    /// 「Message SP」方块粒子：整体透明度
+    pub message_particle_opacity: f32,
     /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启（见 `is_xuejiang_sp_chart`），
     /// 不是配置项 —— 前端不传，配置文件里写了也会在 `generate_resource` 里按文件名覆盖。
     /// `to_config()` 把它透传成 `dps::config::Config::xuejiang_sp_mode`。
@@ -731,6 +839,58 @@ impl RenderConfig {
             rr_sp: self.rr_sp,
             mopemope_sp_color_a: self.mopemope_sp_color_a,
             mopemope_sp_color_b: self.mopemope_sp_color_b,
+            message_sp_mode: self.message_sp,
+            message_timeline: self.message_timeline,
+            message_time_offset: self.message_time_offset,
+            message_bg_hide_time: self.message_bg_hide_time,
+            message_pass_kaleido: self.message_pass_kaleido,
+            message_pass_vignette: self.message_pass_vignette,
+            message_pass_glitch: self.message_pass_glitch,
+            message_pass_band: self.message_pass_band,
+            message_pass_lens: self.message_pass_lens,
+            message_pass_esc: self.message_pass_esc,
+            message_pass_bloom: self.message_pass_bloom,
+            message_pass_particles: self.message_pass_particles,
+            message_vignette_smoothness: self.message_vignette_smoothness,
+            message_vignette_radius: self.message_vignette_radius,
+            message_vignette_darkness: self.message_vignette_darkness,
+            message_vignette_noise: self.message_vignette_noise,
+            message_vignette_line: self.message_vignette_line,
+            message_vignette_strength: self.message_vignette_strength,
+            message_lens_size: self.message_lens_size,
+            message_lens_convergence: self.message_lens_convergence,
+            message_lens_edge: self.message_lens_edge,
+            message_lens_aspect: self.message_lens_aspect,
+            message_glitch_range: self.message_glitch_range,
+            message_glitch_strength: self.message_glitch_strength,
+            message_band_width: self.message_band_width,
+            message_band_smoothness: self.message_band_smoothness,
+            message_band_brightness: self.message_band_brightness,
+            message_band_vertical: self.message_band_vertical,
+            message_kaleido_mix: self.message_kaleido_mix,
+            message_kaleido_strength: self.message_kaleido_strength,
+            message_kaleido_contrast: self.message_kaleido_contrast,
+            message_kaleido_saturation: self.message_kaleido_saturation,
+            message_kaleido_hue: self.message_kaleido_hue,
+            message_kaleido_center: self.message_kaleido_center,
+            message_kaleido_smoothness: self.message_kaleido_smoothness,
+            message_exposure: self.message_exposure,
+            message_saturation: self.message_saturation,
+            message_contrast: self.message_contrast,
+            message_bloom_brightness: self.message_bloom_brightness,
+            message_bloom_strength: self.message_bloom_strength,
+            message_bloom_intensity: self.message_bloom_intensity,
+            message_bloom_threshold: self.message_bloom_threshold,
+            message_bloom_radius: self.message_bloom_radius,
+            message_particle_start: self.message_particle_start,
+            message_particle_lifetime: self.message_particle_lifetime,
+            message_particle_count: self.message_particle_count,
+            message_particle_size: self.message_particle_size,
+            message_particle_speed: self.message_particle_speed,
+            message_particle_hide_y: self.message_particle_hide_y,
+            message_particle_hide_smoothness: self.message_particle_hide_smoothness,
+            message_particle_glow: self.message_particle_glow,
+            message_particle_opacity: self.message_particle_opacity,
             xuejiang_sp_mode: self.xuejiang_sp,
             xuejiang_sp_fake_notes: self.xuejiang_sp_fake_notes,
             xuejiang_sp_fake_bar_seconds: self.xuejiang_sp_fake_bar_seconds,
@@ -866,7 +1026,7 @@ impl RenderConfig {
 
 impl Default for RenderConfig {
     fn default() -> Self {
-        // 七套演出（雪降 / 报应 / 痉挛 / QZKAGO / Clock Paradox / もぺもぺ / Rr）的参数默认值
+        // 八套演出（雪降 / 报应 / 痉挛 / QZKAGO / Clock Paradox / もぺもぺ / Message / Rr）的参数默认值
         // 以 `assets/chart-animation.toml` 为唯一来源，这里只照抄，不再各写一份。
         let base = dps::config::Config::default();
         Self {
@@ -1010,6 +1170,58 @@ impl Default for RenderConfig {
             rr_sp: false,
             mopemope_sp_color_a: base.mopemope_sp_color_a,
             mopemope_sp_color_b: base.mopemope_sp_color_b,
+            message_sp: false,
+            message_timeline: base.message_timeline,
+            message_time_offset: base.message_time_offset,
+            message_bg_hide_time: base.message_bg_hide_time,
+            message_pass_kaleido: base.message_pass_kaleido,
+            message_pass_vignette: base.message_pass_vignette,
+            message_pass_glitch: base.message_pass_glitch,
+            message_pass_band: base.message_pass_band,
+            message_pass_lens: base.message_pass_lens,
+            message_pass_esc: base.message_pass_esc,
+            message_pass_bloom: base.message_pass_bloom,
+            message_pass_particles: base.message_pass_particles,
+            message_vignette_smoothness: base.message_vignette_smoothness,
+            message_vignette_radius: base.message_vignette_radius,
+            message_vignette_darkness: base.message_vignette_darkness,
+            message_vignette_noise: base.message_vignette_noise,
+            message_vignette_line: base.message_vignette_line,
+            message_vignette_strength: base.message_vignette_strength,
+            message_lens_size: base.message_lens_size,
+            message_lens_convergence: base.message_lens_convergence,
+            message_lens_edge: base.message_lens_edge,
+            message_lens_aspect: base.message_lens_aspect,
+            message_glitch_range: base.message_glitch_range,
+            message_glitch_strength: base.message_glitch_strength,
+            message_band_width: base.message_band_width,
+            message_band_smoothness: base.message_band_smoothness,
+            message_band_brightness: base.message_band_brightness,
+            message_band_vertical: base.message_band_vertical,
+            message_kaleido_mix: base.message_kaleido_mix,
+            message_kaleido_strength: base.message_kaleido_strength,
+            message_kaleido_contrast: base.message_kaleido_contrast,
+            message_kaleido_saturation: base.message_kaleido_saturation,
+            message_kaleido_hue: base.message_kaleido_hue,
+            message_kaleido_center: base.message_kaleido_center,
+            message_kaleido_smoothness: base.message_kaleido_smoothness,
+            message_exposure: base.message_exposure,
+            message_saturation: base.message_saturation,
+            message_contrast: base.message_contrast,
+            message_bloom_brightness: base.message_bloom_brightness,
+            message_bloom_strength: base.message_bloom_strength,
+            message_bloom_intensity: base.message_bloom_intensity,
+            message_bloom_threshold: base.message_bloom_threshold,
+            message_bloom_radius: base.message_bloom_radius,
+            message_particle_start: base.message_particle_start,
+            message_particle_lifetime: base.message_particle_lifetime,
+            message_particle_count: base.message_particle_count,
+            message_particle_size: base.message_particle_size,
+            message_particle_speed: base.message_particle_speed,
+            message_particle_hide_y: base.message_particle_hide_y,
+            message_particle_hide_smoothness: base.message_particle_hide_smoothness,
+            message_particle_glow: base.message_particle_glow,
+            message_particle_opacity: base.message_particle_opacity,
             xuejiang_sp: false,
             xuejiang_sp_fake_notes: base.xuejiang_sp_fake_notes,
             xuejiang_sp_fake_bar_seconds: base.xuejiang_sp_fake_bar_seconds,
@@ -1662,6 +1874,14 @@ fn is_mopemope_sp_chart(path: &Path) -> bool {
     matches_chart_stem(path, MOPEMOPE_SP_CHART_STEM)
 }
 
+/// 「Message SP」特殊演出的谱面名（同样既可能是 `.pez`，也可能是解包目录）。
+const MESSAGE_SP_CHART_STEM: &str = "Message.くるぶっこちゃん.100.SP";
+
+/// 判断输入路径是不是「Message SP」特殊演出的那一份谱面。判定规则同 `is_xuejiang_sp_chart`。
+fn is_message_chart(path: &Path) -> bool {
+    matches_chart_stem(path, MESSAGE_SP_CHART_STEM)
+}
+
 /// 路径最后一段是否等于 `stem`，或者等于 `stem.pez`。
 fn matches_chart_stem(path: &Path, stem: &str) -> bool {
     let Some(name) = path.file_name().and_then(|it| it.to_str()) else {
@@ -1773,13 +1993,14 @@ fn apply_rr_look(config: &mut RenderConfig) {
     config.hitcolor = "#FBA373".to_string();
 }
 
-/// 按谱面名把七套演出里对应的那一族强开（成片与调试窗口共用同一套判据）。
+/// 按谱面名把八套演出里对应的那一族强开（成片与调试窗口共用同一套判据）。
 ///
 /// 皮肤也跟着钉：「报应」钉 `appendant.retri`、「Rr」钉 `appendant.rr`；缺包退回默认皮肤。
 fn apply_chart_animations(config: &mut RenderConfig, path: &Path) {
     config.xuejiang_sp = is_xuejiang_sp_chart(path);
     config.jingluan_sp = is_jingluan_sp_chart(path);
     config.mopemope_sp = is_mopemope_sp_chart(path);
+    config.message_sp = is_message_chart(path);
     config.qzkago_sp = is_qzkago_chart(path);
     config.clock_paradox_sp = is_clock_paradox_chart(path);
     if is_baoying_sp_chart(path) {
@@ -3280,22 +3501,23 @@ fn mix_water_sfx(
     Ok(())
 }
 
-/// 演出动画默认值里属于七套演出的那些键的前缀。
+/// 演出动画默认值里属于八套演出的那些键的前缀。
 ///
 /// 只有这些键来自 `assets/chart-animation.toml`：前端 `model.ts` 里那份字面量是
 /// 「文件读不到」时的兜底，两边各写各的迟早会不一致，所以启动时按这些前缀整批覆盖。
-const CHART_ANIMATION_PREFIXES: [&str; 8] = [
+const CHART_ANIMATION_PREFIXES: [&str; 9] = [
     "xuejiangSp",
     "baoyingSp",
     "jingluanSp",
     "qzkagoSp",
     "clockParadoxSp",
     "mopemopeSp",
+    "message",
     "rrSp",
     "rrHitFx",
 ];
 
-/// 七套演出动画的默认值（扁平的一个 JSON 对象，键名与 `RenderConfig` 的字段同名）。
+/// 八套演出动画的默认值（扁平的一个 JSON 对象，键名与 `RenderConfig` 的字段同名）。
 ///
 /// 默认值的唯一来源是 `assets/chart-animation.toml`：`RenderConfig::default()` 从
 /// `dps::config::Config::default()` 取，后者又读那个文件。前端启动时拉一次，覆盖自己那份。
@@ -3311,20 +3533,21 @@ pub fn chart_animation_defaults() -> serde_json::Value {
     serde_json::Value::Object(picked)
 }
 
-/// 七套演出在 `assets/chart-animation.toml` 里所属的表：`RenderConfig` 的键名去掉族名、
+/// 八套演出在 `assets/chart-animation.toml` 里所属的表：`RenderConfig` 的键名去掉族名、
 /// 再摘掉 `Sp` 就是表里的键（`xuejiangSpFakeNotes` → `[xuejiang] fakeNotes`，
 /// `rrHitFxColor` → `[rr] hitFxColor`）。
-const CHART_ANIMATION_FAMILIES: [(&str, &str); 7] = [
+const CHART_ANIMATION_FAMILIES: [(&str, &str); 8] = [
     ("xuejiang", "xuejiang"),
     ("baoying", "baoying"),
     ("jingluan", "jingluan"),
     ("qzkago", "qzkago"),
     ("clockParadox", "clockParadox"),
     ("mopemope", "mopemope"),
+    ("message", "message"),
     ("rr", "rr"),
 ];
 
-/// 把调试窗口调好的七套演出参数写回 `assets/chart-animation.toml`，返回写到的文件。
+/// 把调试窗口调好的八套演出参数写回 `assets/chart-animation.toml`，返回写到的文件。
 ///
 /// 只替换现有键的**值**：文件里每个键上面都有一行说明，整篇重新序列化会把注释全丢掉。
 /// 落盘前先按 `dps::chart_animation::ChartAnimation` 反序列化一遍（`deny_unknown_fields`
@@ -3350,7 +3573,7 @@ fn write_chart_animation(config: &RenderConfig) -> Result<String> {
     Ok(path.display().to_string())
 }
 
-/// 从渲染配置里挑出七套演出的参数，整理成 `表名 → 键名 → 值`。
+/// 从渲染配置里挑出八套演出的参数，整理成 `表名 → 键名 → 值`。
 fn chart_animation_values(config: &RenderConfig) -> FxHashMap<String, FxHashMap<String, toml::Value>> {
     let mut out: FxHashMap<String, FxHashMap<String, toml::Value>> = FxHashMap::default();
     let Ok(serde_json::Value::Object(all)) = serde_json::to_value(config) else {
@@ -3499,7 +3722,7 @@ pub struct DebugPreview {
 /// 在调试窗口里另拼一份配置会让「调好了但渲染出来不一样」。
 ///
 /// 成片那两条路径（CLI 与 stdin）会按输入文件名强开特殊演出，这里同样按 `path` 强开 ——
-/// 不然调试窗口里那七套演出全是关着的，什么都看不到。`path` 为空（后面推参数时）就只做
+/// 不然调试窗口里那八套演出全是关着的，什么都看不到。`path` 为空（后面推参数时）就只做
 /// 序列化与资源包之外的换算。
 #[tauri::command]
 pub fn debug_preview_config(config: RenderConfig, path: Option<String>) -> DebugPreview {
@@ -3528,6 +3751,7 @@ fn apply_debug_animations(config: &mut RenderConfig, path: &Path) -> Vec<DebugPr
     config.xuejiang_sp = is_xuejiang_sp_chart(path);
     config.jingluan_sp = is_jingluan_sp_chart(path);
     config.mopemope_sp = is_mopemope_sp_chart(path);
+    config.message_sp = is_message_chart(path);
     config.qzkago_sp = is_qzkago_chart(path);
     config.clock_paradox_sp = is_clock_paradox_chart(path);
     config.baoying_sp = is_baoying_sp_chart(path);
@@ -3554,6 +3778,10 @@ fn apply_debug_animations(config: &mut RenderConfig, path: &Path) -> Vec<DebugPr
     }
     if config.clock_paradox_sp {
         packs.push(debug_preview_pack(dps::core::appendant::CP, "appendant", dps::core::appendant::CP_FILES));
+    }
+
+    if config.message_sp {
+        packs.push(debug_preview_pack(dps::core::appendant::MESSAGE, "appendant", dps::core::appendant::MESSAGE_FILES));
     }
     // 没有专属皮肤（普通谱面，或者报应 / Rr 的包不在）时用官方皮肤包：桌面端成片本来就是
     // 这个默认（`default_respack_path` 先找 `appendant.official`），网页版读不到 exe 旁边的

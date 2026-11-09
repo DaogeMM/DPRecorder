@@ -209,6 +209,15 @@ export function isMopemopeSpChart(path: string | null | undefined): boolean {
   return chartStem(path) === 'もぺもぺ.LeaF.100.SP';
 }
 
+/**
+ * 输入谱面是不是 Message SP。
+ *
+ * 判据与后端 `render.rs::is_message_chart` 一致。
+ */
+export function isMessageSpChart(path: string | null | undefined): boolean {
+  return chartStem(path) === 'Message.くるぶっこちゃん.100.SP';
+}
+
 /** 演出动画的族名，与 `assets/chart-animation.toml` 的表名、`RenderConfig` 的字段前缀一一对应。 */
 export type ChartAnimationFamily =
   | 'xuejiang'
@@ -217,10 +226,11 @@ export type ChartAnimationFamily =
   | 'qzkago'
   | 'clockParadox'
   | 'mopemope'
+  | 'message'
   | 'rr';
 
 /**
- * 输入谱面用的是哪一套演出动画；不是那七张谱面之一时给 `null`。
+ * 输入谱面用的是哪一套演出动画；不是那几张谱面之一时给 `null`。
  *
  * DPDebugger 的入口按钮按它决定显示与否，窗口里也按它决定右侧列出哪一组参数。
  */
@@ -232,6 +242,7 @@ export function chartAnimationFamily(path: string | null | undefined): ChartAnim
   if (isQzkagoChart(path)) return 'qzkago';
   if (isClockParadoxChart(path)) return 'clockParadox';
   if (isMopemopeSpChart(path)) return 'mopemope';
+  if (isMessageSpChart(path)) return 'message';
   if (isRrChart(path)) return 'rr';
   return null;
 }

@@ -564,6 +564,9 @@ impl GameScene {
         }
 
         let info_offset = info.offset;
+        // 「Message」这类整屏演出不靠谱面自带的 effects，但它同样需要离屏缓冲与
+        // `!no_effect` 那条渲染分支，所以开着它时这一帧不能按「无特效」处理。
+        let screen_effects = config.message_sp_mode;
         let mut res = Resource::new(
             config,
             info,
@@ -571,7 +574,7 @@ impl GameScene {
             player.as_ref().and_then(|it| it.avatar.clone()),
             background,
             illustration,
-            chart.extra.effects.is_empty() && effects.is_empty(),
+            chart.extra.effects.is_empty() && effects.is_empty() && !screen_effects,
         )
         .await
         .context("Failed to load resources")?;
@@ -2337,7 +2340,7 @@ impl Scene for GameScene {
         if let Some(c) = res.config.solid_bg {
             let top = 1. / screen_aspect();
             draw_rectangle(-1., -top, 2., top * 2., Color::new(c[0], c[1], c[2], res.alpha));
-        } else if res.config.render_bg {
+        } else if res.config.render_bg && !crate::core::message_sp::background_hidden(res) {
             draw_background(*res.background, res.config.render_bg_dim);
         }
 
@@ -2430,6 +2433,9 @@ impl Scene for GameScene {
             for effect in &self.chart.extra.effects {
                 effect.render(res);
             }
+            // 「Message SP」：整套演出盖在谱面自带 effects 之后、界面之前 ——
+            // 它压的是背景与谱面（判定线、音符、粒子），界面不该跟着一起反相或白掉。
+            crate::core::message_sp::render(res);
         }
         
         {

@@ -152,6 +152,76 @@ colorA = "#694C24"
 # 第二种红，用在三段长镜头上，比 A 更暗更纯；默认 #573B0F。
 colorB = "#573B0F"
 
+# 「Message SP」：七趟整屏后处理（万花筒 → 暗角 → 故障 → 光带 → 镜头畸变 → 曝光 → 泛光）+ 方块粒子。
+#
+# 时间轴模式打开时，随时间变化的量走照参考素材抄下来的关键帧（`core::message_sp` 里的常量），
+# 这里只给不随时间的部分与四个整体倍率；关掉时间轴就全部用本表的固定值，方便单趟调参。
+[message]
+timeline = true
+# 整体平移的秒数（正值 = 演出比音乐晚出现）。
+timeOffset = 0.0
+# 这个时刻之后连背景图一起藏掉（0 表示不藏）。
+bgHideTime = 109.0
+# 各趟后处理的总开关。
+passKaleido = true
+passVignette = true
+passGlitch = true
+passBand = true
+passLens = true
+passEsc = true
+passBloom = true
+passParticles = true
+# 暗角：过渡宽度 / 压暗半径 / 压暗强度 / 噪点亮度 / 细横线亮度 / 时间轴倍率。
+vignetteSmoothness = 0.5
+vignetteRadius = 0.3
+vignetteDarkness = 1.0
+vignetteNoise = 0.3
+vignetteLine = 0.03
+vignetteStrength = 1.0
+# 镜头畸变：缩放半径（越大越弱）/ 收敛量（负值向内缩）/ 边缘羽化 / 横向宽高比。
+lensSize = 125.0
+lensConvergence = -8.0
+lensEdge = 0.05
+lensAspect = 1.12
+# 故障：位移幅度 / 时间轴倍率。
+glitchRange = 0.0
+glitchStrength = 1.0
+# 光带：带宽（1 = 整屏反相）/ 带边羽化 / 亮度 / 是否竖带。
+bandWidth = 0.0
+bandSmoothness = 0.0
+bandBrightness = 1.0
+bandVertical = false
+# 万花筒：混合比例 / 时间轴倍率 / 对比度 / 饱和度 / 色相偏移 / 中心蒙板半径与羽化。
+kaleidoMix = 0.0
+kaleidoStrength = 1.0
+kaleidoContrast = 1.0
+kaleidoSaturation = 1.0
+kaleidoHue = 0.0
+kaleidoCenter = 0.6
+kaleidoSmoothness = 0.6
+# 曝光：亮度 / 饱和度 / 对比度。
+exposure = 1.0
+saturation = 0.75
+contrast = 1.0
+# 泛光：亮度 / 时间轴倍率 / 合成强度 / 亮部阈值 / 采样半径。
+bloomBrightness = 0.0
+bloomStrength = 1.0
+bloomIntensity = 1.61
+bloomThreshold = 0.059
+bloomRadius = 1.0
+# 方块粒子：出场时刻 / 存活秒数 / 每层个数 / 边长 / 上飘速度（边长与速度按画面高度的一半计）。
+particleStart = 114.538
+particleLifetime = 6.0
+particleCount = 90
+particleSize = 0.06
+particleSpeed = 0.12
+# 屏幕这个高度以上的部分淡出（0 = 底边、1 = 顶边）与羽化宽度。
+particleHideY = 1.0
+particleHideSmoothness = 0.1
+# 是否在方块外再画一层低透明光晕；整体透明度。
+particleGlow = true
+particleOpacity = 1.0
+
 # 「Rr」：只换打击特效的观感。
 [rr]
 # 颜色覆盖（`#RRGGBB`）。留空则用全局的 `hitcolor`，再没有就用资源包里的 AP 色。

@@ -21,6 +21,7 @@ import {
   fetchRespackDir,
   isBaoyingSpChart,
   isJingluanSpChart,
+  isMessageSpChart,
   isOptionalAppendant,
   isClockParadoxChart,
   isQzkagoChart,
@@ -361,6 +362,8 @@ async function checkAppendants(config: RenderConfig) {
   if (isRrChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.rr.zip'));
   // 「Clock Paradox」的表盘贴图只有 appendant.cp.zip 里有，缺了那四次出现就什么都不画
   if (isClockParadoxChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.cp.zip'));
+  // 「MessageSP」的万花筒 / 故障 / 方块贴图只有 appendant.message.zip 里有，缺了这几趟就画不出来
+  if (isMessageSpChart(chartPath.value)) addMissing(appendantItem(status, 'appendant.message.zip'));
   if (!missing.length) return true;
   appendantDir.value = status.dir;
   appendantMissing.value = missing;
