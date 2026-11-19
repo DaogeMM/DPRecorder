@@ -113,15 +113,17 @@ async fn build_merged(paths: &[PathBuf], scratch: &Path) -> Result<(String, Vec<
 }
 
 /// 一个待融合的谱面：谱面信息、谱面文本（原样，融合时直接搬 JSON 条目）、格式。
-struct Source {
-    path: PathBuf,
-    info: ChartInfo,
-    text: String,
-    format: Format,
+///
+/// 「采音对比」（`compare.rs`）也要按同样的方式拆开谱面包，所以这份结构连字段一起对 crate 可见。
+pub(crate) struct Source {
+    pub(crate) path: PathBuf,
+    pub(crate) info: ChartInfo,
+    pub(crate) text: String,
+    pub(crate) format: Format,
 }
 
 impl Source {
-    async fn load(path: &Path) -> Result<Self> {
+    pub(crate) async fn load(path: &Path) -> Result<Self> {
         let mut fs = fs::fs_from_file(path)
             .with_context(|| format!("读取谱面失败：{}", path.display()))?;
         let info = fs::load_info(fs.deref_mut())
@@ -146,17 +148,17 @@ impl Source {
 
 /// 只支持 JSON 的两套格式：`pec` / `pbc` 的按键与判定线不是同一张表，没法按条目照搬。
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Format {
+pub(crate) enum Format {
     Rpe,
     Pgr,
 }
 
-fn detect_format(info: &ChartInfo, text: &str) -> Result<Format> {
+pub(crate) fn detect_format(info: &ChartInfo, text: &str) -> Result<Format> {
     match info.format {
         Some(ChartFormat::Rpe) => Ok(Format::Rpe),
         Some(ChartFormat::Pgr) => Ok(Format::Pgr),
         Some(ChartFormat::Pec) | Some(ChartFormat::Pbc) => {
-            bail!("only rpe and pgr charts can be merged")
+            bail!("只有 rpe 与官方格式的谱面能做这一步（pec / pbc 不支持）")
         }
         None => sniff_format(text),
     }
@@ -165,7 +167,7 @@ fn detect_format(info: &ChartInfo, text: &str) -> Result<Format> {
 /// 与 `GameScene` 载入谱面时的判别一致：rpe 的谱面 JSON 有 `META`，官方格式没有。
 fn sniff_format(text: &str) -> Result<Format> {
     if !text.starts_with('{') {
-        bail!("only rpe and pgr charts can be merged");
+        bail!("只有 rpe 与官方格式的谱面能做这一步（pec / pbc 不支持）");
     }
     Ok(if text.contains("\"META\"") {
         Format::Rpe
@@ -175,7 +177,7 @@ fn sniff_format(text: &str) -> Result<Format> {
 }
 
 /// 「同一首歌」= 曲名与音乐文件都对得上：同一首曲子的几个难度，这两样是一样的。
-fn same_song(a: &ChartInfo, b: &ChartInfo) -> bool {
+pub(crate) fn same_song(a: &ChartInfo, b: &ChartInfo) -> bool {
     a.name.trim().eq_ignore_ascii_case(b.name.trim())
         && a.music.trim().eq_ignore_ascii_case(b.music.trim())
 }
@@ -258,7 +260,7 @@ fn reset_merge_dir() -> Result<PathBuf> {
 }
 
 /// 基谱的包内容：`.pez` 直接用它的字节，文件夹先打成一份临时 zip，后面都走 `update_zip`。
-async fn base_zip_bytes(path: &Path, dir: &Path) -> Result<Vec<u8>> {
+pub(crate) async fn base_zip_bytes(path: &Path, dir: &Path) -> Result<Vec<u8>> {
     if path.is_file() {
         return Ok(std::fs::read(path)?);
     }
@@ -271,7 +273,7 @@ async fn base_zip_bytes(path: &Path, dir: &Path) -> Result<Vec<u8>> {
 }
 
 /// 输出文件名里的曲名：只留字母数字（含中文）与几个不会惹麻烦的符号。
-fn file_stem(name: &str) -> String {
+pub(crate) fn file_stem(name: &str) -> String {
     let stem = name
         .trim()
         .chars()

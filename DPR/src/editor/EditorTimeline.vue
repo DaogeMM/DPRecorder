@@ -1611,6 +1611,6 @@ defineExpose({ zoomIn, zoomOut });
   width: 9px;
   height: 9px;
   background: var(--phi-accent);
-  border-radius: 2px;
+  border-radius: 0;
 }
 </style>

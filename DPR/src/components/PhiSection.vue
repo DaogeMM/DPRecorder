@@ -183,7 +183,7 @@ function toggle() {
   flex: none;
   width: 3px;
   height: 15px;
-  border-radius: 2px;
+  border-radius: 0;
   background: var(--phi-border-l4);
 }
 .phi-section__head:hover .phi-section__title::before {
@@ -207,8 +207,9 @@ function toggle() {
 }
 
 .phi-section__body {
-  /* 左边多留 6px，给那条通到底的导引线让位 */
-  padding: var(--phi-space-1) var(--phi-space-2) var(--phi-space-4) calc(var(--phi-space-2) + 6px);
+  /* 左边缩进到与标题文字同一条竖线（head 的 8px + 竖条 3px + gap 8px = 19px），
+     这样一级分组、二级标题、二级内容三层都落在同一列上。 */
+  padding: var(--phi-space-1) var(--phi-space-2) var(--phi-space-4) calc(var(--phi-space-2) * 2 + 3px);
 }
 
 /* ===== hero：谱面信息那块大横幅 ===== */

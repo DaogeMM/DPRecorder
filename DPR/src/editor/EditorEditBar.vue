@@ -1153,7 +1153,7 @@ function clearSelected() {
   width: 26px;
   height: 14px;
   background: var(--phi-bg-layer-3);
-  border-radius: 2px;
+  border-radius: 0;
   box-shadow: inset 0 0 0 0.5px var(--phi-border-l2);
   transition: background 120ms ease;
 }
@@ -1165,7 +1165,7 @@ function clearSelected() {
   width: 8px;
   height: 8px;
   background: var(--phi-label-caption);
-  border-radius: 1px;
+  border-radius: 0;
   transition:
     transform 120ms ease,
     background 120ms ease;

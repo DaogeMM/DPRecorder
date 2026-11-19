@@ -2276,7 +2276,7 @@ onBeforeUnmount(() => {
   margin: 0 0 4px;
   padding: 6px 8px;
   border: 0.5px solid var(--phi-border-l1);
-  border-radius: var(--phi-radius-2, 6px);
+  border-radius: 0;
   font-size: 0.75rem;
   color: var(--phi-warning-label);
 }

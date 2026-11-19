@@ -197,6 +197,7 @@
   "dpe-output-dir": "Editor 输出目录",
   "dpe-output-dir-tip": "谱面修改与噪域播放器的产物都放在这里（各自的子目录）；位置固定在程序旁边，不可修改",
   "dpe-col-preview": "预览",
+  "dpe-col-open": "打开",
   "dpe-col-delete": "移除",
   "dpe-open-render": "在渲染页打开"
 }

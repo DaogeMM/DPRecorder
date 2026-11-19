@@ -112,10 +112,12 @@ function toggle() {
   flex: none;
 }
 
-/* 组内整体缩进（左边缘与组标题那根强调条对齐），再用一根竖线把二级分区「挂」在组下面 */
+/* 组内整体缩进：内容左边缘与组标题文字落在同一条竖线上
+   （标题 3px 强调条 + 12px 内边距 = 15px；这里 3px 外边距 + 1px 竖线 + 11px 内边距 = 15px）。
+   那根 1px 竖线把二级分区「挂」在组下面，所以它占掉 1px，内边距要相应减 1。 */
 .phi-group__body {
   margin-left: 3px;
-  padding-left: var(--phi-space-4);
+  padding-left: calc(var(--phi-space-3) - 1px);
   border-left: 1px solid var(--phi-border-l3);
 }
 
@@ -139,10 +141,10 @@ function toggle() {
 
 .phi-group--plain .phi-group__body {
   /* 覆盖基础规则里的 `border-left: 1px solid var(--phi-border-l3)`；
-     缩进跟着标题一起外移，标题与下面的内容仍从同一条竖线量出去。 */
+     缩进跟着标题一起外移：5px 竖线 + 20px 内边距 = 25px，与标题文字同一条竖线。 */
   border-left: 0;
   margin-left: 5px;
-  padding-left: var(--phi-space-6);
+  padding-left: var(--phi-space-5);
 }
 
 .phi-group--plain .phi-group__title {

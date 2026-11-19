@@ -802,7 +802,6 @@ function coverUrl(task: Task) {
               v-if="item.status.type === 'rendering' || item.status.type === 'mixing_sfx' || item.status.type === 'paused'"
               :model-value="item.status.progress * 100"
               height="6"
-              rounded
             ></v-progress-linear>
             <v-progress-linear
               v-else-if="item.status.type === 'loading' || item.status.type === 'mixing'"

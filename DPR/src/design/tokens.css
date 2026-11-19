@@ -97,14 +97,16 @@
   --phi-static-red-400: #f25a5a;
   --phi-static-red-600: #d92d20;
 
-  /* 几何（DSH --dsw-radius-*） */
-  --phi-radius-xs: 4px;
-  --phi-radius-sm: 8px;
-  --phi-radius-md: 12px;
-  --phi-radius-lg: 16px;
-  --phi-radius-xl: 20px;
-  --phi-radius-panel: 28px;
-  --phi-radius-pill: 999px;
+  /* 几何：全局直角（原来那套圆角阶梯保留名字，值统一为 0）。
+     还留正圆的只有形象类的东西（头像、时间线上的圆点），它们自己写 `border-radius: 50%`，
+     不靠这里的令牌。 */
+  --phi-radius-xs: 0;
+  --phi-radius-sm: 0;
+  --phi-radius-md: 0;
+  --phi-radius-lg: 0;
+  --phi-radius-xl: 0;
+  --phi-radius-panel: 0;
+  --phi-radius-pill: 0;
 
   /* 间距阶梯（4 的倍数，DSH 未给令牌，按同体系补） */
   --phi-space-1: 4px;
@@ -145,7 +147,7 @@
      - 侧栏：inline-padding 12px + 条目 margin 0 2px；收起态是 36px 方形条
      - 内容区左上圆角 16px、与侧栏之间 0.5px 描边（DSH --dsh-windows-content-radius） */
   --phi-titlebar-height: 40px;
-  --phi-content-radius: 16px;
+  --phi-content-radius: 0;
   --phi-nav-width: 280px;
   --phi-nav-width-rail: 56px;
   --phi-nav-inline-padding: 12px;
@@ -379,7 +381,7 @@ body {
   font-size: var(--phi-font-size);
 }
 
-/* 细滚动条（DSH 的 5px 圆头样式） */
+/* 细滚动条（5px，直角：`--phi-radius-pill` 现在是 0） */
 ::-webkit-scrollbar {
   width: var(--phi-scrollbar-width);
   height: var(--phi-scrollbar-width);
@@ -405,21 +407,7 @@ html[data-input-modality='pointer'] body :focus-visible:not(:read-write) {
   outline-color: transparent;
 }
 
-/* 连续曲率圆角（DSH 的签名细节）。浏览器不支持时静默回落到普通圆角。
-   真正需要是正圆的地方（开关滑块、发送按钮、胶囊）单独写 corner-shape: round。 */
-@supports (corner-shape: superellipse(1.5)) {
-  :root {
-    --phi-corner-shape: superellipse(1.5);
-  }
-  *,
-  :before,
-  :after {
-    corner-shape: var(--phi-corner-shape);
-  }
-  .phi-round,
-  [class*='rounded'],
-  .v-avatar,
-  .v-switch__thumb {
-    corner-shape: round;
-  }
-}
+/* 连续曲率圆角（DSH 的签名细节）已停用：界面统一走直角硬边，圆角只留给
+   显式写了 `border-radius: 50%` 的正圆（头像、时间线圆点）。
+   留着 `corner-shape` 会把那些正圆也拉成超椭圆，所以这里不定义该令牌。 */
+

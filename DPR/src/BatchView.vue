@@ -587,41 +587,6 @@ function openInRender(chart: RenderChart) {
   });
 }
 
-const merging = ref(false);
-
-/**
- * 「谱面融合」：把选中的同一首歌的几个难度拼成一张谱面，拼完直接进渲染页。
- *
- * 同一首歌的判据是「曲名 + 音乐文件」——两样都对得上才算，混进别的歌就别拼
- * （后端也会再判一次，这里的判断只为能说清是哪两张对不上）。
- */
-async function mergeSelected() {
-  const picked = charts.value.filter((chart) => chart.isSelect);
-  if (picked.length < 2) {
-    toastError(t('merge-need-two'));
-    return;
-  }
-  const base = picked[0]!;
-  const sameSong = (chart: RenderChart) =>
-    (chart.chartInfo.name ?? '').trim() === (base.chartInfo.name ?? '').trim() &&
-    (chart.chartInfo.music ?? '').trim() === (base.chartInfo.music ?? '').trim();
-  if (!picked.every(sameSong)) {
-    toastError(t('merge-not-same-song'));
-    return;
-  }
-
-  merging.value = true;
-  try {
-    const path = await invoke<string>('merge_charts', { paths: picked.map((chart) => chart.path) });
-    // 融合包是临时文件，渲染页自己 `parse_chart` 读它；预设配置照旧带过去。
-    router.push({ name: 'render', query: { chart: path, config: JSON.stringify(preset.value.config) } });
-  } catch (e) {
-    toastError(e);
-  } finally {
-    merging.value = false;
-  }
-}
-
 const tasks = ref<Task[]>();
 
 async function updateList() {
@@ -851,17 +816,6 @@ onUnmounted(() => {
         <v-divider vertical class="mx-1" style="height: 24px;"></v-divider>
 
         <v-btn variant="text" size="small" prepend-icon="mdi-delete-sweep-outline" @click="clearTasks">{{ t('clear-tasks') }}</v-btn>
-
-        <!-- 谱面融合与「移除全部任务」相邻：两者都作用在整份列表上，而右边那三个开关是「发起后的动作」 -->
-        <v-btn
-          variant="text"
-          size="small"
-          prepend-icon="mdi-merge"
-          :loading="merging"
-          :disabled="selectedCount < 2"
-          :title="t('merge-tip')"
-          @click="mergeSelected"
-        >{{ t('merge-charts') }}</v-btn>
 
         <v-spacer />
 

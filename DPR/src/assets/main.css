@@ -44,7 +44,40 @@
 
 .v-text-field.type-number {
   --v-field-padding-start: 1rem;
-  --v-field-border-radius: 8px;
+  --v-field-border-radius: 0;
+}
+
+/* 全局直角：Vuetify 组件自带的圆角一律清零（它写在组件自己的 `--v-*-border-radius`
+   与工具类里，令牌改不动）。开关、进度条、输入框的轨道也一起变方，
+   只有头像这类本来就是圆的图还留着正圆（见下面那条）。 */
+.v-btn,
+.v-card,
+.v-sheet,
+.v-chip,
+.v-alert,
+.v-progress-linear,
+.v-field,
+.v-list,
+.v-table,
+.v-toolbar,
+.v-snackbar,
+.v-dialog,
+.v-overlay__content,
+.v-menu > .v-overlay__content,
+.v-select .v-field,
+.v-autocomplete .v-field,
+.v-text-field .v-field,
+.v-textarea .v-field,
+.v-switch .v-switch__track,
+.v-switch .v-switch__thumb,
+.v-slider .v-slider-track__background,
+.v-slider .v-slider-track__fill,
+.v-slider-thumb__surface {
+  border-radius: 0 !important;
+}
+
+.v-avatar {
+  border-radius: 50% !important;
 }
 
 /* 数值输入框去掉浏览器自带的上下微调按钮（「去除部分文本框里的上下点击按钮」）。

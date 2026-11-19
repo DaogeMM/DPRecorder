@@ -70,6 +70,26 @@ const {
  */
 const chartModMerge = ref(false);
 
+/**
+ * 「采音对比」：把勾中的两张谱面按判定时刻比一遍，各自把独有的按键染上颜色另存一份。
+ *
+ * 与「谱面融合」一样不是渲染配置里的一项（颜色写在谱面 JSON 里，不是 dps 的开关），所以开关与
+ * 三个颜色都只是本页的局部状态、不随预设走；互斥关系照样交给 `config/chartModOrder`。
+ */
+const chartModCompare = ref(false);
+
+/** 三种染色：共有 / 只有第一张 / 只有第二张。白色（`#FFFFFF`）= 不染色，三种颜色都存在本机。 */
+const compareCommon = useStorage<string>('ChartModView.CompareCommon', '#FFFFFF');
+const compareFirst = useStorage<string>('ChartModView.CompareFirst', '#FF5252');
+const compareSecond = useStorage<string>('ChartModView.CompareSecond', '#F43FFF');
+
+/** 色块预览的底色：输入框里允许省略 `#`，这里补上再交给 CSS；空串等于没填，留透明。 */
+function swatchColor(hex: string): string {
+  const value = hex.trim();
+  if (!value) return 'transparent';
+  return value.startsWith('#') ? value : `#${value}`;
+}
+
 const { chartModIndex, syncChartModOrder } = useChartModOrder({
   chartModOrder,
   pureConfigChart,
@@ -78,6 +98,7 @@ const { chartModIndex, syncChartModOrder } = useChartModOrder({
   chartModArrange,
   chartModFixedSpeed,
   chartModMerge,
+  chartModCompare,
   chartModReplace,
   chartModRandom,
   chartModRandomSpeed,
@@ -146,22 +167,43 @@ const selectedPaths = computed(() =>
 /** 输出目录（固定 `<程序目录>/dpe/modify`）与已有的产物 */
 const router = useRouter();
 
+/** 一个产物：逐张生成的 `.pez`，或采音对比产出的文件夹（`isDir` 为真，里面装着两张谱面）。 */
+interface OutputRow {
+  name: string;
+  path: string;
+  modified: number;
+  isDir: boolean;
+}
+
 const outputDir = ref('');
-const outputs = ref<{ name: string; path: string; modified: number }[]>([]);
+const outputs = ref<OutputRow[]>([]);
 
 async function refreshOutputs() {
   try {
     outputDir.value = (await invoke('get_dpe_modify_dir_path')) as string;
-    outputs.value = (await invoke('noise_player_outputs', {
+    const files = (await invoke('noise_player_outputs', {
       dir: outputDir.value,
     })) as { name: string; path: string; modified: number }[];
+    const folders = (await invoke('dpe_compare_outputs', {
+      dir: outputDir.value,
+    })) as { name: string; path: string; modified: number }[];
+    // 文件夹是「一次生成两张」的结果，排在前面；两组各自按修改时间倒序，合起来再排一次
+    outputs.value = [
+      ...folders.map((row) => ({ ...row, isDir: true })),
+      ...files.map((row) => ({ ...row, isDir: false })),
+    ].sort((a, b) => b.modified - a.modified);
   } catch (error) {
     toastError(error);
   }
 }
 
-/** 预览：直接起预览窗口（主程序带 `dpe-preview` 参数），不绕去渲染页。 */
-function openOutput(row: { path: string }) {
+/** 预览：谱面包起预览窗口（主程序带 `dpe-preview` 参数），采音对比的文件夹直接用资源管理器打开
+ *  ——它里面是两张谱面，选哪张预览得由用户自己挑。 */
+function openOutput(row: OutputRow) {
+  if (row.isDir) {
+    invoke('open_dir', { path: row.path }).catch(toastError);
+    return;
+  }
   // 把界面上的这份渲染配置一起给过去，预览窗口的画面才跟 DPR 自己的预览一致
   const config = workingConfig.value?.config ?? DEFAULT_RENDER_CONFIG;
   invoke('dpe_preview', { path: row.path, config }).catch(toastError);
@@ -171,9 +213,9 @@ function openOutputDir() {
   invoke('open_dir', { path: outputDir.value }).catch(toastError);
 }
 
-async function removeOutput(path: string) {
+async function removeOutput(row: OutputRow) {
   try {
-    await invoke('delete_file', { path });
+    await invoke(row.isDir ? 'delete_path' : 'delete_file', { path: row.path });
     await refreshOutputs();
   } catch (error) {
     toastError(error);
@@ -263,6 +305,7 @@ const isPureConfig = computed(() => slot('pureConfigChart') === true);
 const modLabels = computed<string[]>(() => {
   if (isPureConfig.value) return [t('pure-config-chart')];
   if (chartModMerge.value) return [t('chart-mod-merge')];
+  if (chartModCompare.value) return [t('chart-mod-compare')];
   return activeKeys.value.map((key) => t(MOD_LABELS[key] ?? key));
 });
 
@@ -283,10 +326,21 @@ const generateSuffix = computed(() => {
 const canGenerate = computed(
   () =>
     selectedPaths.value.length > 0 &&
-    (isPureConfig.value || chartModMerge.value || activeKeys.value.length > 0),
+    (isPureConfig.value || chartModMerge.value || chartModCompare.value || activeKeys.value.length > 0),
 );
 
 const generating = ref(false);
+
+/** 勾中的这几张是不是同一首歌：曲名与音乐文件都对得上（判据与后端一致）。 */
+function pickedSameSong(picked: RenderChart[]): boolean {
+  const base = picked[0];
+  if (!base) return true;
+  return picked.every(
+    (chart) =>
+      (chart.chartInfo.name ?? '').trim() === (base.chartInfo.name ?? '').trim() &&
+      (chart.chartInfo.music ?? '').trim() === (base.chartInfo.music ?? '').trim(),
+  );
+}
 
 /**
  * 「谱面融合」：判据与批量页的融合一致 —— 至少两张、曲名与音乐文件都对得上。
@@ -299,12 +353,7 @@ async function generateMerged() {
     toastError(t('merge-need-two'));
     return;
   }
-  const base = picked[0];
-  if (!base) return;
-  const sameSong = (chart: RenderChart) =>
-    (chart.chartInfo.name ?? '').trim() === (base.chartInfo.name ?? '').trim() &&
-    (chart.chartInfo.music ?? '').trim() === (base.chartInfo.music ?? '').trim();
-  if (!picked.every(sameSong)) {
+  if (!pickedSameSong(picked)) {
     toastError(t('merge-not-same-song'));
     return;
   }
@@ -323,6 +372,41 @@ async function generateMerged() {
   }
 }
 
+/**
+ * 「采音对比」：正好两张、同一首歌，颜色按齿轮里的三项交给后端写进谱面 JSON。
+ *
+ * 多一张少一张都不做 —— 对比的三种颜色是按「第一张 / 第二张」分的，多出来的那张没法归类。
+ */
+async function generateCompared() {
+  const picked = chartList.value.filter((chart) => chart.isSelect);
+  if (picked.length !== 2) {
+    toastError(t('compare-need-two'));
+    return;
+  }
+  if (!pickedSameSong(picked)) {
+    toastError(t('compare-not-same-song'));
+    return;
+  }
+
+  generating.value = true;
+  try {
+    const made = (await invoke('dpe_compare_charts', {
+      paths: picked.map((chart) => chart.path),
+      colors: {
+        common: compareCommon.value,
+        first: compareFirst.value,
+        second: compareSecond.value,
+      },
+    })) as string;
+    await refreshOutputs();
+    toast(t('generate-done', { name: made.split(/[\\/]/).pop() ?? '' }), 'success');
+  } catch (error) {
+    toastError(error);
+  } finally {
+    generating.value = false;
+  }
+}
+
 async function generate() {
   if (!canGenerate.value) {
     toast(t('generate-need'), 'warning');
@@ -331,6 +415,11 @@ async function generate() {
   // 谱面融合是另一条路：先把勾中的谱面拼成一张，再写进本页的输出目录（不走逐张改的那条）
   if (chartModMerge.value) {
     await generateMerged();
+    return;
+  }
+  // 采音对比也是另一条路：对比结果是一个文件夹、里面两张谱面，不需要 `labels` / `entries`
+  if (chartModCompare.value) {
+    await generateCompared();
     return;
   }
   const entries: Record<string, unknown> = {};
@@ -463,6 +552,33 @@ onMounted(async () => {
              整张拼一张，所以它和上面几类、下面按键那一类互斥；它不改 dps 的配置，
              没有齿轮、没有序号，也不进 `chartModOrder`。 -->
         <CfgSwitch :label="t('chart-mod-merge')" :tip="t('chart-mod-merge-tip')" v-model="chartModMerge" />
+        <!-- 「采音对比」：正好两张同一首歌的谱面，按判定时刻比一遍，独有的按键各染一色。
+              颜色写进谱面 JSON 的 `tint`（rpe）/ `color`（官方格式），白色等于不染色；产出是
+              输出表里的一个文件夹，里面放着两张可以直接预览 / 导入的 `.pez`。
+              它同样整张谱面一起重写，所以与上面几类、下面按键那一类互斥，也没有齿轮序号。 -->
+        <PhiSubMenu id="sec3-chart-mod-compare" :label="t('chart-mod-compare')" :tip="t('chart-mod-compare-tip')" v-model="chartModCompare">
+          <!-- 三个色号各占一整行：左侧条目名、右侧「色块 + #RRGGBB」，三行左右边缘对齐。 -->
+          <div class="cfg-grid">
+            <CfgField full :label="t('chart-mod-compare-common')" :tip="t('chart-mod-compare-common-tip')">
+              <div class="compare-color">
+                <span class="compare-color__swatch" :style="{ background: swatchColor(compareCommon) }"></span>
+                <v-text-field class="compare-color__input" density="compact" hide-details="auto" maxlength="7" v-model="compareCommon" :rules="[RULES.hexColorOptional]"></v-text-field>
+              </div>
+            </CfgField>
+            <CfgField full :label="t('chart-mod-compare-first')" :tip="t('chart-mod-compare-first-tip')">
+              <div class="compare-color">
+                <span class="compare-color__swatch" :style="{ background: swatchColor(compareFirst) }"></span>
+                <v-text-field class="compare-color__input" density="compact" hide-details="auto" maxlength="7" v-model="compareFirst" :rules="[RULES.hexColorOptional]"></v-text-field>
+              </div>
+            </CfgField>
+            <CfgField full :label="t('chart-mod-compare-second')" :tip="t('chart-mod-compare-second-tip')">
+              <div class="compare-color">
+                <span class="compare-color__swatch" :style="{ background: swatchColor(compareSecond) }"></span>
+                <v-text-field class="compare-color__input" density="compact" hide-details="auto" maxlength="7" v-model="compareSecond" :rules="[RULES.hexColorOptional]"></v-text-field>
+              </div>
+            </CfgField>
+          </div>
+        </PhiSubMenu>
         <!-- 「按键替换」是四组映射：每种源键型各一个下拉框，选成它自己就等于不动。 -->
         <PhiSubMenu id="sec3-chart-mod-replace" :label="t('chart-mod-replace')" :tip="t('chart-mod-replace-tip')" :badge="chartModIndex('replace')" v-model="chartModReplace">
           <div class="cfg-grid">
@@ -527,10 +643,10 @@ onMounted(async () => {
                 </td>
                 <td class="dpe-path" :title="row.path">{{ row.path }}</td>
                 <td class="dpe-col-act">
-                  <v-btn size="small" variant="text" @click="openOutput(row)">{{ t('dpe-col-preview') }}</v-btn>
+                  <v-btn size="small" variant="text" @click="openOutput(row)">{{ row.isDir ? t('dpe-col-open') : t('dpe-col-preview') }}</v-btn>
                 </td>
                 <td class="dpe-col-act">
-                  <v-btn size="small" variant="text" color="error" @click="removeOutput(row.path)">{{ t('dpe-col-delete') }}</v-btn>
+                  <v-btn size="small" variant="text" color="error" @click="removeOutput(row)">{{ t('dpe-col-delete') }}</v-btn>
                 </td>
               </tr>
             </tbody>
@@ -560,6 +676,27 @@ onMounted(async () => {
   display: flex;
   height: 52vh;
   min-height: 0;
+}
+
+/* 「采音对比」的三个色号：每个条目占一整行（`CfgField full`），控件是「色块 + 输入框」。
+   色块与输入框都定宽，三行的左右边缘因此对得上，不会像两栏半行那样错开。 */
+.compare-color {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--phi-space-2);
+}
+
+.compare-color__swatch {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--phi-border-l2);
+}
+
+.compare-color__input {
+  flex: 0 0 132px;
+  width: 132px;
 }
 
 /* 与「噪域播放器」同一套骨架：滚动区在上、操作条贴底，内容区不设更窄的上限。 */

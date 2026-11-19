@@ -194,7 +194,7 @@ onUnmounted(() => {
   min-width: 18px;
   height: 18px;
   padding: 0 4px;
-  border-radius: 9px;
+  border-radius: 0;
   background: rgb(255 255 255 / 14%);
   color: var(--phi-static-bluish-00);
   font-size: 12px;

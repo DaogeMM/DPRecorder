@@ -6,6 +6,7 @@ dps::tl_file!("main" mtl);
 mod chart_config;
 mod color_hex;
 mod common;
+mod compare;
 mod debugger;
 mod dpe;
 mod drafts;
@@ -429,6 +430,8 @@ pub fn run() -> Result<()> {
         noise_player::noise_player_outputs,
                 merge::merge_charts,
                 merge::dpe_merge_charts,
+                compare::dpe_compare_charts,
+                compare::dpe_compare_outputs,
             ])
             .on_window_event(|window, event| match event {
                 // 关主窗口 = 退出整个程序；编辑窗口与调试窗口是独立窗口，关掉它们只关掉自己。

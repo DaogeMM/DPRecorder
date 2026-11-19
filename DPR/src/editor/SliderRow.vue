@@ -139,7 +139,7 @@ function onSlide(value: number | number[]) {
   width: 44px;
   padding: 0 2px;
   border: 0;
-  border-radius: 2px;
+  border-radius: 0;
   background: transparent;
   color: var(--phi-label-primary);
   font-family: inherit;
