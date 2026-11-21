@@ -352,7 +352,8 @@ impl Chart {
         // 「待判按键」：每帧重新收敛一次「判定时刻最靠前的那个还没判定的按键」
         //（`Note::render` 顺手往小里更新），染色那一趟靠它认出要染色的按键。
         res.pending_note_time.set(f64::INFINITY);
-        res.apply_model_of(&Matrix::identity().append_nonuniform_scaling(&Vector::new(if res.config.flip_x() { -1. } else { 1. }, -1.)), |res| {
+        let chart_model = res.chart_model();
+        res.apply_model_of(&chart_model, |res| {
             #[cfg(feature = "video")]
             for (video, attach) in &self.extra.videos {
                 if let Some(attach) = attach {
@@ -437,7 +438,8 @@ impl Chart {
     /// `output()`，正好把刚染好的按键盖掉。
     pub fn render_pending_tint(&self, ui: &mut Ui, res: &mut Resource) {
         res.pending_tint.set(true);
-        res.apply_model_of(&Matrix::identity().append_nonuniform_scaling(&Vector::new(if res.config.flip_x() { -1. } else { 1. }, -1.)), |res| {
+        let chart_model = res.chart_model();
+        res.apply_model_of(&chart_model, |res| {
             let mut guard = self.bpm_list.borrow_mut();
             for id in &self.order {
                 self.lines[*id].render(ui, res, &self.lines, &mut guard, &self.settings, *id);

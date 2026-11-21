@@ -165,6 +165,14 @@ export interface RenderConfig {
   speed: number;
   volumeMusic: number;
   volumeSfx: number;
+  /** 「声道设定」：音乐左/右声道增益（1 = 原样，0 = 该声道静音）。 */
+  musicLeftGain: number;
+  musicRightGain: number;
+  /** 「声道设定」：按键音左/右声道增益（含义同上）。 */
+  sfxLeftGain: number;
+  sfxRightGain: number;
+  /** 「分离音轨」：音乐（含结尾曲）与按键音各一条音轨（0 = 音乐、1 = 按键音）。 */
+  separateTracks: boolean;
   watermark: string;
   notecolor: string;
   rrHitFxColor: string;
@@ -200,6 +208,12 @@ export interface RenderConfig {
   renderUiScore: boolean;
   renderUiCombo: boolean;
   renderUiBar: boolean;
+  /** 颠倒界面 · 谱面：谱面相对屏幕的水平中线镜像（判定线、按键、噪域、打击特效一起）。 */
+  flipChart: boolean;
+  /** 颠倒界面 · 界面：分数 / 连击 / 曲名 / 难度等界面元素原地转 180°（位置不变）。 */
+  flipUi: boolean;
+  /** 镜像角度：按给定角度（度，自动对 360 取余）镜像谱面；0 表示不镜像，叠加在 flip 之后。 */
+  mirrorAngle: number;
   /* ---------- 「雪降SP」特殊演出的调试参数 ----------
    * 演出本身由输入谱面的文件名强制开启（不是配置项，这里没有对应的开关），
    * 下面这些只影响观感，正常出片不用动。 */
@@ -729,6 +743,11 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   speed: 1,
   volumeMusic: 0.5,
   volumeSfx: 0.4,
+  musicLeftGain: 1,
+  musicRightGain: 1,
+  sfxLeftGain: 1,
+  sfxRightGain: 1,
+  separateTracks: false,
   forceLimit: true,
   limitThreshold: 0.5,
   loudnessEqualization: false,
@@ -761,6 +780,9 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   renderUiScore: true,
   renderUiCombo: true,
   renderUiBar: true,
+  flipChart: false,
+  flipUi: false,
+  mirrorAngle: 0,
   xuejiangSpFakeNotes: 305,
   xuejiangSpFakeBarSeconds: 120,
   xuejiangSpBurstCombo: 240,

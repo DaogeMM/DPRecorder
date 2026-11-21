@@ -138,6 +138,11 @@ const AUDIO = {
   forceLimit: { widget: 'checkbox' },
   volumeMusic: { widget: 'slider' },
   volumeSfx: { widget: 'slider' },
+  musicLeftGain: { widget: 'number', uiValue: 'number' },
+  musicRightGain: { widget: 'number', uiValue: 'number' },
+  sfxLeftGain: { widget: 'number', uiValue: 'number' },
+  sfxRightGain: { widget: 'number', uiValue: 'number' },
+  separateTracks: { widget: 'checkbox' },
   limitThreshold: { widget: 'slider' },
 } satisfies Partial<FieldTable>;
 
@@ -183,6 +188,9 @@ const RENDER_ITEM = {
   renderUiScore: { widget: 'checkbox' },
   renderUiCombo: { widget: 'checkbox' },
   renderUiBar: { widget: 'checkbox' },
+  flipChart: { widget: 'checkbox' },
+  flipUi: { widget: 'checkbox' },
+  mirrorAngle: { widget: 'number', uiValue: 'number' },
   renderBg: { widget: 'checkbox' },
   particle: { widget: 'checkbox' },
   particleSquare: { widget: 'checkbox' },

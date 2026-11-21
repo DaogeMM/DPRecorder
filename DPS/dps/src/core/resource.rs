@@ -1,4 +1,4 @@
-use super::{MSRenderTarget, Matrix, Point, NOTE_WIDTH_RATIO_BASE};
+use super::{MSRenderTarget, Matrix, Point, Vector, NOTE_WIDTH_RATIO_BASE};
 use crate::{
     config::Config,
     core::tween::Tweenable,
@@ -1058,7 +1058,12 @@ impl Resource {
             return;
         }
         let pt = self.world_to_screen(Point::default());
-        let pt = vec2(if self.config.flip_x() { -pt.x } else { pt.x }, -pt.y);
+        // `world_to_screen` 给的是谱面坐标（y 朝上），交给粒子世界前要把 y 翻成屏幕方向；
+        // 「颠倒界面」把谱面沿水平中线镜像后，这个方向也要跟着反过来。
+        let pt = self.mirror_point(vec2(
+            if self.config.flip_x() { -pt.x } else { pt.x },
+            if self.config.flip_chart { pt.y } else { -pt.y },
+        ));
         self.emitter.emitter_square.config.base_color = color;
         let count = self.emitter.particle_count;
         self.emitter.emitter_square.emit(pt, count);
@@ -1108,9 +1113,19 @@ impl Resource {
         if !allow_flip {
             self.emitter.emitter.config.flip_center_chance = 0.0;
         }
+        // 与 `emit_squares_at_origin` 同理：y 的方向由「颠倒界面」决定；镜像还会把
+        // 粒子的朝向翻成 -rotation（左右手互换），所以旋转角也要跟着取反。
+        let flip_y = self.config.flip_chart;
         self.emitter.emit_at(
-            vec2(if self.config.flip_x() { -pt.x } else { pt.x }, -pt.y),
-            if self.res_pack.info.hit_fx_rotate { rotation.to_radians() } else { 0. },
+            self.mirror_point(vec2(
+                if self.config.flip_x() { -pt.x } else { pt.x },
+                if flip_y { pt.y } else { -pt.y },
+            )),
+            if self.res_pack.info.hit_fx_rotate {
+                self.mirror_rotation(if flip_y { -rotation } else { rotation }).to_radians()
+            } else {
+                0.
+            },
             color,
         );
         self.emitter.emitter.config.flip_center_chance = chance;
@@ -1183,6 +1198,63 @@ impl Resource {
 
     pub fn world_to_screen(&self, pt: Point) -> Point {
         self.model_stack.last().unwrap().transform_point(&pt)
+    }
+
+    /// 「镜像角度」归一化到 [0, 360)；0 表示不镜像。
+    pub fn mirror_angle(&self) -> Option<f32> {
+        let angle = self.config.mirror_angle.rem_euclid(360.);
+        (angle != 0.).then_some(angle)
+    }
+
+    /// 屏幕空间（y 朝下）里沿夹角 `angle`（度，顺时针为正）的镜面矩阵。
+    ///
+    /// θ = 0 时是 `diag(1, -1)`（与 `flip_chart` 同效），θ = 90° 时是 `diag(-1, 1)`
+    /// （与 `flip_x` 同效）。`angle` 由调用方保证已归一化到 (0, 360)。
+    pub fn mirror_matrix(angle: f32) -> Matrix {
+        let (sin, cos) = (2. * angle).to_radians().sin_cos();
+        Matrix::new(cos, sin, 0., sin, -cos, 0., 0., 0., 1.)
+    }
+
+    /// 把方向 `v` 按「镜像角度」`angle`（度，顺时针为正）镜像。
+    pub fn mirror_vector(angle: f32, v: Vector) -> Vector {
+        let (sin, cos) = (2. * angle).to_radians().sin_cos();
+        Vector::new(cos * v.x + sin * v.y, sin * v.x - cos * v.y)
+    }
+
+    /// 谱面本身的模型矩阵：x 由 `flip_x`（水平镜像）、y 由 `flip_chart`（「颠倒界面」，
+    /// 沿屏幕水平中线镜像）决定，「镜像角度」`mirror_angle` 再叠在两者之后。
+    /// `Chart::render` 用它画谱面；谱面之外那些按谱面坐标摆放的绘制（坏键标记等）
+    /// 也要乘上它，才能跟镜面对齐。
+    pub fn chart_model(&self) -> Matrix {
+        let model = Matrix::identity().append_nonuniform_scaling(&Vector::new(
+            if self.config.flip_x() { -1. } else { 1. },
+            if self.config.flip_chart { 1. } else { -1. },
+        ));
+        match self.mirror_angle() {
+            Some(angle) => Self::mirror_matrix(angle) * model,
+            None => model,
+        }
+    }
+
+    /// 把屏幕空间（y 朝下）里的点按「镜像角度」镜像；未开启时原样返回。
+    fn mirror_point(&self, pt: Vec2) -> Vec2 {
+        match self.mirror_angle() {
+            Some(angle) => {
+                let (sin, cos) = (2. * angle).to_radians().sin_cos();
+                vec2(cos * pt.x + sin * pt.y, sin * pt.x - cos * pt.y)
+            }
+            None => pt,
+        }
+    }
+
+    /// 把屏幕空间里的朝向（度）按「镜像角度」镜像；未开启时原样返回。
+    ///
+    /// 镜面把角度 α 映到 2θ - α，所以粒子贴着镜面转过去之后，自身的旋转也要跟着取反方向。
+    fn mirror_rotation(&self, rotation: f32) -> f32 {
+        match self.mirror_angle() {
+            Some(angle) => 2. * angle - rotation,
+            None => rotation,
+        }
     }
 
     pub fn screen_to_world(&self, pt: Point) -> Point {

@@ -700,10 +700,23 @@ fn draw_phases(res: &mut Resource, aspect: f32, zones: &[Zone], time: f32, disab
 pub fn draw_zones_with_touches(res: &mut Resource, aspect: f32, zones: &[Zone], touches: &[(u64, Vector)], flip_x: bool) {
     // chart 坐标 -> 屏幕 UV，与 `draw_layer_at` 里那台 `zoom = (1, 1/aspect)` 相机一致：
     // 该相机把 chart 的 x∈[-1,1]、y∈[-1/aspect,1/aspect]（y 向上）直接映到 NDC。
+    // 「颠倒界面」把谱面沿水平中线镜像后，触点也要同样落回镜像后的位置，否则噪声光晕
+    // 会出现在手指的另一侧。
+    let flip_y = res.config.flip_chart;
+    let mirror = res.mirror_angle();
     let mut touches: Vec<_> = touches
         .iter()
         .map(|&(id, p)| {
-            let uv = vec2(0.5 + 0.5 * if flip_x { -p.x } else { p.x }, 0.5 + 0.5 * aspect * p.y);
+            let mut q = vec2(
+                if flip_x { -p.x } else { p.x },
+                if flip_y { -p.y } else { p.y },
+            );
+            if let Some(angle) = mirror {
+                // 与 `render_all` 里的 zone 镜像同一个矩阵（噪域层 y 向上 ⇒ `A(-θ)`）。
+                let m = Resource::mirror_vector(-angle, Vector::new(q.x, q.y));
+                q = vec2(m.x, m.y);
+            }
+            let uv = vec2(0.5 + 0.5 * q.x, 0.5 + 0.5 * aspect * q.y);
             (id, uv)
         })
         .collect();

@@ -202,12 +202,12 @@ const {
   fps, dynamicBitrateControl, bitrate, aggressiveChart, aggressiveNote,
   aggressiveParticle, challengeColor, challengeRank, noteScale, particle, particleSquare,
   hitFxRandomFlip, hitFxRandomFlipChance, hitFxFollowRotation,
-  playerAvatar, playerName, playerRks, sampleCount, speed, volumeMusic, volumeSfx, watermark,
+  playerAvatar, playerName, playerRks, sampleCount, speed, volumeMusic, volumeSfx, musicLeftGain, musicRightGain, sfxLeftGain, sfxRightGain, separateTracks, watermark,
   notecolor, rrHitFxColor, rrHitFxScale, rrHitFxSpeed, hitcolor, linecolor, roman, chinese, combo, difficulty, judgeOffset, forceLimit,
   limitThreshold,
   loudnessEqualization, audioMixOptimization, fileNameFormat, renderLine, renderLineExtra,
   renderNote, renderDoubleHint, renderPendingNote, pendingNoteColor, renderUiPause, renderUiName, renderUiLevel, renderUiDifficulty,
-  renderUiScore, renderUiCombo, renderUiBar, renderBg, renderBgDim, solidBg, backgroundDim,
+  renderUiScore, renderUiCombo, renderUiBar, flipChart, flipUi, mirrorAngle, renderBg, renderBgDim, solidBg, backgroundDim,
   // 谱面侧渲染参数：它们与谱面信息（ChartInfo）同名，`RenderView.buildParams()` 会并进 info，
   // **配置值优先** ⇒ 导入谱面不再覆盖这些设置（详见下面对「宽 : 高」与「偏移」的说明）
   forceAspectRatio, foldAnimation, pureConfigChart, pureConfigChartLineY, pureConfigChartSpeed,
@@ -286,6 +286,23 @@ watch(
   (dim) => { if (renderBgDim) renderBgDim.value = dim > 0; },
   { immediate: true },
 );
+
+/**
+ * 「颠倒界面」的总开关（一行三级菜单的 ✅/❌）：谱面颠倒 / 界面颠倒**任一个**开着就显示为开，
+ * 拨动它时两个一起开关；具体要哪一个去齿轮弹窗里单独勾。
+ * 拆成两个配置项（`flipChart` / `flipUi`）是因为两者互不相干：可以只镜像谱面、也可以只把界面转过来。
+ */
+const flipScreen = computed({
+  get: () => Boolean(flipChart?.value) || Boolean(flipUi?.value),
+  set: (value: boolean) => {
+    if (flipChart) flipChart.value = value;
+    if (flipUi) flipUi.value = value;
+  },
+});
+
+/**
+ * 「镜像角度」直接一个输入框，0（或 360 的整数倍）就是不镜像，没有额外的开关。
+ */
 
 /* ---------- 「谱面修改」六类互斥 + 按键那一类按勾选先后落地 ----------
  * 规则（哪几类互斥、次序表怎么维护）搬到了 `../config/chartModOrder`，这里只把那一套 watch 挂上。
@@ -858,9 +875,10 @@ defineExpose({
         </div>
       </PhiSection>
       <PhiSection id="sec-audio" :title="t('title.audio')">
-        <!-- 全部挤成一行：音乐音量 / 音效音量 / 音效限幅（文本框）
+        <!-- 全部挤成一行：音乐音量 / 音效音量 / 声道设定（文本框）
+             + 音效限幅（文本框）
              + 无损音频 / 响度均衡 / 混音优化 / 强制限幅（勾选框，格式与「渲染项目」一致） -->
-        <div class="cfg-grid"><CfgField :label="t('volume-music')" v-if="!loudnessEqualization"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeMusic"></v-text-field></CfgField><CfgField :label="t('volume-music-ratio')" v-if="loudnessEqualization"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeMusic"></v-text-field></CfgField><CfgField :label="t('volume-sfx')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeSfx"></v-text-field></CfgField><CfgField :label="t('limit-threshold')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" :disabled="!forceLimit" v-model="limitThreshold"></v-text-field></CfgField><CfgSwitch :label="t('hires')" v-model="hires" /><CfgSwitch :label="t('loudness-equalization')" v-model="loudnessEqualization" /><CfgSwitch :label="t('audio-mix-optimization')" v-model="audioMixOptimization" /><CfgSwitch :label="t('force-limit')" v-model="forceLimit" /></div>
+        <div class="cfg-grid"><CfgField :label="t('volume-music')" v-if="!loudnessEqualization"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeMusic"></v-text-field></CfgField><CfgField :label="t('volume-music-ratio')" v-if="loudnessEqualization"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeMusic"></v-text-field></CfgField><CfgField :label="t('volume-sfx')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="volumeSfx"></v-text-field></CfgField><PhiSubMenu id="sec3-channel" :label="t('channel-settings')" :tip="t('channel-settings-tip')" :model-value="false" no-toggle><div class="cfg-grid"><CfgField :label="t('music-left-gain')" :tip="t('channel-gain-tip')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="musicLeftGain"></v-text-field></CfgField><CfgField :label="t('music-right-gain')" :tip="t('channel-gain-tip')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="musicRightGain"></v-text-field></CfgField><CfgField :label="t('sfx-left-gain')" :tip="t('channel-gain-tip')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="sfxLeftGain"></v-text-field></CfgField><CfgField :label="t('sfx-right-gain')" :tip="t('channel-gain-tip')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" v-model="sfxRightGain"></v-text-field></CfgField><CfgSwitch :label="t('separate-tracks')" v-model="separateTracks" :tip="t('separate-tracks-tip')" /></div></PhiSubMenu><CfgField :label="t('limit-threshold')"><v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.positiveOrZero]" :disabled="!forceLimit" v-model="limitThreshold"></v-text-field></CfgField><CfgSwitch :label="t('hires')" v-model="hires" /><CfgSwitch :label="t('loudness-equalization')" v-model="loudnessEqualization" /><CfgSwitch :label="t('audio-mix-optimization')" v-model="audioMixOptimization" /><CfgSwitch :label="t('force-limit')" v-model="forceLimit" /></div>
       </PhiSection>
       <PhiSection id="sec-player" :title="t('title.player')">
         <!-- 全部挤成一行：头像 / RKS / 课题模式颜色 / 课题模式等级 / 玩家名（各占 1/5） -->
@@ -1026,9 +1044,9 @@ defineExpose({
              11 个参数（`WaterScreenSettings`）收进齿轮弹窗。这一行只占**一格**（一行三个里的第一个）；
            - 判定范围三级菜单行 / 判定模式 / 判定偏移；
            - 从「噪域」搬来的两项：岩浆噪域（`blockAreaLava`）与
-             强制定位（`blockAreaForcePosition` 三级菜单行），排在「判定模式」之前。
+             强制定位（`blockAreaForcePosition` 三级菜单行），排在「判定模式」之前；颠倒界面三级菜单行（`flipChart` / `flipUi`）紧跟岩浆噪域。
            本分区按全项目惯例排：勾选框与三级菜单行在前，文本框（判定模式 / 判定偏移 /
-           速度 / 上隐）在后。 -->
+           速度 / 上隐 / 镜像角度）在后；镜像角度紧跟上隐。 -->
       <!-- ===== 谱面修改 =====
            这些功能同属一层：谱面文件不动，只改内存里刚解析出来的判定线与按键，所以预览、渲染、分屏
            走的是同一份转换，dps 里的入口只有一个（`Chart::apply_chart_mods`）。
@@ -1183,6 +1201,14 @@ defineExpose({
                 （`:disabled` 里没有 `|| blockAreaLava`，useRenderConfig.ts 也没有对应 watch），
                 改由引擎在代码层面直接忽略这三项。 -->
           <CfgSwitch :label="t('block-area-lava')" v-model="blockAreaLava" :disabled="!renderBlockArea || simplifiedBlockArea" :tip="t('block-area-lava-tip')" />
+          <!-- 颠倒界面：✅/❌ 是总开关（两个一起开关），齿轮弹窗里分别控制谱面与界面；
+               谱面颠倒 = 沿屏幕水平中线镜像，界面颠倒 = 文字与贴图原地转 180°（位置不变）。 -->
+          <PhiSubMenu id="sec3-flip-screen" :label="t('flip-screen')" :tip="t('flip-screen-tip')" v-model="flipScreen">
+            <div class="cfg-grid">
+              <CfgSwitch :label="t('flip-chart')" v-model="flipChart" :tip="t('flip-chart-tip')" />
+              <CfgSwitch :label="t('flip-ui')" v-model="flipUi" :tip="t('flip-ui-tip')" />
+            </div>
+          </PhiSubMenu>
           <PhiSubMenu id="sec3-force-position" :label="t('block-area-force-position')" :tip="t('block-area-force-position-tip')" :disabled="!renderBlockArea" v-model="blockAreaForcePosition">
             <div class="cfg-grid">
               <CfgSwitch :label="t('block-area-force-show')" v-model="blockAreaForceShow" :disabled="!renderBlockArea" :tip="t('block-area-force-show-tip')" />
@@ -1199,6 +1225,11 @@ defineExpose({
           <!-- 速度与上/下隐在本分区（谱面组的「更多」），取值与校验规则见下。 -->
           <CfgField :label="t('speed')" :tip="t('speed-tip')"><v-combobox density="compact" hide-details="auto" v-model="speed" type="number" :items="speedList" :rules="[RULES.notEmpty, RULES.positive, RULES.less100, RULES.greater0_01]"></v-combobox></CfgField>
           <CfgField :label="t('fade')"><v-text-field density="compact" hide-details="auto" :title="t('fade-tip')" v-model="fade" type="number" :rules="[RULES.notEmpty]"></v-text-field></CfgField>
+          <!-- 镜像角度：直接填角度，0（或 360 的整数倍）就是不镜像；镜线与屏幕水平线的夹角、
+               顺时针为正，自动对 360 取余，叠加在颠倒界面之后。 -->
+          <CfgField :label="t('mirror-angle')" :tip="t('mirror-angle-tip')">
+            <v-text-field density="compact" hide-details="auto" type="number" :rules="[RULES.notEmpty, RULES.number]" :model-value="String(mirrorAngle)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) mirrorAngle = n; }"></v-text-field>
+          </CfgField>
         </div>
       </PhiSection>
 

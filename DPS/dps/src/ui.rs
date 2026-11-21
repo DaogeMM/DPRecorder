@@ -101,15 +101,18 @@ pub struct VertexBuilder<T: Shading> {
     vertices: Vec<Vertex>,
     indices: Vec<u16>,
     shading: T,
+    /// 「颠倒界面」：提交时把这批顶点整体绕包围盒中心转 180°（见 [`Ui::flip_ui`]）。
+    flip_ui: bool,
 }
 
 impl<T: Shading> VertexBuilder<T> {
-    fn new(matrix: Matrix, shading: T) -> Self {
+    fn new(matrix: Matrix, shading: T, flip_ui: bool) -> Self {
         Self {
             matrix,
             vertices: Vec::new(),
             indices: Vec::new(),
             shading,
+            flip_ui,
         }
     }
 
@@ -127,8 +130,47 @@ impl<T: Shading> VertexBuilder<T> {
         let gl = unsafe { get_internal_gl() }.quad_gl;
         gl.texture(self.shading.texture());
         gl.draw_mode(DrawMode::Triangles);
-        gl.geometry(&self.vertices, &self.indices);
+        if self.flip_ui {
+            gl.geometry(&flipped_geometry(self.vertices.iter()), &self.indices);
+        } else {
+            gl.geometry(&self.vertices, &self.indices);
+        }
     }
+}
+
+/// 一个顶点的分量：(位置, uv, 颜色)。与 `quad_gl::VertexInterop` 展开后同型，
+/// 可以直接交给 `quad_gl.geometry` —— 这样「颠倒界面」改坐标时不必碰 `Vertex`
+/// 的私有字段，也不会经历 u8 ↔ f32 的颜色往返。
+type VertexParts = ([f32; 3], [f32; 2], [f32; 4]);
+
+fn parts_of(v: &Vertex) -> VertexParts {
+    (*v).into()
+}
+
+/// 把一批顶点整体绕它们的包围盒中心转 180°：只改位置，uv 与颜色原样保留。
+///
+/// 「颠倒界面」要求 UI 元素**位置不变、只转 180°**，所以旋转中心取这批顶点自己的
+/// 包围盒中心 —— 一个矩形转完还落在原处，贴图与文字则倒过来。字形是逐 4 顶点一次
+/// 提交的，整批一起转才不会把一句话拆散（见 `TextPainter::redraw`）。
+pub(crate) fn flipped_geometry<'a>(vertices: impl Iterator<Item = &'a Vertex> + Clone) -> Vec<VertexParts> {
+    let mut min = [f32::MAX; 2];
+    let mut max = [f32::MIN; 2];
+    for v in vertices.clone() {
+        let pos = parts_of(v).0;
+        min[0] = min[0].min(pos[0]);
+        min[1] = min[1].min(pos[1]);
+        max[0] = max[0].max(pos[0]);
+        max[1] = max[1].max(pos[1]);
+    }
+    let center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+    vertices
+        .map(|v| {
+            let (mut pos, uv, color) = parts_of(v);
+            pos[0] = center[0] * 2. - pos[0];
+            pos[1] = center[1] * 2. - pos[1];
+            (pos, uv, color)
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -528,6 +570,14 @@ pub struct Ui<'a> {
 
     pub text_painter: &'a mut TextPainter,
 
+    /// 「颠倒界面」：为真时这一帧画出去的 UI 元素各自绕自身包围盒中心转 180°，
+    /// 位置不动（游戏内 UI 由 `Game::render` 在画 HUD / 暂停界面之前打开）。
+    ///
+    /// 只对 [`Ui`] 自己的绘制通路生效（`fill_rect` / `fill_path` / `fill_circle` /
+    /// `stroke_*` / `text`），因为它们在提交顶点时都经过这里；判定线、噪域那些走
+    /// `Chart` 模型的绘制由谱面镜像负责，不受它影响。
+    pub flip_ui: bool,
+
     model_stack: Vec<Matrix>,
     touches: Option<Vec<Touch>>,
 
@@ -549,6 +599,8 @@ impl<'a> Ui<'a> {
             text_scale: 1.,
 
             text_painter,
+
+            flip_ui: false,
 
             model_stack: vec![Matrix::identity()],
             touches: None,
@@ -581,7 +633,7 @@ impl<'a> Ui<'a> {
     }
 
     pub fn builder<T: IntoShading>(&self, shading: T) -> VertexBuilder<T::Target> {
-        VertexBuilder::new(self.get_matrix(), shading.into_shading())
+        VertexBuilder::new(self.get_matrix(), shading.into_shading(), self.flip_ui)
     }
 
     pub fn fill_rect(&mut self, rect: Rect, shading: impl IntoShading) {
@@ -694,7 +746,13 @@ impl<'a> Ui<'a> {
         let gl = unsafe { get_internal_gl() }.quad_gl;
         gl.texture(texture);
         gl.draw_mode(DrawMode::Triangles);
-        gl.geometry(&std::mem::take(&mut self.vertex_buffers.vertices), &std::mem::take(&mut self.vertex_buffers.indices));
+        let indices = std::mem::take(&mut self.vertex_buffers.indices);
+        let vertices = std::mem::take(&mut self.vertex_buffers.vertices);
+        if self.flip_ui {
+            gl.geometry(&flipped_geometry(vertices.iter()), &indices);
+        } else {
+            gl.geometry(&vertices, &indices);
+        }
     }
 
     pub fn get_matrix(&self) -> Matrix {

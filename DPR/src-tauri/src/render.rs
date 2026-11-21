@@ -164,6 +164,15 @@ pub struct RenderConfig {
     pub speed: f32,
     pub volume_music: f32,
     pub volume_sfx: f32,
+    /// 「声道设定」· 音乐：左/右声道增益（1 = 原样，0 = 该声道静音，可大于 1 放大）。
+    pub music_left_gain: f32,
+    pub music_right_gain: f32,
+    /// 「声道设定」· 按键音：左/右声道增益（含义同上）。
+    pub sfx_left_gain: f32,
+    pub sfx_right_gain: f32,
+    /// 「分离音轨」：音乐（含结尾曲）与按键音各输出一条音轨，不再混成一条。
+    /// 成片里音轨 0 = 音乐、1 = 按键音；进水 / 受伤音效跟着按键音那条。
+    pub separate_tracks: bool,
     pub force_limit: bool,
     pub limit_threshold: f32,
     pub loudness_equalization: bool,
@@ -203,6 +212,13 @@ pub struct RenderConfig {
     pub render_ui_score: bool,
     pub render_ui_combo: bool,
     pub render_ui_bar: bool,
+    /// 颠倒界面 · 谱面：谱面相对屏幕的水平中线镜像（判定线、按键、噪域、打击特效一起）
+    pub flip_chart: bool,
+    /// 颠倒界面 · 界面：分数 / 连击 / 曲名 / 难度等界面元素原地转 180°（位置不变）
+    pub flip_ui: bool,
+    /// 镜像角度：按给定角度（度，自动对 360 取余）镜像谱面；0 表示不镜像。
+    /// 叠加在 `flip_chart` / `flip_x` 之后，判定线、按键、噪域、打击特效与触控判定一起镜像。
+    pub mirror_angle: f32,
     /// 「报应SP」特殊演出：由输入谱面的文件名强制开启（见 `is_baoying_sp_chart`），
     /// 不是配置项 —— 前端不传，配置里写了也会在 `generate_resource` 里按文件名覆盖。
     /// 开启时界面上的分数、连击数、难度与曲名改用 `RetriSP` 资源包里的手绘贴图。
@@ -775,6 +791,9 @@ impl RenderConfig {
             render_ui_score: self.render_ui_score,
             render_ui_combo: self.render_ui_combo,
             render_ui_bar: self.render_ui_bar,
+            flip_chart: self.flip_chart,
+            flip_ui: self.flip_ui,
+            mirror_angle: self.mirror_angle,
             baoying_sp_mode: self.baoying_sp,
             baoying_sp_wow_height: self.baoying_sp_wow_height,
             baoying_sp_wow_offset_x: self.baoying_sp_wow_offset_x,
@@ -1063,6 +1082,11 @@ impl Default for RenderConfig {
             speed: 1.0,
             volume_music: 0.5,
             volume_sfx: 0.4,
+            music_left_gain: 1.0,
+            music_right_gain: 1.0,
+            sfx_left_gain: 1.0,
+            sfx_right_gain: 1.0,
+            separate_tracks: false,
             force_limit: true,
             limit_threshold: 0.5,
             loudness_equalization: false,
@@ -1106,6 +1130,9 @@ impl Default for RenderConfig {
             render_ui_score: true,
             render_ui_combo: true,
             render_ui_bar: true,
+            flip_chart: false,
+            flip_ui: false,
+            mirror_angle: 0.,
             baoying_sp: false,
             baoying_sp_wow_height: base.baoying_sp_wow_height,
             baoying_sp_wow_offset_x: base.baoying_sp_wow_offset_x,
@@ -2151,6 +2178,19 @@ fn resample_to(clip: &AudioClip, target_rate: u32, name: &str) -> AudioClip {
     AudioClip::from_raw(out, target_rate)
 }
 
+/// 把「声道设定」编成 ffmpeg 滤镜片段：先统一成立体声，再按增益收放左右声道。
+///
+/// 单声道素材（按键音就是）先 `aformat` 复制成两个声道，`pan` 的 `c0`/`c1` 才有意义；
+/// 两个增益都是 1 时返回空串，成片音轨保持原样、不加多余滤镜。
+/// 增益小于 0 没有物理意义，这里按下限 0（静音）处理。
+fn channel_gain_filter(left: f32, right: f32) -> String {
+    let (left, right) = (left.max(0.), right.max(0.));
+    if left == 1. && right == 1. {
+        return String::new();
+    }
+    format!(",aformat=channel_layouts=stereo,pan=stereo|c0={left}*c0|c1={right}*c1")
+}
+
 pub async fn main(cmd: bool) -> Result<()> {
     // 渲染全程静音：引擎里的实时播放（AUTOPLAY 按键音、进水受击 / 死亡音效、BGM、结尾曲）
     // 只是在跑帧时被听见，成片的音轨全部由这个进程离线合成 / 混流 ⇒ 直接关掉实时播放。
@@ -2170,6 +2210,11 @@ pub async fn main(cmd: bool) -> Result<()> {
     let mut painter = TextPainter::new(font);
     let volume_music = std::mem::take(&mut config.volume_music);
     let volume_sfx = std::mem::take(&mut config.volume_sfx);
+    // 「声道设定」只影响成片：这里先把两组增益编成滤镜片段。
+    // 音乐（含结尾曲）在主 ffmpeg 那一趟用；真正的打击音要等帧跑完才知道哪些溺水死亡了，
+    // 是在最后那趟 remux 里混进来的，所以按键音的片段留到 remux 再用。
+    let music_channel_gain = channel_gain_filter(config.music_left_gain, config.music_right_gain);
+    let sfx_channel_gain = channel_gain_filter(config.sfx_left_gain, config.sfx_right_gain);
     let mut prpr_config = config.to_config();
     prpr_config.mods = Mods::AUTOPLAY;
     // 资源包：跟着 config 里选的那份走；没选、或选中的包已被删掉，就用默认皮肤
@@ -2818,6 +2863,9 @@ pub async fn main(cmd: bool) -> Result<()> {
         String::new()
     };
     ffmpeg_audio_filter_music += &ffmpeg_audio_filter_music_speed;
+    // 音乐的左右声道放在最后：音量 / 变速都处理完，再按最终的立体声画面收放两个声道。
+    // 按键音这一趟只是静音占位（真正的音轨在最后那趟 remux 里混进来），不在这里加。
+    ffmpeg_audio_filter_music += &music_channel_gain;
     ffmpeg_audio_filter_music += "[a2];";
 
     let mut ffmpeg_audio_filter_sfx = format!("[1:a]volume={}", volume_sfx);
@@ -2834,16 +2882,39 @@ pub async fn main(cmd: bool) -> Result<()> {
     ffmpeg_audio_filter_sfx += &ffmpeg_audio_filter_sfx_limit;
     ffmpeg_audio_filter_sfx += "[a1];";
 
+    // 结尾曲也是音乐，左右声道跟音乐走同一组增益。
     let ffmpeg_audio_filter_ending = format!(
-        "[3:a]volume={},adelay={}[a3];",
-        volume_music, output_ending_music_delay_string
+        "[3:a]volume={}{},adelay={}[a3];",
+        volume_music, music_channel_gain, output_ending_music_delay_string
     );
 
-    let ffmpeg_audio_filter_mix = if config.hires {
-        format!("[a1][a2][a3]amix=inputs=3:duration=first:normalize=0[a]")
+    // 「分离音轨」：音乐（含结尾曲）与按键音各出一条轨，不再 amix 到一起。
+    // 音轨顺序固定为 0 = 音乐、1 = 按键音；`[a1]` 这一趟只是等长静音占位，
+    // 拿它 `asplit` 一份给音乐轨定长（原来 mix 时也是靠它 `duration=first` 对齐视频长度）。
+    let (ffmpeg_audio_filter_mix, ffmpeg_audio_map) = if config.separate_tracks {
+        let music_track = if config.hires {
+            "[a1]asplit=2[a1s][a1m];[a1m][a2][a3]amix=inputs=3:duration=first:normalize=0[am]".to_owned()
+        } else {
+            "[a1]asplit=2[a1s][a1m];[a1m][a2][a3]amix=inputs=3:duration=first:normalize=0[am0];[am0]alimiter=limit=1.0:level=false:attack=0.1:release=1[am]".to_owned()
+        };
+        let sfx_track = if config.hires {
+            "[a1s]anull[as]".to_owned()
+        } else {
+            "[a1s]alimiter=limit=1.0:level=false:attack=0.1:release=1[as]".to_owned()
+        };
+        (
+            format!("{music_track};{sfx_track}"),
+            " -map [am] -map [as]".to_owned(),
+        )
+    } else if config.hires {
+        (
+            "[a1][a2][a3]amix=inputs=3:duration=first:normalize=0[a]".to_owned(),
+            " -map [a]".to_owned(),
+        )
     } else {
-        format!(
-            "[a1][a2][a3]amix=inputs=3:duration=first:normalize=0[aa];[aa]alimiter=limit=1.0:level=false:attack=0.1:release=1[a]"
+        (
+            "[a1][a2][a3]amix=inputs=3:duration=first:normalize=0[aa];[aa]alimiter=limit=1.0:level=false:attack=0.1:release=1[a]".to_owned(),
+            " -map [a]".to_owned(),
         )
     };
 
@@ -2877,7 +2948,7 @@ pub async fn main(cmd: bool) -> Result<()> {
     let pixel_format = if gpu_color_convert { "rgba" } else { "yuv420p" };
 
     let mut args2 = format!(
-        "-c:a {} -c:v {} -movflags +faststart -pix_fmt {} {} {} -filter_complex {} -map 0:v:0 -map [a]{} -f {}",
+        "-c:a {} -c:v {} -movflags +faststart -pix_fmt {} {} {} -filter_complex {} -map 0:v:0{}{} -f {}",
         if config.hires {
             "pcm_f32le"
         } else {
@@ -2888,6 +2959,7 @@ pub async fn main(cmd: bool) -> Result<()> {
         bitrate_control,
         config.bitrate,
         ffmpeg_audio_filter,
+        ffmpeg_audio_map,
         vflip_filter,
         if config.hires { "mov" } else { "mp4" }
     );
@@ -3201,6 +3273,8 @@ pub async fn main(cmd: bool) -> Result<()> {
             config.hires,
             config.force_limit,
             config.limit_threshold,
+            &sfx_channel_gain,
+            config.separate_tracks,
         ) {
             Ok(()) => stages.push(("混音", water_time.elapsed())),
             Err(err) => crate::console!(warn, "[混音] 混入进水 / 打击音轨失败（视频本身正常）：{err}"),
@@ -3317,6 +3391,8 @@ fn mix_water_sfx(
     hires: bool,
     force_limit: bool,
     limit_threshold: f32,
+    sfx_channel_gain: &str,
+    separate_tracks: bool,
 ) -> Result<()> {
     let sample_rate_f64 = sample_rate as f64;
 
@@ -3420,11 +3496,12 @@ fn mix_water_sfx(
     }
     drop(water);
 
-    // 4) remux：视频流原样 copy，把进水音轨 / 打击音轨 amix 进原音轨
+    // 4) remux：视频流原样 copy，把进水音轨 / 打击音轨混进原音轨
     let mut chain = String::new();
     if sfx_wav.is_some() {
-        // 打击音轨原本是主 ffmpeg 用 `[1:a]volume=<volume_sfx>` 加进去的，这里补上同一份增益
-        chain += &format!("[2:a]volume={}[s];", volume_sfx);
+        // 打击音轨在主 ffmpeg 那一趟只是 `[1:a]volume=<volume_sfx>` 的静音占位，
+        // 真正的声音在这里补上音量与左右声道（和音乐那一路同一套「先立体声再 pan」）。
+        chain += &format!("[2:a]volume={}{}[s];", volume_sfx, sfx_channel_gain);
     }
     chain += "[1:a]";
     if force_limit {
@@ -3435,17 +3512,35 @@ fn mix_water_sfx(
     } else {
         chain += "anull";
     }
-    chain += "[w];[0:a][w]";
-    if sfx_wav.is_some() {
-        chain += "[s]amix=inputs=3:duration=first:normalize=0";
+    chain += "[w];";
+    let map = if separate_tracks {
+        // 分离音轨：音乐那条原样带过，进水与打击音只混进按键音那条（0 = 音乐、1 = 按键音）。
+        chain += "[0:a:0]anull[am];[0:a:1][w]";
+        if sfx_wav.is_some() {
+            chain += "[s]amix=inputs=3:duration=first:normalize=0[as0];";
+        } else {
+            chain += "amix=inputs=2:duration=first:normalize=0[as0];";
+        }
+        if hires {
+            chain += "[as0]anull[as]";
+        } else {
+            chain += "[as0]alimiter=limit=1.0:level=false:attack=0.1:release=1[as]";
+        }
+        " -map [am] -map [as]"
     } else {
-        chain += "amix=inputs=2:duration=first:normalize=0";
-    }
-    if hires {
-        chain += "[a]";
-    } else {
-        chain += "[a0];[a0]alimiter=limit=1.0:level=false:attack=0.1:release=1[a]";
-    }
+        chain += "[0:a][w]";
+        if sfx_wav.is_some() {
+            chain += "[s]amix=inputs=3:duration=first:normalize=0";
+        } else {
+            chain += "amix=inputs=2:duration=first:normalize=0";
+        }
+        if hires {
+            chain += "[a]";
+        } else {
+            chain += "[a0];[a0]alimiter=limit=1.0:level=false:attack=0.1:release=1[a]";
+        }
+        " -map [a]"
+    };
 
     let mixed_path = output_path.with_extension(if hires {
         "water.mov"
@@ -3453,13 +3548,14 @@ fn mix_water_sfx(
         "water.mp4"
     });
     let args = format!(
-        "-c:a {} -c:v copy -movflags +faststart -filter_complex {} -map 0:v:0 -map [a] -f {}",
+        "-c:a {} -c:v copy -movflags +faststart -filter_complex {} -map 0:v:0{} -f {}",
         if hires {
             "pcm_f32le"
         } else {
             "aac -b:a 320k"
         },
         chain,
+        map,
         if hires { "mov" } else { "mp4" }
     );
     let mut remux = cmd_hidden(ffmpeg);

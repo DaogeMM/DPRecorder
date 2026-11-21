@@ -389,12 +389,24 @@ pub fn render_all(
         return;
     }
     set_simplified(simplified);
-    // 谱面开了水平镜像时，方块也要跟着镜像。掩码栅格化与 `fieldUV` 都按 chart 空间算，
-    // 所以把镜像折进 zone（x -> -x、angle -> -angle），而不是去翻场。
-    if flip_x {
+    // 谱面开了镜像时，方块也要跟着镜像。掩码栅格化与 `fieldUV` 都按 chart 空间算，
+    // 所以把镜像折进 zone，而不是去翻场：先按 flip_x / flip_chart 翻（`diag(fx, -fy)`），
+    // 再叠加「镜像角度」。噪域层 y 向上，与谱面模型（y 向下）差一次 y 翻转，
+    // 同一个镜面在这里是 `A(-θ)`；矩形对 180° 旋转对称，角度由镜像后的方向反解即可。
+    let flip_y = res.config.flip_chart;
+    let mirror = res.mirror_angle();
+    if flip_x || flip_y || mirror.is_some() {
+        let fx = if flip_x { -1. } else { 1. };
+        let fy = if flip_y { -1. } else { 1. };
         for z in &mut zones {
-            z.center.x = -z.center.x;
-            z.angle = -z.angle;
+            let mut center = Vector::new(fx * z.center.x, fy * z.center.y);
+            let mut dir = Vector::new(fx * z.angle.cos(), fy * z.angle.sin());
+            if let Some(angle) = mirror {
+                center = Resource::mirror_vector(-angle, center);
+                dir = Resource::mirror_vector(-angle, dir);
+            }
+            z.center = center;
+            z.angle = dir.y.atan2(dir.x);
         }
     }
     // 「强制定位」：这一帧每个按键周围的长方形同样变成**合成块**（覆盖度写满 1.0），
@@ -419,6 +431,7 @@ pub fn render_all(
             res.config.simplified_block_area_text_color,
             res.config.simplified_block_area_text_pale_color,
             res.block_area_chart_scale,
+            flip_y,
         );
     }
 }
@@ -511,7 +524,7 @@ const DIGIT_ROWS: [[u8; GLYPH_H]; 10] = [
 ///
 /// 印的号取自 `Zone::index`：关掉「噪域优化」时是条目序号，打开后是噪域编号
 ///（`collect` 决定），这里不再分辨。
-fn draw_zone_numbers(aspect: f32, zones: &[Zone], active_color: [f32; 3], pale_color: [f32; 3], k: [f32; 2]) {
+fn draw_zone_numbers(aspect: f32, zones: &[Zone], active_color: [f32; 3], pale_color: [f32; 3], k: [f32; 2], flip_y: bool) {
     let (proj_x, proj_y) = {
         let gl = unsafe { get_internal_gl() };
         let proj = gl.quad_gl.get_projection_matrix();
@@ -553,11 +566,15 @@ fn draw_zone_numbers(aspect: f32, zones: &[Zone], active_color: [f32; 3], pale_c
             let Some(rows) = DIGIT_ROWS.get(digit) else { continue };
             let dx = x0 + advance * i as f32;
             for (r, row) in rows.iter().enumerate() {
+                // 「颠倒界面」：方块整体沿水平中线镜像之后，编号也要跟着上下翻，
+                // 否则一排镜像过的方块里只有数字是正立的。把行序倒过来即可 ——
+                // 左右顺序只在横向镜像（`flip_x`）时才需要动，这里不动。
+                let row_index = if flip_y { GLYPH_H - 1 - r } else { r };
                 for c in 0..GLYPH_W {
                     if row & (1 << (GLYPH_W - 1 - c)) != 0 {
                         draw_rectangle(
                             dx + c as f32 * cell_x,
-                            y_top - (r + 1) as f32 * cell,
+                            y_top - (row_index + 1) as f32 * cell,
                             cell_x,
                             cell,
                             color,

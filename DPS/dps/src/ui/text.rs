@@ -207,13 +207,14 @@ impl<'a, 's, 'ui> DrawText<'a, 's, 'ui> {
         } else {
             Self::paint_on(self.ui.text_painter, section, scale, self.multiline);
         }
+        let flip_ui = self.ui.flip_ui;
         self.ui
             .with((Matrix::new_scaling(1. / s) * self.scale).append_translation(&Vector::new(rect.x, rect.y)), |ui| {
                 ui.apply(|ui| {
                     if let Some(painter) = painter {
-                        painter.submit();
+                        painter.submit(flip_ui);
                     } else {
-                        ui.text_painter.submit();
+                        ui.text_painter.submit(flip_ui);
                     }
                 });
             });
@@ -273,7 +274,8 @@ impl TextPainter {
         self.brush.fonts()[0].as_scaled(scale).line_gap()
     }
 
-    fn submit(&mut self) {
+    /// `flip` 是「颠倒界面」：为真时整句话的字形绕包围盒中心转 180°（见 [`TextPainter::redraw`]）。
+    fn submit(&mut self, flip: bool) {
         let mut flushed = false;
         loop {
             match self.brush.process_queued(
@@ -325,22 +327,31 @@ impl TextPainter {
                 Ok(BrushAction::Draw(vertices)) => {
                     self.vertices_buffer.clear();
                     self.vertices_buffer.extend(vertices.into_iter().flatten());
-                    self.redraw();
+                    self.redraw(flip);
                     break;
                 }
                 Ok(BrushAction::ReDraw) => {
-                    self.redraw();
+                    self.redraw(flip);
                     break;
                 }
             }
         }
     }
 
-    fn redraw(&self) {
+    fn redraw(&self, flip: bool) {
         let gl = unsafe { get_internal_gl() }.quad_gl;
         gl.texture(Some(self.cache_texture));
-        for vertices in self.vertices_buffer.chunks_exact(4) {
-            gl.geometry(vertices, &[0, 2, 3, 0, 1, 3]);
+        // 「颠倒界面」：一句话的所有字形要作为**一个整体**绕包围盒中心转 180°。
+        // 逐 4 顶点各转一次只会让每个字原地倒置、字序不动，那不是转整块 UI。
+        if flip {
+            let vertices = super::flipped_geometry(self.vertices_buffer.iter());
+            for quad in vertices.chunks_exact(4) {
+                gl.geometry(quad, &[0, 2, 3, 0, 1, 3]);
+            }
+        } else {
+            for quad in self.vertices_buffer.chunks_exact(4) {
+                gl.geometry(quad, &[0, 2, 3, 0, 1, 3]);
+            }
         }
     }
 }

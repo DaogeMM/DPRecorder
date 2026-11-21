@@ -2211,6 +2211,9 @@ impl Scene for GameScene {
 
     fn render(&mut self, tm: &mut TimeManager, ui: &mut Ui) -> Result<()> {
         let res = &mut self.res;
+        // 「颠倒界面」的界面开关整帧不变，先存一份：后面几段会轮流借用 `self.res`，
+        // 直接在 UI 那两处读 `res.config` 会把这次可变借用拖到帧尾。
+        let flip_ui = res.config.flip_ui;
 
         let time = tm.now();
         let p = match self.state {
@@ -2445,7 +2448,12 @@ impl Scene for GameScene {
                 render_target: self.res.chart_onto(),
                 ..Default::default()
             });
+            // 「颠倒界面」：屏幕上的界面整体转 180° —— 每个元素绕自身包围盒中心转，
+            // 位置照旧（分数仍在右上角，只是倒过来）。画完立刻关掉，判定线文字、
+            // 待判染色那些走 `Chart` 模型的绘制只跟谱面镜像走。
+            ui.flip_ui = flip_ui;
             self.ui(ui, tm)?;
+            ui.flip_ui = false;
         }
 
         // 方块图层：放在最高层 —— 压在分数 / 连击 / 暂停键（`renderUiPause` 等）以及
@@ -2519,7 +2527,10 @@ impl Scene for GameScene {
                 render_target: self.res.chart_onto(),
                 ..Default::default()
             });
+            // 「颠倒界面」：暂停菜单等覆盖层同属屏幕界面，一起转（见上面 HUD 那处）。
+            ui.flip_ui = flip_ui;
             self.overlay_ui(ui, tm)?;
+            ui.flip_ui = false;
         }
 
         // 「待判按键」染色：噪域之后单独走一小趟，相机与**谱面那一趟**完全一致

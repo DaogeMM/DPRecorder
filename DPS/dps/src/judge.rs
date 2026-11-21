@@ -578,7 +578,7 @@ impl Judge {
         )
     }
 
-    fn touch_transform(flip_x: bool, scale: f32, angle: f32, low_resolution_mode: bool) -> impl Fn(&mut Touch) {
+    fn touch_transform(flip_x: bool, flip_y: bool, mirror: Option<f32>, scale: f32, angle: f32, low_resolution_mode: bool) -> impl Fn(&mut Touch) {
         let vp = get_viewport();
         move |touch| {
             let p = if low_resolution_mode {
@@ -593,6 +593,16 @@ impl Judge {
             if flip_x {
                 touch.position.x *= -1.;
             }
+            if flip_y {
+                touch.position.y *= -1.;
+            }
+            if let Some(mirror_angle) = mirror {
+                // 「镜像角度」属于屏幕空间，叠在两个 flip 之后（与 `chart_model` 的
+                // `A * F` 同序），这样判定点才和看到的镜像谱面对齐。
+                let (sin, cos) = (2. * mirror_angle).to_radians().sin_cos();
+                let p = touch.position;
+                touch.position = vec2(p.x * cos + p.y * sin, p.x * sin - p.y * cos);
+            }
             touch.position = Self::rotate_vec2(touch.position, angle);
             touch.position /= scale;
         }
@@ -601,7 +611,7 @@ impl Judge {
     pub fn get_touches(scale: f32, low_resolution_mode: bool) -> Vec<Touch> {
         TOUCHES.with(|it| {
             let guard = it.borrow();
-            let tr = Self::touch_transform(false, scale, 0., low_resolution_mode);
+            let tr = Self::touch_transform(false, false, None, scale, 0., low_resolution_mode);
             guard
                 .0
                 .iter()
@@ -687,7 +697,14 @@ impl Judge {
                     time: f64::NEG_INFINITY,
                 });
             }
-            let tr = Self::touch_transform(res.config.flip_x(), res.config.chart_ratio, angle, res.config.low_resolution_mode);
+            let tr = Self::touch_transform(
+                res.config.flip_x(),
+                res.config.flip_chart,
+                res.mirror_angle(),
+                res.config.chart_ratio,
+                angle,
+                res.config.low_resolution_mode,
+            );
             touches
                 .into_iter()
                 .map(|mut it| {
@@ -1195,6 +1212,9 @@ impl Judge {
                 }
                 Judgement::Bad => {
                     if !matches!(note.kind, NoteKind::Hold { .. }) {
+                        // 坏键标记按谱面坐标摆放（渲染时走 `with_model(self.matrix)`），
+                        // 所以要补上谱面模型矩阵，才能和「颠倒界面」/水平镜像对齐。
+                        let chart_model = res.chart_model();
                         bad_notes.push(BadNote {
                             time: t,
                             kind: note.kind.clone(),
@@ -1210,7 +1230,7 @@ impl Judge {
                                 if !note.above {
                                     note_transform.append_nonuniform_scaling_mut(&Vector::new(1.0, -1.0));
                                 }
-                                line_tr * note_transform
+                                chart_model * line_tr * note_transform
                             },
                         });
                     }

@@ -185,6 +185,23 @@ pub struct Config {
     pub render_ui_score: bool,
     pub render_ui_combo: bool,
     pub render_ui_bar: bool,
+    /// 「颠倒界面」的谱面开关：谱面相对屏幕的水平中线（中心 X 轴）镜像。
+    ///
+    /// 靠 `Chart::render` 的模型矩阵把 y 比例取反实现（与 `flip_x` 的 x 比例取反对称），
+    /// 噪域、判定线文字、打击特效与坏键标记都跟着模型走。与 `flip_x` 可以同时开启；
+    /// 与 `flip_ui`（界面颠倒）各自独立。
+    pub flip_chart: bool,
+    /// 「颠倒界面」的界面开关：分数 / 连击 / 曲名 / 难度等界面元素原地转 180°（位置不变）。
+    ///
+    /// 游戏内 UI 由 `Ui::flip_ui` 逐个元素绕自身包围盒中心旋转；谱面本身不受它影响，
+    /// 见 `flip_chart`。
+    pub flip_ui: bool,
+    /// 「镜像角度」：谱面按给定角度做镜像（度，自动对 360 取余）。
+    ///
+    /// 0（含 360 的整数倍）表示不镜像；其余值是镜线与屏幕水平线的夹角，顺时针为正。
+    /// 它独立叠加在 `flip_x` / `flip_chart` 之后 —— 先按那两个开关摆好谱面，再整体镜像；
+    /// 判定线、按键、噪域、打击特效与触控判定都跟着一起镜像。
+    pub mirror_angle: f32,
     /// 「雪降SP」特殊演出：由输入谱面的文件名强制开启，**不暴露成配置项**（配置文件里留空即可）。
     ///
     /// 打开后右下角难度文本与分数改成伪装值、240 COMBO 处把分数滚回真实值、
@@ -887,6 +904,9 @@ impl Default for Config {
             render_ui_score: true,
             render_ui_combo: true,
             render_ui_bar: true,
+            flip_chart: false,
+            flip_ui: false,
+            mirror_angle: 0.,
             xuejiang_sp_mode: false,
             xuejiang_sp_fake_notes: a.xuejiang.fake_notes,
             xuejiang_sp_fake_bar_seconds: a.xuejiang.fake_bar_seconds,

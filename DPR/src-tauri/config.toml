@@ -62,6 +62,9 @@ renderUiDifficulty = true
 renderUiScore = true
 renderUiCombo = true
 renderUiBar = true
+flipChart = false        # 颠倒界面 · 谱面：谱面沿屏幕水平中线镜像（判定线、按键、噪域、打击特效一起）
+flipUi = false           # 颠倒界面 · 界面：分数 / 连击 / 曲名 / 难度等界面元素原地转 180°（位置不变）
+mirrorAngle = 0          # 镜像角度：按给定角度（度，自动对 360 取余）镜像谱面；0 表示不镜像，叠加在 flip 之后
 renderBg = true
 preserveFramebuffer = false
 renderBgDim = true
@@ -203,6 +206,11 @@ audioMixOptimization = true
 
 volumeMusic = 0.5
 volumeSfx = 0.4
+musicLeftGain = 1.0             # 音乐左/右声道增益（1 = 原样，0 = 静音）
+musicRightGain = 1.0
+sfxLeftGain = 1.0               # 按键音左/右声道增益
+sfxRightGain = 1.0
+separateTracks = false          # 分离音轨：音乐 / 按键音各一条（0 = 音乐、1 = 按键音）
 forceLimit = true
 limitThreshold = 0.5
 

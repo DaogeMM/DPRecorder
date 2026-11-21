@@ -75,6 +75,9 @@ const ALLOWED: &[(&str, Kind)] = &[
     ("renderUiScore", Kind::Bool),
     ("renderUiCombo", Kind::Bool),
     ("renderUiBar", Kind::Bool),
+    ("flipChart", Kind::Bool),
+    ("flipUi", Kind::Bool),
+    ("mirrorAngle", Kind::Number),
     // 噪域
     ("renderBlockArea", Kind::Bool),
     ("blockAreaHover", Kind::Bool),
