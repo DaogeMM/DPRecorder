@@ -44,6 +44,8 @@ mod inner;
 use inner::*;
 
 pub const WAIT_TIME: f64 = 0.5;
+/// 按键写到音乐结束之后时，结束时刻在最后一个按键之后再留的余量（秒）。
+pub const NOTE_TAIL_PAD: f64 = 0.5;
 const AFTER_TIME: f64 = 0.7;
 
 // 暂停界面（`overlay_ui` 里 `tm.paused()` 那一段）的版式。
@@ -530,6 +532,24 @@ impl GameScene {
         Ok((chart, format))
     }
 
+    /// 这一局的结束时刻（音频时间）：默认是 `Resource::new` 算出来的区间终点，谱面里存在写到
+    /// 音乐结束之后的按键时，放宽到最后一个按键之后 `NOTE_TAIL_PAD` 秒。录制那边算成片长度
+    /// 也走这一条，两边的结束时刻必须一致，否则录像会在结算前收尾。
+    ///
+    /// `last_note_end` 要传换算到音频时间的值（`Chart::last_note_time` 是谱面时间，加 `offset`）。
+    /// 基准是音乐长度而不是区间终点：谱面信息里的预览区间比整首还短时，不该把越界按键藏掉。
+    pub fn track_length_with_note_tail(
+        music_length: f64,
+        play_end_time: Option<f64>,
+        last_note_end: f64,
+    ) -> f64 {
+        if last_note_end > music_length {
+            last_note_end + NOTE_TAIL_PAD
+        } else {
+            play_end_time.unwrap_or(music_length).min(music_length)
+        }
+    }
+
     pub async fn new(
         preload_chart: Option<(Chart, ChartFormat)>,
         mode: GameMode,
@@ -592,9 +612,16 @@ impl GameScene {
             chart.apply_chart_mods(&chart_mods, res.aspect_ratio, res.track_length);
         }
 
+        let offset = chart.offset + info_offset + res.config.offset;
+
+        // 按键（长条尾端尤其常见）可以写到音乐结束之后，而 `Resource::new` 的 `track_length` 封顶在
+        // 音乐长度：照它收尾会在按键还没结束时切进结算，预览 / 录制的后半截按键直接看不到。
+        // 出现这种按键时把这一局的结束时刻补到最后一个按键之后 `NOTE_TAIL_PAD` 秒。
+        res.track_length =
+            Self::track_length_with_note_tail(res.music.length(), res.config.play_end_time, chart.last_note_time() + offset);
+
         let judge = Judge::new(&chart);
 
-        let offset = chart.offset + info_offset + res.config.offset;
         let exercise_range = offset + res.config.play_start_time..res.track_length;
         
         // Prepare extra sfx from chart.hitsounds
@@ -779,10 +806,17 @@ impl GameScene {
         if self.res.config.fxaa {
             chart.extra.effects.push(Effect::new(0.0..f64::INFINITY, include_str!("fxaa.glsl"), Vec::new(), false).unwrap());
         }
+        let offset = chart.offset + self.info_offset + self.res.config.offset;
+        let music_length = self.res.music.length();
+        // 谱面修改按「没有越界按键时」的区间终点算：`track_length` 可能已经被上一版谱面放宽过，
+        // 拿它当长条延长的基准会越放越长。放宽本身交给 `track_length_with_note_tail`。
+        let base_track_length = self.res.config.play_end_time.unwrap_or(music_length).min(music_length);
         let chart_mods = crate::core::chart_mod::Mods::from_config(&self.res.config);
         if !chart_mods.is_empty() {
-            chart.apply_chart_mods(&chart_mods, self.res.aspect_ratio, self.res.track_length);
+            chart.apply_chart_mods(&chart_mods, self.res.aspect_ratio, base_track_length);
         }
+        self.res.track_length =
+            Self::track_length_with_note_tail(music_length, self.res.config.play_end_time, chart.last_note_time() + offset);
         let mut judge = Judge::new(&chart);
         let now = self.res.time;
         chart.rewind_to(now);
@@ -794,7 +828,6 @@ impl GameScene {
             }
         });
         self.res.fonts = std::mem::take(&mut chart.fonts);
-        let offset = chart.offset + self.info_offset + self.res.config.offset;
         self.exercise_range = offset + self.res.config.play_start_time..self.res.track_length;
         self.effects = effects;
         self.chart = chart;
@@ -1913,7 +1946,13 @@ impl Scene for GameScene {
         let time = tm.now();
         self.res.audio.recover_if_needed()?;
         if matches!(self.state, State::Playing) && time < self.res.track_length {
-            tm.update(self.music.position() as f64);
+            // 音乐播完后 `position` 会停在结尾：结束时刻被补到音乐之后的谱面，正是靠时间继续
+            // 往前走才播得完最后那几个按键；这时若还按停住的位置纠偏，时间会被反复拽回音乐结尾，
+            // 结算永远触发不了。只在音乐真正还在播时纠偏。
+            let music_position = self.music.position() as f64;
+            if music_position + 1e-3 < self.res.music.length() {
+                tm.update(music_position);
+            }
         }
         if self.mode == GameMode::Exercise && tm.now() > self.exercise_range.end as f64 && self.exercise_range.end < self.res.track_length - 0.1 && !tm.paused() {
             let state = self.state.clone();

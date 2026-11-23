@@ -211,6 +211,7 @@ musicRightGain = 1.0
 sfxLeftGain = 1.0               # 按键音左/右声道增益
 sfxRightGain = 1.0
 separateTracks = false          # 分离音轨：音乐 / 按键音各一条（0 = 音乐、1 = 按键音）
+stereoHit = false               # 立体按键：按按键横向位置把打击音偏到对应声道
 forceLimit = true
 limitThreshold = 0.5
 

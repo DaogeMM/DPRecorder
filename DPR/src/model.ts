@@ -173,6 +173,8 @@ export interface RenderConfig {
   sfxRightGain: number;
   /** 「分离音轨」：音乐（含结尾曲）与按键音各一条音轨（0 = 音乐、1 = 按键音）。 */
   separateTracks: boolean;
+  /** 「立体按键」：按按键判定时的横向位置把打击音偏向对应声道；只影响成片。 */
+  stereoHit: boolean;
   watermark: string;
   notecolor: string;
   rrHitFxColor: string;
@@ -748,6 +750,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   sfxLeftGain: 1,
   sfxRightGain: 1,
   separateTracks: false,
+  stereoHit: false,
   forceLimit: true,
   limitThreshold: 0.5,
   loudnessEqualization: false,

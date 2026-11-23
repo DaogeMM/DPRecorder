@@ -143,6 +143,7 @@ const AUDIO = {
   sfxLeftGain: { widget: 'number', uiValue: 'number' },
   sfxRightGain: { widget: 'number', uiValue: 'number' },
   separateTracks: { widget: 'checkbox' },
+  stereoHit: { widget: 'checkbox' },
   limitThreshold: { widget: 'slider' },
 } satisfies Partial<FieldTable>;
 

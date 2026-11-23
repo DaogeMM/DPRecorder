@@ -173,6 +173,9 @@ pub struct RenderConfig {
     /// 「分离音轨」：音乐（含结尾曲）与按键音各输出一条音轨，不再混成一条。
     /// 成片里音轨 0 = 音乐、1 = 按键音；进水 / 受伤音效跟着按键音那条。
     pub separate_tracks: bool,
+    /// 「立体按键」：按按键判定时的横向位置（-1..1）把打击音偏向对应声道。
+    /// 居中时两侧增益都是 1（与关闭时一致），贴边时另一侧降到 0；只影响成片。
+    pub stereo_hit: bool,
     pub force_limit: bool,
     pub limit_threshold: f32,
     pub loudness_equalization: bool,
@@ -1087,6 +1090,7 @@ impl Default for RenderConfig {
             sfx_left_gain: 1.0,
             sfx_right_gain: 1.0,
             separate_tracks: false,
+            stereo_hit: false,
             force_limit: true,
             limit_threshold: 0.5,
             loudness_equalization: false,
@@ -2191,6 +2195,23 @@ fn channel_gain_filter(left: f32, right: f32) -> String {
     format!(",aformat=channel_layouts=stereo,pan=stereo|c0={left}*c0|c1={right}*c1")
 }
 
+/// 「立体按键」：按按键的横向位置（谱面坐标 -1..1）把打击音分到四个声道分区。
+///
+/// 最外侧两段（|x| ≥ 0.5）只响靠边的那一侧（对侧完全静音）；中间两段（|x| < 0.5）
+/// 保持靠边一侧满增益，另一侧从居中的 1 线性降到 0，走到 ±0.5 时正好接上「单侧响」。
+/// 这样居中时左右都是 1（和关闭时听到的一样），越靠边越偏，没有台阶感。
+fn stereo_hit_gains(enabled: bool, position: f64) -> (f32, f32) {
+    if !enabled {
+        return (1., 1.);
+    }
+    let x = position.clamp(-1., 1.) as f32;
+    if x < 0. {
+        (1., (1. + 2. * x).clamp(0., 1.))
+    } else {
+        ((1. - 2. * x).clamp(0., 1.), 1.)
+    }
+}
+
 pub async fn main(cmd: bool) -> Result<()> {
     // 渲染全程静音：引擎里的实时播放（AUTOPLAY 按键音、进水受击 / 死亡音效、BGM、结尾曲）
     // 只是在跑帧时被听见，成片的音轨全部由这个进程离线合成 / 混流 ⇒ 直接关掉实时播放。
@@ -2275,6 +2296,15 @@ pub async fn main(cmd: bool) -> Result<()> {
         let track_length = prpr_config.play_end_time.unwrap_or(music_length).min(music_length);
         chart.apply_chart_mods(&chart_mods, aspect, track_length);
     }
+    let offset = chart.offset + info.offset;
+    // 谱面里可能有写到音乐结束之后的按键（长条尾端尤其常见）：成片长度若仍按音乐长度收尾，
+    // 这些按键在录像里会被切断。与 `GameScene::new` 共用同一条规则，保证录像的结束时刻与
+    // 场景实际收尾一致。按键时刻是谱面时间，实际响在 `time + offset`，先换算到音频时间再比。
+    let track_length = GameScene::track_length_with_note_tail(
+        music_length,
+        prpr_config.play_end_time,
+        chart.last_note_time() + offset,
+    );
     let ending_music = resample_to(&res_pack.endings[0], sample_rate, "ending_music");
     let ending_music_sample_rate = ending_music.sample_rate();
     let sfx_click = resample_to(&res_pack.sfx_click, sample_rate, "sfx_click");
@@ -2299,7 +2329,6 @@ pub async fn main(cmd: bool) -> Result<()> {
     let mut gl = unsafe { get_internal_gl() };
 
     let fps = config.fps;
-    let offset = chart.offset + info.offset;
     let speed = config.speed as f64;
     let speed_time_ratio = 1.0 / speed;
 
@@ -2314,30 +2343,15 @@ pub async fn main(cmd: bool) -> Result<()> {
         0.0
     };
 
-    let chart_length = before_time
-        + config
-            .play_end_time
-            .unwrap_or(music_length)
-            .min(music_length)
-            * speed_time_ratio
+    let chart_length = before_time + track_length * speed_time_ratio
         - config.play_start_time * speed_time_ratio
         - offset
         + WAIT_TIME * speed_time_ratio;
-    let chart_length_music = before_time_music
-        + config
-            .play_end_time
-            .unwrap_or(music_length)
-            .min(music_length)
+    let chart_length_music = before_time_music + track_length
         - config.play_start_time
         - offset
         + WAIT_TIME;
-    let chart_length_sfx = config
-        .play_end_time
-        .unwrap_or(music_length)
-        .min(music_length)
-        - config.play_start_time
-        - offset
-        + WAIT_TIME;
+    let chart_length_sfx = track_length - config.play_start_time - offset + WAIT_TIME;
     let video_length = chart_length + config.ending_length;
     let video_length_music = chart_length_music + config.ending_length; // chart_length needs to be divided by speed, but music needs to be rendered at the original speed, which is changed by ffmpeg
     let video_frames = (video_length * fps as f64).ceil() as u64;
@@ -2390,7 +2404,9 @@ pub async fn main(cmd: bool) -> Result<()> {
     let mut output_sfx = Array1::from_vec(vec![0.0_f32; output_sfx_len]);
     let mut output_ending_music = Array1::from_vec(vec![0.0_f32; output_ending_music_len]);
 
-    let mut place_sfx = |pos: f64, clip: &Array1<f32>| {
+    // 「立体按键」：打击音按按键横向位置偏到对应声道；关闭时两个增益都是 1，走原来的整段相加。
+    let stereo_hit = config.stereo_hit;
+    let mut place_sfx = |pos: f64, clip: &Array1<f32>, position_x: f64| {
         let position = (pos * sample_rate_f64).ceil() as usize * 2;
         let len = clip.len();
         let end = position + len;
@@ -2398,7 +2414,14 @@ pub async fn main(cmd: bool) -> Result<()> {
             return;
         }
         let mut slice = output_sfx.slice_mut(s![position..end]);
-        slice += clip;
+        let (left, right) = stereo_hit_gains(stereo_hit, position_x);
+        if left == 1. && right == 1. {
+            slice += clip;
+        } else {
+            for (i, sample) in clip.iter().enumerate() {
+                slice[i] += sample * if i % 2 == 0 { left } else { right };
+            }
+        }
     };
 
     if volume_music != 0.0 {
@@ -2433,9 +2456,18 @@ pub async fn main(cmd: bool) -> Result<()> {
         HitSound::Custom(s) => extra_sfxs.get(s),
     };
 
-    /// 这一遍真正铺进打击音轨的条目：`(视频内时刻, 素材, 谱面时刻, 类型标签, 横向位置)`。
+    // 「立体按键」要按键在判定时刻的横向位置（谱面坐标 -1..1）：把翻译动画拨到按键时刻再读，
+    // 静止的谱面（RPE / PEC 的 position_x）直接就是常量。
+    let note_position = |note: &Note| {
+        let mut translation = note.object.translation.clone();
+        translation.set_time(note.time);
+        translation.0.now() as f64
+    };
+
+    /// 这一遍真正铺进打击音轨的条目：
+    /// `(视频内时刻, 素材, 谱面时刻, 类型标签, 纵向高度, 横向位置)`。
     /// 帧循环跑完之后用它把「溺水死亡的按键」对应的条目从缓冲里减掉。
-    type SfxEntry<'a> = (f64, &'a Array1<f32>, f64, u8, f64);
+    type SfxEntry<'a> = (f64, &'a Array1<f32>, f64, u8, f64, f64);
     let mut sfx_placed: Vec<SfxEntry> = Vec::new();
 
     if volume_sfx != 0.0 {
@@ -2466,6 +2498,7 @@ pub async fn main(cmd: bool) -> Result<()> {
                             note.time,
                             dps::core::water::note_kind_tag(&note.kind),
                             note.height,
+                            note_position(&note),
                         ));
                     }
                 });
@@ -2490,7 +2523,7 @@ pub async fn main(cmd: bool) -> Result<()> {
             let mut last_t = 0.0;
             let mut count = 0;
 
-            for &(pos, clip, note_time, kind_tag, note_height) in &sfx_list {
+            for &(pos, clip, note_time, kind_tag, note_height, position_x) in &sfx_list {
                 let pos = round_to_step(pos, 0.005);
                 let is_new_group = match last_arr {
                     None => true,
@@ -2501,10 +2534,10 @@ pub async fn main(cmd: bool) -> Result<()> {
                     last_arr = Some(clip);
                     last_t = pos;
                     count = 1;
-                    kept_sfx_list.push((pos, clip, note_time, kind_tag, note_height));
+                    kept_sfx_list.push((pos, clip, note_time, kind_tag, note_height, position_x));
                 } else {
                     if count < 3 {
-                        kept_sfx_list.push((pos, clip, note_time, kind_tag, note_height));
+                        kept_sfx_list.push((pos, clip, note_time, kind_tag, note_height, position_x));
                         count += 1;
                     }
                 }
@@ -2515,9 +2548,9 @@ pub async fn main(cmd: bool) -> Result<()> {
             if ipc {
                 send(IPCEvent::MixingSfx(num as u64));
             }
-            for (pos, sfx, note_time, kind_tag, note_height) in kept_sfx_list {
-                place_sfx(pos, sfx);
-                sfx_placed.push((pos, sfx, note_time, kind_tag, note_height));
+            for (pos, sfx, note_time, kind_tag, note_height, position_x) in kept_sfx_list {
+                place_sfx(pos, sfx, position_x);
+                sfx_placed.push((pos, sfx, note_time, kind_tag, note_height, position_x));
                 if ipc {
                     send(IPCEvent::Sfx);
                 }
@@ -2546,6 +2579,7 @@ pub async fn main(cmd: bool) -> Result<()> {
                             note.time,
                             dps::core::water::note_kind_tag(&note.kind),
                             note.height,
+                            note_position(&note),
                         ));
                     }
                 });
@@ -2553,9 +2587,9 @@ pub async fn main(cmd: bool) -> Result<()> {
             if ipc {
                 send(IPCEvent::MixingSfx(num as u64));
             }
-            for (pos, sfx, note_time, kind_tag, note_height) in sfx_list {
-                place_sfx(pos, sfx);
-                sfx_placed.push((pos, sfx, note_time, kind_tag, note_height));
+            for (pos, sfx, note_time, kind_tag, note_height, position_x) in sfx_list {
+                place_sfx(pos, sfx, position_x);
+                sfx_placed.push((pos, sfx, note_time, kind_tag, note_height, position_x));
                 if ipc {
                     send(IPCEvent::Sfx);
                 }
@@ -2904,7 +2938,9 @@ pub async fn main(cmd: bool) -> Result<()> {
         };
         (
             format!("{music_track};{sfx_track}"),
-            " -map [am] -map [as]".to_owned(),
+            // 按键音那条轨在播放器 / 剪辑软件里显示成 `sfx`（mp4/mov 的 stream title 走
+            // `handler_name`，别的容器认 `title`，两个都写上）。
+            " -map [am] -map [as] -metadata:s:a:1 title=sfx -metadata:s:a:1 handler_name=sfx".to_owned(),
         )
     } else if config.hires {
         (
@@ -3217,7 +3253,7 @@ pub async fn main(cmd: bool) -> Result<()> {
     // 因此只要铺过音（`sfx_placed` 非空）就必须写出这条 wav，否则普通渲染会丢掉全部打击音。
     if volume_sfx != 0.0 && !sfx_placed.is_empty() {
         let mut removed = 0usize;
-        for (pos, sfx, note_time, kind_tag, note_height) in sfx_placed.drain(..) {
+        for (pos, sfx, note_time, kind_tag, note_height, position_x) in sfx_placed.drain(..) {
             let hit = drowned_notes.iter().any(|(t, k, h)| {
                 *k == kind_tag && (t - note_time).abs() < 1e-6 && (h - note_height).abs() < 1e-6
             });
@@ -3230,7 +3266,15 @@ pub async fn main(cmd: bool) -> Result<()> {
                 continue;
             }
             let mut slice = output_sfx.slice_mut(s![position..end]);
-            slice -= sfx;
+            // 必须和 `place_sfx` 用同一组增益：否则「立体按键」开着时减不掉溺水按键那一段。
+            let (left, right) = stereo_hit_gains(stereo_hit, position_x);
+            if left == 1. && right == 1. {
+                slice -= sfx;
+            } else {
+                for (i, sample) in sfx.iter().enumerate() {
+                    slice[i] -= sample * if i % 2 == 0 { left } else { right };
+                }
+            }
             removed += 1;
         }
         if removed > 0 {
@@ -3460,7 +3504,9 @@ fn mix_water_sfx(
     }
 
     // 3) 写成采样率与音轨一致的 wav
-    let water_wav = TempPath::new("water");
+    // 进水 / 受伤音效单独成一条 wav 交给最后的 remux；文件名也用 `sfx`，
+    // 和按键音轨（`sfx`）在日志与临时目录里保持一致。
+    let water_wav = TempPath::new("sfx");
     {
         let mut proc = cmd_hidden(ffmpeg)
             .args(
@@ -3526,7 +3572,7 @@ fn mix_water_sfx(
         } else {
             chain += "[as0]alimiter=limit=1.0:level=false:attack=0.1:release=1[as]";
         }
-        " -map [am] -map [as]"
+        " -map [am] -map [as] -metadata:s:a:1 title=sfx -metadata:s:a:1 handler_name=sfx"
     } else {
         chain += "[0:a][w]";
         if sfx_wav.is_some() {
@@ -3542,10 +3588,12 @@ fn mix_water_sfx(
         " -map [a]"
     };
 
+    // 第二趟（混轨）先写到旁边一个临时文件，成功后再改名回 `output_path`；
+    // 临时文件名用 `sfx` 标出「这是音轨那一步的产物」（按键音轨同样叫 sfx）。
     let mixed_path = output_path.with_extension(if hires {
-        "water.mov"
+        "sfx.mov"
     } else {
-        "water.mp4"
+        "sfx.mp4"
     });
     let args = format!(
         "-c:a {} -c:v copy -movflags +faststart -filter_complex {} -map 0:v:0{} -f {}",

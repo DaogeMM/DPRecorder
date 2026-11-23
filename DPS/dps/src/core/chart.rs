@@ -1,5 +1,5 @@
 use super::{
-    BlockArea, BlockAreaRenderer, BlockGroup, BpmList, Effect, JudgeLine, JudgeLineKind, Matrix, NextArea, NoiseLayer, Resource, UIElement, Vector,
+    BlockArea, BlockAreaRenderer, BlockGroup, BpmList, Effect, JudgeLine, JudgeLineKind, Matrix, NextArea, NoiseLayer, NoteKind, Resource, UIElement, Vector,
 };
 use crate::{
     core::Object,
@@ -186,6 +186,23 @@ impl Chart {
             super::chart_mod::hide_notes(&mut self.lines);
         }
         super::chart_mod::finish(&mut self.lines);
+    }
+
+    /// 谱面里最后一个按键结束的时刻：长条取尾端，其余取判定时刻；没有按键时为 `0`。
+    ///
+    /// 谱面允许按键写到音乐结束之后（长条尾端写成整曲长度之外很常见），而 `Resource::new` 把
+    /// `track_length` 封顶在音乐长度。`GameScene` 与渲染器据此把这一局的结束时刻往后放，否则
+    /// 最后那几个按键会播到一半就被切掉。
+    pub fn last_note_time(&self) -> f64 {
+        self.lines
+            .iter()
+            .flat_map(|it| it.notes.iter())
+            .map(|note| match &note.kind {
+                NoteKind::Hold { end_time, .. } => end_time.max(note.time),
+                _ => note.time,
+            })
+            .filter(|time| time.is_finite())
+            .fold(0., f64::max)
     }
 
     /// 只留 `base` 这一条判定线（「陈列按键」之后）：其余可改判定线连同按键一起丢掉，界面判定线与
