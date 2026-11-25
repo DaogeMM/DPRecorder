@@ -845,6 +845,12 @@ pub struct Resource {
     /// 打开时：`Note::render` 只画 `pending_note_time` 对应的那一个按键、跳过判定范围 /
     /// 强制定位挖洞等副作用，`JudgeLine::render` 跳过判定线本体。
     pub pending_tint: std::cell::Cell<bool>,
+    /// 「实时 BPM 染色」这一帧的「主流 BPM」：拥有按键最多的那个 BPM 值。
+    ///
+    /// `Chart::render` 每帧按「非 fake 按键各按自己的判定时刻取 `now_bpm`」统计一次（没开染色时置
+    /// `NaN`）；`Note::render` 拿它区分主流 BPM 的按键（保持原色）与其余按键（按 BPM 取深色）。
+    /// 统计口径是**按键个数**而不是时长，因为染色是按颗的，按键多的那个 BPM 才该算「主流」。
+    pub chart_debug_main_bpm: std::cell::Cell<f64>,
     /// 「谱面缩放」(`chart_ratio`) 的当前值（进入动画期间是插值中的那个 `ratio`）。
     ///
     /// 噪域图层是拿**当前相机**的投影矩阵反解出 `chart_to_base` 的，等于把相机缩放整个
@@ -1025,6 +1031,7 @@ impl Resource {
             force_position_quads: RefCell::new(Vec::new()),
             pending_note_time: std::cell::Cell::new(f64::INFINITY),
             pending_tint: std::cell::Cell::new(false),
+            chart_debug_main_bpm: std::cell::Cell::new(f64::NAN),
             block_area_chart_scale: [1., 1.],
             sim_touch_points: Vec::new(),
 

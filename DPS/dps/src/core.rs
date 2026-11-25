@@ -196,4 +196,65 @@ impl BpmList {
         }
         self.elements[self.cursor].2
     }
+
+    /// 取「某个判定线在某个时刻」的 BPM。
+    ///
+    /// 官方 PGR 格式没有全局 BPM 表：`from_time` 建的 `elements` 里，第二项存的是判定线下标
+    /// 而不是秒，所以这时必须按线下标查；其余格式的 BPM 表按秒排，直接查时间轴。
+    pub fn bpm_at(&mut self, time: f64, line: usize) -> f64 {
+        if !self.per_line_bpm_storage {
+            return self.now_bpm(time);
+        }
+        let line = line as f64;
+        while let Some(kf) = self.elements.get(self.cursor + 1) {
+            if kf.1 > line {
+                break;
+            }
+            self.cursor += 1;
+        }
+        while self.cursor != 0 && self.elements[self.cursor].1 > line {
+            self.cursor -= 1;
+        }
+        self.elements[self.cursor].2
+    }
+
+    /// 整张谱面 BPM 表的最小、最大值；没有 BPM 事件时返回 `None`。
+    pub fn bpm_range(&self) -> Option<(f64, f64)> {
+        let mut iter = self.elements.iter().map(|(_, _, bpm)| *bpm);
+        let first = iter.next()?;
+        Some(iter.fold((first, first), |(lo, hi), bpm| (lo.min(bpm), hi.max(bpm))))
+    }
+}
+
+/// 把 BPM 值写成人读的文本：谱面里写了几位小数就保留几位，末尾多余的 0 去掉。
+///
+/// `f64` 只存二进制近似值，`format!` 默认输出「最短且能原样读回」的十进制写法，
+/// 因此 `186.0` 得到 `186`、`139.50` 得到 `139.5`、`560 / 3` 得到 `186.66666666666666`。
+/// 这样不会把谱面里本来就写的高精度 BPM 四舍五入掉。
+pub fn format_bpm(bpm: f64) -> String {
+    let mut text = format!("{bpm}");
+    if text.contains('.') {
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_bpm;
+
+    #[test]
+    fn format_bpm_keeps_source_precision() {
+        assert_eq!(format_bpm(186.), "186");
+        assert_eq!(format_bpm(139.5), "139.5");
+        assert_eq!(format_bpm(232.50), "232.5");
+        assert_eq!(format_bpm(0.125), "0.125");
+        assert_eq!(format_bpm(186.666_666_666_666_66), "186.66666666666666");
+        assert_eq!(format_bpm(0.), "0");
+    }
 }

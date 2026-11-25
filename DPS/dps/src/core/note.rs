@@ -34,6 +34,16 @@ impl NoteKind {
             Self::Flick => 3,
         }
     }
+
+    /// 「界面调试」按键数量里各键型计数用的下标：TAP / HOLD / FLICK / DRAG。
+    pub fn kind_index(&self) -> usize {
+        match self {
+            Self::Click => 0,
+            Self::Hold { .. } => 1,
+            Self::Flick => 2,
+            Self::Drag => 3,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -78,6 +88,56 @@ pub struct RenderConfig<'a> {
     pub incline_sin: f32,
     /// 判定线在这一帧的旋转角（度），只给按键调试文本用。
     pub line_angle: f32,
+}
+
+/// 「实时 BPM 染色」的取色：同一个 BPM 永远同一个颜色，且都是浅色系（在深色背景与按键原色上都看得清）。
+///
+/// 用 BPM 的千分位整数做散列而不是按出现顺序编号：散列只依赖 BPM 本身，于是同一张谱面里
+/// 不同判定线、不同段落、甚至预览与渲染两次启动之间，同一个 BPM 都会落到同一个颜色。
+fn bpm_debug_color(bpm: f64) -> [f32; 3] {
+    // 把 BPM 的千分位整数散列成一个 0~1 的色相：同一个 BPM 永远同一个色相，不同 BPM 色相不同
+    //（比固定调色板循环取色更不容易撞色）。饱和度略压低、明度抬高，落在浅色系里，
+    // 最后再朝白色混 20%，和背景、按键原色的反差更明显。
+    let key = (bpm * 1000.).round() as u64;
+    let hue = ((key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as u32 as f32) / (1u32 << 24) as f32;
+    let (s, v) = (0.55, 0.68);
+    let h = hue * 6.;
+    let f = h - h.floor();
+    let p = v * (1. - s);
+    let q = v * (1. - s * f);
+    let t = v * (1. - s * (1. - f));
+    let rgb = match h as i32 % 6 {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
+    };
+    rgb.map(|c| c * 0.8 + 0.2)
+}
+
+/// 「实时 BPM 染色」标在按键下方的 BPM 文本：照谱面里写的精度显示，末尾多余的 0 去掉。
+fn bpm_debug_text(bpm: f64) -> String {
+    super::format_bpm(bpm)
+}
+
+impl Note {
+    /// 「实时 BPM 染色」的判定与取色：按键本体、本体下方文本与打击特效共用这一份结果。
+    ///
+    /// 只对「BPM 与全谱主流 BPM 不同」的非 fake 按键返回 `Some((bpm, rgb))`；`rgb` 已经朝白色
+    /// 混过一档（浅色系），三处直接用即可，不要各自再提亮。
+    pub(crate) fn bpm_debug_tint(&self, res: &Resource, bpm_list: &mut BpmList, line_id: usize) -> Option<(f64, [f32; 3])> {
+        if !res.config.chart_debug_ui || !res.config.chart_debug_ui_bpm_color || self.fake {
+            return None;
+        }
+        let bpm = bpm_list.bpm_at(self.time, line_id);
+        let main = res.chart_debug_main_bpm.get();
+        if main.is_nan() || (bpm - main).abs() <= 1e-3 {
+            return None;
+        }
+        Some((bpm, bpm_debug_color(bpm)))
+    }
 }
 
 /// 「按键调试」（`chart_debug_note > 0`）画在按键旁边的那段文本。
@@ -658,6 +718,19 @@ impl Note {
         let alpha = self.object.now_alpha().max(0.);
         color.a = parse_alpha(color.a * alpha, 1.0, 0.2, res.config.chart_debug_note > 0.);
 
+        // 「实时 BPM 染色」：BPM 与全谱主流 BPM（拥有按键最多的那个）不同的按键，换成按 BPM
+        // 区分的浅色；alpha 照旧走下面的淡入淡出，与普通按键完全一致。
+        let bpm_debug = if tint {
+            None
+        } else {
+            self.bpm_debug_tint(res, bpm_list, line_id)
+        };
+        if let Some((_, rgb)) = bpm_debug {
+            color.r = rgb[0];
+            color.g = rgb[1];
+            color.b = rgb[2];
+        }
+
         if config.invisible_time.is_finite() && self.time - config.invisible_time < res.time && self.water.death <= 0. {
             if res.config.chart_debug_note > 0. {
                 color.a *= 0.2;
@@ -1014,6 +1087,40 @@ impl Note {
                 };
                 draw(res, *style.drag);
             }
+        }
+        // 「实时 BPM 染色」的数值：标在按键（长条标在头部）下方，用同一色调里稍亮的一档，
+        // 浅色按键上也看得清。模型栈照抄下面的按键调试文本：先落到按键所在位置，再按
+        // `above` 决定要不要翻 y，这样旋转 / 缩放 / 移动时间与按键本体保持一致。
+        if let Some((bpm, rgb)) = bpm_debug {
+            let y = match self.kind {
+                NoteKind::Hold { .. } => {
+                    if self.time <= res.time {
+                        0.
+                    } else {
+                        height - line_height
+                    }
+                }
+                _ => base,
+            };
+            let text_offset = res.config.chart_debug_ui_bpm_text_offset;
+            let text_size = res.config.chart_debug_ui_bpm_text_size.max(0.);
+            res.with_model(self.now_transform(res, ctrl_obj, y as f32, config.incline_sin, false, false), |res: &mut Resource| {
+                res.with_model(
+                    Matrix::new_nonuniform_scaling(&Vector::new(1., if self.above { -1. } else { 1. })),
+                    |res: &mut Resource| {
+                        res.apply_model(|_res| {
+                            let mut label = Color::new((rgb[0] * 1.2).min(1.), (rgb[1] * 1.2).min(1.), (rgb[2] * 1.2).min(1.), color.a);
+                            label.a = label.a.max(0.65);
+                            ui.text(bpm_debug_text(bpm))
+                                .pos(0., text_offset)
+                                .anchor(0.5, 0.0)
+                                .size(text_size)
+                                .color(label)
+                                .draw();
+                        });
+                    },
+                );
+            });
         }
         if res.config.chart_debug_note > 0. {
             match self.kind {

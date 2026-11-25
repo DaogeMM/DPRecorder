@@ -95,6 +95,31 @@ pub struct Config {
     pub chart_debug_note: f32,
     /// 按键调试文本里显示哪些项：逗号分隔的名单，取值见 `core::note::debug_note_text`。
     pub chart_debug_note_fields: String,
+    /// 「界面调试」：在界面上叠一行调试文本（目前只有「按键数量」）。
+    pub chart_debug_ui: bool,
+    /// 界面调试文本的中心锚点：X 以画面半宽为单位、Y 以画面半高为单位，0 为画面中心，1 为边缘，Y 向上为正。
+    pub chart_debug_ui_anchor_x: f32,
+    pub chart_debug_ui_anchor_y: f32,
+    /// 界面调试文本的字号，与 `Ui::text` 的 size 同单位（1 约等于画面半高）。
+    pub chart_debug_ui_size: f32,
+    /// 界面调试文本的不透明度，0~1。
+    pub chart_debug_ui_alpha: f32,
+    /// 「按键数量」总开关：`Note: 已判定 / 总数` 那一段。
+    pub chart_debug_ui_note_count: bool,
+    /// 「按键数量」里各键型的分类计数，拼在 `Note` 那段后面的括号里，顺序 TAP / HOLD / FLICK / DRAG。
+    pub chart_debug_ui_tap: bool,
+    pub chart_debug_ui_hold: bool,
+    pub chart_debug_ui_flick: bool,
+    pub chart_debug_ui_drag: bool,
+    /// 「实时 BPM」：显示最近一次判定的按键时刻的 BPM，括号里是整张谱面的 BPM 范围。
+    pub chart_debug_ui_bpm: bool,
+    /// 「实时 BPM 染色」：把 BPM 与全谱主流 BPM 不同的按键染成按 BPM 区分的深色，并在按键下方标出该 BPM。
+    /// 不依赖「实时 BPM」的文本开关，两者可以各开各的。
+    pub chart_debug_ui_bpm_color: bool,
+    /// 「实时 BPM 染色」的 BPM 文本离按键中心向下多少（谱面坐标，1 约等于画面半高）。
+    pub chart_debug_ui_bpm_text_offset: f32,
+    /// 「实时 BPM 染色」的 BPM 文本字号，与 `Ui::text` 的 size 同单位。
+    pub chart_debug_ui_bpm_text_size: f32,
     pub chart_ratio: f32,
     pub all_good: bool,
     pub all_bad: bool,
@@ -839,6 +864,20 @@ impl Default for Config {
             chart_debug_line_fields: "id,parent,height,ulp,z,aui,anchor,kind".to_owned(),
             chart_debug_note: 0.0,
             chart_debug_note_fields: "line,time,height,base,speed,above,fake,angle".to_owned(),
+            chart_debug_ui: false,
+            chart_debug_ui_anchor_x: 0.0,
+            chart_debug_ui_anchor_y: -0.75,
+            chart_debug_ui_size: 0.9,
+            chart_debug_ui_alpha: 1.0,
+            chart_debug_ui_note_count: true,
+            chart_debug_ui_tap: false,
+            chart_debug_ui_hold: false,
+            chart_debug_ui_flick: false,
+            chart_debug_ui_drag: false,
+            chart_debug_ui_bpm: false,
+            chart_debug_ui_bpm_color: false,
+            chart_debug_ui_bpm_text_offset: 0.04,
+            chart_debug_ui_bpm_text_size: 0.4,
             chart_ratio: 1.0,
             all_good: false,
             all_bad: false,

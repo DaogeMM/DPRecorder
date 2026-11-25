@@ -121,6 +121,30 @@ export interface RenderConfig {
   chartDebugNote: number;
   /** 按键调试文本显示哪些项，逗号分隔（取值见 dps 的 `core::note::debug_note_text`） */
   chartDebugNoteFields: string;
+  /** 「界面调试」：在界面上叠一行调试文本（目前只有「按键数量」） */
+  chartDebugUi: boolean;
+  /** 界面调试文本的中心锚点：X 按画面半宽、Y 按画面半高，0 为画面中心、1 为边缘，Y 向上为正 */
+  chartDebugUiAnchorX: number;
+  chartDebugUiAnchorY: number;
+  /** 界面调试文本的字号（dps 的 `Ui::text` 单位） */
+  chartDebugUiSize: number;
+  /** 界面调试文本的不透明度，0~1 */
+  chartDebugUiAlpha: number;
+  /** 「按键数量」总开关：`Note: 已判定 / 总数` 那一段 */
+  chartDebugUiNoteCount: boolean;
+  /** 「按键数量」里各键型的分类计数（拼在 Note 后面的括号里） */
+  chartDebugUiTap: boolean;
+  chartDebugUiHold: boolean;
+  chartDebugUiFlick: boolean;
+  chartDebugUiDrag: boolean;
+  /** 「实时 BPM」：显示最近一次判定的按键时刻的 BPM 与整谱范围 */
+  chartDebugUiBpm: boolean;
+  /** 「实时 BPM 染色」：把非主流 BPM 的按键染成按 BPM 区分的深色，并在按键下方标出 BPM */
+  chartDebugUiBpmColor: boolean;
+  /** 「实时 BPM 染色」的 BPM 文本离按键中心向下多少 */
+  chartDebugUiBpmTextOffset: number;
+  /** 「实时 BPM 染色」的 BPM 文本字号 */
+  chartDebugUiBpmTextSize: number;
   chartRatio: number;
   allGood: boolean;
   allBad: boolean;
@@ -706,6 +730,20 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   chartDebugLineFields: 'id,parent,height,ulp,z,aui,anchor,kind',
   chartDebugNote: 0.,
   chartDebugNoteFields: 'line,time,height,base,speed,above,fake,angle',
+  chartDebugUi: false,
+  chartDebugUiAnchorX: 0.,
+  chartDebugUiAnchorY: -0.75,
+  chartDebugUiSize: 0.9,
+  chartDebugUiAlpha: 1.,
+  chartDebugUiNoteCount: true,
+  chartDebugUiTap: false,
+  chartDebugUiHold: false,
+  chartDebugUiFlick: false,
+  chartDebugUiDrag: false,
+  chartDebugUiBpm: false,
+  chartDebugUiBpmColor: false,
+  chartDebugUiBpmTextOffset: 0.04,
+  chartDebugUiBpmTextSize: 0.4,
   chartRatio: 1,
   allGood: false,
   allBad: false,

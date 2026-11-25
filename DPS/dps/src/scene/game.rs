@@ -12,7 +12,7 @@ use super::{
 use crate::{
     bin::BinaryReader,
     config::{Config, Mods},
-    core::{BUFFER_SIZE, BadNote, Chart, ChartExtra, DigitStyle, Effect, Point, Resource, UIElement},
+    core::{format_bpm, BUFFER_SIZE, BadNote, Chart, ChartExtra, DigitStyle, Effect, Point, Resource, UIElement},
     ext::{RectExt, SafeTexture, ScaleType, draw_text_aligned, draw_text_aligned_opt_width, ease_in_out_quartic, get_latency, parse_time, push_frame_time, screen_aspect, semi_white, validate_combo},
     fs::FileSystem,
     gyro::GYRO,
@@ -1438,6 +1438,76 @@ impl GameScene {
                 );
                 ui.fill_rect(Rect::new(-aspect_ratio + dest - hw, top, hw * 2., height), Color::new(0.95, 0.95, 0.95, color.a * c.a));
             });
+        }
+        if res.config.chart_debug_ui {
+            // 「界面调试」的浮层：按键数量与实时 BPM 各占一行，整块按锚点居中。
+            let mut lines: Vec<String> = Vec::new();
+
+            // 按键数量：已判定过的 / 参与判定的总数，四种键型的分类计数按开关拼在后面的括号里
+            // （顺序 TAP / HOLD / FLICK / DRAG）。已判定数取四种判定之和 —— 长条按下那一刻
+            // 记一次 Perfect/Good/Bad/Miss，松开不再另计。
+            let switches = [
+                (res.config.chart_debug_ui_tap, "TAP", 0),
+                (res.config.chart_debug_ui_hold, "HOLD", 1),
+                (res.config.chart_debug_ui_flick, "FLICK", 2),
+                (res.config.chart_debug_ui_drag, "DRAG", 3),
+            ];
+            if res.config.chart_debug_ui_note_count || switches.iter().any(|(on, ..)| *on) {
+                let mut text = String::new();
+                if res.config.chart_debug_ui_note_count {
+                    let judged = self.judge.counts().iter().sum::<u32>();
+                    let total = self.judge.num_of_notes();
+                    text.push_str(&format!("Note: {judged} / {total}"));
+                }
+                if switches.iter().any(|(on, ..)| *on) {
+                    let judged_by_kind = self.judge.counts_by_kind(&self.chart);
+                    let total_by_kind = self.judge.num_of_notes_by_kind(&self.chart);
+                    let kinds: Vec<String> = switches
+                        .iter()
+                        .filter(|(on, ..)| *on)
+                        .map(|(_, name, index)| format!("{name}: {} / {}", judged_by_kind[*index], total_by_kind[*index]))
+                        .collect();
+                    if text.is_empty() {
+                        text = kinds.join(", ");
+                    } else {
+                        text.push('（');
+                        text.push_str(&kinds.join(", "));
+                        text.push('）');
+                    }
+                }
+                lines.push(text);
+            }
+
+            // 实时 BPM：取最近一次判定到的按键所在判定线的 BPM（官方 PGR 格式的 BPM 表按判定线
+            // 下标存放，`bpm_at` 会自己分流；RPE 等全局表则按按键时刻查），括号里是整张谱面的
+            // BPM 范围，只有一个 BPM 时不写括号。
+            if res.config.chart_debug_ui_bpm {
+                if let Some((line_id, note_id)) = self.judge.last_judged() {
+                    if let Some(note) = self.chart.lines.get(line_id).and_then(|it| it.notes.get(note_id)) {
+                        let bpm = self.chart.bpm_list.borrow_mut().bpm_at(note.time, line_id);
+                        let range = self.chart.bpm_list.borrow().bpm_range();
+                        lines.push(match range {
+                            Some((lo, hi)) if hi - lo > 1e-6 => format!("BPM: {} ({}~{})", format_bpm(bpm), format_bpm(lo), format_bpm(hi)),
+                            _ => format!("BPM: {}", format_bpm(bpm)),
+                        });
+                    }
+                }
+            }
+
+            if !lines.is_empty() {
+                // 逐行画、每行各自按锚点居中 —— `centered_multiline` 在没有 max_width 时按无限宽排版，
+                // 行会挤到左边缘去，不能用来做「整块居中」。
+                let size = res.config.chart_debug_ui_size.max(0.);
+                let color = Color::new(1., 1., 1., res.config.chart_debug_ui_alpha.clamp(0., 1.) * c.a);
+                let x = aspect_ratio * res.config.chart_debug_ui_anchor_x;
+                let y = -res.config.chart_debug_ui_anchor_y;
+                let line_height = ui.text("Ag").size(size).measure().h * 1.05;
+                let count = lines.len() as f32;
+                for (i, line) in lines.iter().enumerate() {
+                    let offset = (i as f32 - (count - 1.) / 2.) * line_height;
+                    ui.text(line.as_str()).pos(x, y + offset).anchor(0.5, 0.5).size(size).color(color).draw();
+                }
+            }
         }
         Ok(())
     }

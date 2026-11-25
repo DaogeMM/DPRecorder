@@ -37,6 +37,29 @@ chartDebugLineFields = "id,parent,height,ulp,z,aui,anchor,kind"
 chartDebugNote = 0.0
 # 按键调试文本显示哪些项：line / time / height / base / angle / speed / above / fake
 chartDebugNoteFields = "line,time,height,base,speed,above,fake,angle"
+# 界面调试：在界面上叠一行调试文本（按键数量 + 可选的各键型分类计数）
+chartDebugUi = false
+# 浮层中心锚点：X 按画面半宽、Y 按画面半高，0 为画面中心、1 为边缘（Y 向上为正）
+# 默认落在屏幕中下（Y = -0.75）
+chartDebugUiAnchorX = 0.0
+chartDebugUiAnchorY = -0.75
+# 浮层字号（与游戏内文字同单位）与不透明度（0~1）
+chartDebugUiSize = 0.9
+chartDebugUiAlpha = 1.0
+# 「按键数量」总开关（Note: 已判定 / 总数）与四种键型的分类计数开关
+chartDebugUiNoteCount = true
+chartDebugUiTap = false
+chartDebugUiHold = false
+chartDebugUiFlick = false
+chartDebugUiDrag = false
+# 实时 BPM：显示最近判定按键处的 BPM 与整谱范围
+chartDebugUiBpm = false
+# 实时 BPM 染色：非主流 BPM 的按键按 BPM 染成浅色，并在按键下方标出该 BPM
+chartDebugUiBpmColor = false
+# 染色 BPM 文本离按键中心向下的距离（谱面坐标，1 约等于画面半高）
+chartDebugUiBpmTextOffset = 0.04
+# 染色 BPM 文本字号
+chartDebugUiBpmTextSize = 0.4
 chartRatio = 1.0
 noteScale = 1.0
 

@@ -198,7 +198,7 @@ const {
 // 名单 = 模板用到的那些键 + 几个界面独占的槽位（hwAccel / maxParticlesText /
 // judgeRangeTransition / respack / encoder / judgeMode —— 它们不是 RenderConfig 的键）。
 const {
-  resolution, endingLength, renderLoading, hires, chartDebugLine, chartDebugLineFields, chartDebugNote, chartDebugNoteFields, chartRatio,
+  resolution, endingLength, renderLoading, hires, chartDebugLine, chartDebugLineFields, chartDebugNote, chartDebugNoteFields, chartDebugUi, chartDebugUiAnchorX, chartDebugUiAnchorY, chartDebugUiSize, chartDebugUiAlpha, chartDebugUiNoteCount, chartDebugUiTap, chartDebugUiHold, chartDebugUiFlick, chartDebugUiDrag, chartDebugUiBpm, chartDebugUiBpmColor, chartDebugUiBpmTextOffset, chartDebugUiBpmTextSize, chartRatio,
   fps, dynamicBitrateControl, bitrate, aggressiveChart, aggressiveNote,
   aggressiveParticle, challengeColor, challengeRank, noteScale, particle, particleSquare,
   hitFxRandomFlip, hitFxRandomFlipChance, hitFxFollowRotation,
@@ -961,6 +961,29 @@ defineExpose({
           <!-- 「纯色背景」：填了十六进制颜色就整屏铺这个颜色（不画背景贴图）；留空 = 用谱面自带背景。 -->
           <CfgField :label="t('solid-bg')" :tip="t('solid-bg-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow v-model="solidBg" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('difficulty')" :tip="t('difficulty-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderUiDifficulty" v-model="difficulty"></v-textarea></CfgField>
+          <!-- 「界面调试」：三级菜单行（与「谱面进水」「判定范围」同一种形态）——开关就是 `chartDebugUi`，
+               齿轮里上半段调浮层的中心锚点 / 字号 / 不透明度，下半段勾选要显示哪些段；没勾选时齿轮不出现。 -->
+          <PhiSubMenu id="sec3-chart-debug-ui" :label="t('chart-debug-ui')" :tip="t('chart-debug-ui-tip')" v-model="chartDebugUi">
+            <div class="cfg-grid">
+              <!-- 位置 / 外观在前，显示开关在后；中间只留一段空隙，不画线、不写标题。 -->
+              <CfgField :label="t('chart-debug-ui-anchor-x')" :tip="t('chart-debug-ui-anchor-x-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartDebugUiAnchorX" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-debug-ui-anchor-y')" :tip="t('chart-debug-ui-anchor-y-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartDebugUiAnchorY" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-debug-ui-size')" :tip="t('chart-debug-ui-size-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartDebugUiSize" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-debug-ui-alpha')" :tip="t('chart-debug-ui-alpha-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartDebugUiAlpha" type="number" :rules="[RULES.notEmpty, RULES.alpha01]"></v-text-field></CfgField>
+              <div class="cfg-gap" aria-hidden="true"></div>
+              <CfgSwitch :label="t('chart-debug-ui-note-count')" v-model="chartDebugUiNoteCount" :tip="t('chart-debug-ui-note-count-tip')" />
+              <CfgSwitch :label="t('chart-debug-ui-tap')" v-model="chartDebugUiTap" :tip="t('chart-debug-ui-tap-tip')" />
+              <CfgSwitch :label="t('chart-debug-ui-hold')" v-model="chartDebugUiHold" :tip="t('chart-debug-ui-hold-tip')" />
+              <CfgSwitch :label="t('chart-debug-ui-flick')" v-model="chartDebugUiFlick" :tip="t('chart-debug-ui-flick-tip')" />
+              <CfgSwitch :label="t('chart-debug-ui-drag')" v-model="chartDebugUiDrag" :tip="t('chart-debug-ui-drag-tip')" />
+              <!-- 实时 BPM 自成一个区：与上面的按键数量之间同样只留空隙。 -->
+              <div class="cfg-gap" aria-hidden="true"></div>
+              <CfgSwitch :label="t('chart-debug-ui-bpm')" v-model="chartDebugUiBpm" :tip="t('chart-debug-ui-bpm-tip')" />
+              <CfgSwitch :label="t('chart-debug-ui-bpm-color')" v-model="chartDebugUiBpmColor" :tip="t('chart-debug-ui-bpm-color-tip')" />
+              <CfgField :label="t('chart-debug-ui-bpm-text-offset')" :tip="t('chart-debug-ui-bpm-text-offset-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartDebugUiBpmTextOffset" type="number" :rules="[RULES.notEmpty, RULES.number]"></v-text-field></CfgField>
+              <CfgField :label="t('chart-debug-ui-bpm-text-size')" :tip="t('chart-debug-ui-bpm-text-size-tip')"><v-text-field density="compact" hide-details="auto" v-model="chartDebugUiBpmTextSize" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
+            </div>
+          </PhiSubMenu>
         </div>
       </PhiSection>
       <!-- 二级总开关：「按键」标题行上那个开关就是「渲染项目」里的「按键」开关
@@ -1551,6 +1574,13 @@ defineExpose({
   white-space: pre-wrap;
   margin-top: var(--phi-space-3);
   padding: 0 var(--phi-space-3) 0 calc(var(--phi-space-1) + var(--phi-space-3));
+}
+
+/* 齿轮弹窗里的分区空隙：横跨整行的一段留白，不画线、不配标题。
+   上半区是「显示哪些段」的开关，下半区是浮层自身的位置、字号与不透明度。 */
+.cfg-gap {
+  grid-column: 1 / -1;
+  height: var(--phi-space-2);
 }
 
 

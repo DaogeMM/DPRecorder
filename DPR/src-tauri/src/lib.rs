@@ -336,6 +336,8 @@ pub fn run() -> Result<()> {
                 open_dir,
                 reveal_in_dir,
                 open_external,
+                set_pez_default,
+                open_default_apps_settings,
                 preview_chart,
                 preview_tweakoffset,
                 preview_play,
@@ -669,6 +671,153 @@ fn exit_program(code: i32) {
         }
     }*/
     std::process::exit(code);
+}
+
+/// `.pez` 默认打开方式在注册表里的 ProgID。
+const PEZ_PROG_ID: &str = "DPRecorder.pez";
+
+/// 用 `reg.exe` 写一个字符串值；`name` 为空串表示写键的默认值（`/ve`）。
+///
+/// 走 `reg.exe` 而不是直接调 `RegSetValueExW`：这里只写几个 `HKCU` 下的键，
+/// 命令行够用，也不用把 winapi 的注册表句柄与错误码再包一层。
+fn reg_set_string(key: &str, name: &str, value: &str) -> Result<()> {
+    let mut cmd = std::process::Command::new("reg");
+    cmd.arg("add").arg(key);
+    if name.is_empty() {
+        cmd.arg("/ve");
+    } else {
+        cmd.arg("/v").arg(name);
+    }
+    cmd.arg("/t").arg("REG_SZ").arg("/d").arg(value).arg("/f");
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW：不要闪一个黑框
+    }
+    let status = cmd
+        .status()
+        .with_context(|| format!("执行 reg.exe 失败：{key}"))?;
+    if !status.success() {
+        bail!("写注册表失败：{key} 下的 {}", if name.is_empty() { "默认值" } else { name });
+    }
+    Ok(())
+}
+
+/// 某个键下有没有指定值（看 `reg query` 的退出码，不解析输出）。
+fn reg_has_value(key: &str, name: &str) -> bool {
+    let mut cmd = std::process::Command::new("reg");
+    cmd.arg("query").arg(key).arg("/v").arg(name);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.status().map(|status| status.success()).unwrap_or(false)
+}
+
+/// 把 `.pez` 的默认打开方式指到当前程序。
+///
+/// 只写 `HKCU`（不需要管理员权限）：注册 `DPRecorder.pez` 这个 ProgID，把它的图标与
+/// `shell\open\command` 指到当前 exe，再把 `.pez` 的 `OpenWithProgids` 补上。
+///
+/// Windows 10 起「用户选择」（`Explorer\FileExts\.pez\UserChoice`）优先于
+/// `Software\Classes\.pez` 的默认值：有它时本函数**不动**默认值，只把候选补上并返回
+/// `"blocked"`，由前端把用户引到系统的默认应用页去手选；没有它才顺手把默认值写成
+/// 本 ProgID，返回 `"applied"`。
+#[tauri::command]
+fn set_pez_default() -> Result<String, InvokeError> {
+    (|| {
+        let exe = std::env::current_exe().context("取当前程序路径失败")?;
+        let exe = exe.to_string_lossy().into_owned();
+        let prog = format!(r"HKCU\Software\Classes\{PEZ_PROG_ID}");
+        reg_set_string(&prog, "", "RPE Chart Bundle")?;
+        reg_set_string(&format!(r"{prog}\DefaultIcon"), "", &format!("\"{exe}\",0"))?;
+        reg_set_string(
+            &format!(r"{prog}\shell\open\command"),
+            "",
+            &format!("\"{exe}\" \"%1\""),
+        )?;
+        // 「打开方式」与系统默认应用页里显示的是 `Applications\<exe>` 这一份注册，
+        // 名字取 exe 文件名（DPRecorder）；只写 ProgID 的话列表里会显示成类型名
+        // 「RPE Chart Bundle」，图标也要单独指一次。
+        let exe_name = std::path::Path::new(&exe)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .context("取 exe 文件名失败")?;
+        let app_name = std::path::Path::new(&exe)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "DPRecorder".to_string());
+        let app = format!(r"HKCU\Software\Classes\Applications\{exe_name}");
+        reg_set_string(&format!(r"{app}\FriendlyAppName"), "", &app_name)?;
+        reg_set_string(&format!(r"{app}\DefaultIcon"), "", &format!("\"{exe}\",0"))?;
+        reg_set_string(
+            &format!(r"{app}\shell\open\command"),
+            "",
+            &format!("\"{exe}\" \"%1\""),
+        )?;
+        reg_set_string(&format!(r"{app}\SupportedTypes"), ".pez", "")?;
+        // 候选列表：默认值被 UserChoice 挡住时，右键「打开方式」里仍能看到本程序
+        reg_set_string(
+            r"HKCU\Software\Classes\.pez\OpenWithProgids",
+            PEZ_PROG_ID,
+            "",
+        )?;
+
+        let blocked = reg_has_value(
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pez\UserChoice",
+            "ProgId",
+        );
+        if !blocked {
+            reg_set_string(r"HKCU\Software\Classes\.pez", "", PEZ_PROG_ID)?;
+        }
+
+        // 通知外壳关联变了，否则资源管理器会继续用缓存里的旧图标。
+        // winapi 0.3.9 没导出 SHChangeNotify，这里按 shell32 的签名自己声明一份。
+        #[cfg(target_os = "windows")]
+        unsafe {
+            #[link(name = "shell32")]
+            extern "system" {
+                fn SHChangeNotify(
+                    w_event_id: i32,
+                    u_flags: u32,
+                    dw_item1: *const std::ffi::c_void,
+                    dw_item2: *const std::ffi::c_void,
+                );
+            }
+            const SHCNE_ASSOCCHANGED: i32 = 0x0800_0000;
+            const SHCNF_IDLIST: u32 = 0;
+            SHChangeNotify(
+                SHCNE_ASSOCCHANGED,
+                SHCNF_IDLIST,
+                std::ptr::null(),
+                std::ptr::null(),
+            );
+        }
+        info!(
+            "[关联] .pez -> {}（{}）",
+            exe,
+            if blocked { "blocked" } else { "applied" }
+        );
+        Ok(if blocked { "blocked" } else { "applied" }.to_string())
+    })()
+    .map_err(InvokeError::from_anyhow)
+}
+
+/// 打开 Windows 的「默认应用」设置页，供 `set_pez_default` 被 UserChoice 挡住时兜底。
+#[tauri::command]
+fn open_default_apps_settings() -> Result<(), InvokeError> {
+    (|| {
+        start_via_cmd("ms-settings:defaultapps")?;
+        Ok(())
+    })()
+    .map_err(InvokeError::from_anyhow)
 }
 
 /// 用资源管理器打开一个**目录**。

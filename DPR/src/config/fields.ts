@@ -226,6 +226,59 @@ const CHART = {
     widget: 'text',
     note: '没有独立控件：只在「按键调试」旁边齿轮弹窗里按勾选拼成逗号名单，渲染时由 dps 的 note::debug_note_text 读取',
   },
+  chartDebugUi: { widget: 'checkbox' },
+  chartDebugUiAnchorX: {
+    widget: 'number',
+    note: '没有独立控件：只在「界面调试」旁边齿轮弹窗里调，dps 的 game::ui 用它定位浮层',
+  },
+  chartDebugUiAnchorY: {
+    widget: 'number',
+    note: '没有独立控件：只在「界面调试」旁边齿轮弹窗里调，0 为画面中心、1 为边缘（向上为正）',
+  },
+  chartDebugUiSize: {
+    widget: 'number',
+    note: '没有独立控件：只在「界面调试」旁边齿轮弹窗里调，单位与 dps 的 Ui::text 的 size 相同',
+  },
+  chartDebugUiAlpha: {
+    widget: 'number',
+    note: '没有独立控件：只在「界面调试」旁边齿轮弹窗里调，0~1',
+  },
+  chartDebugUiNoteCount: {
+    widget: 'checkbox',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里勾，决定 Note: 已判定 / 总数 那一段',
+  },
+  chartDebugUiTap: {
+    widget: 'checkbox',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里勾，TAP 分类计数拼进 Note 后面的括号',
+  },
+  chartDebugUiHold: {
+    widget: 'checkbox',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里勾，HOLD 分类计数拼进 Note 后面的括号',
+  },
+  chartDebugUiFlick: {
+    widget: 'checkbox',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里勾，FLICK 分类计数拼进 Note 后面的括号',
+  },
+  chartDebugUiDrag: {
+    widget: 'checkbox',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里勾，DRAG 分类计数拼进 Note 后面的括号',
+  },
+  chartDebugUiBpm: {
+    widget: 'checkbox',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里勾，显示最近判定按键处的 BPM 与整谱范围',
+  },
+  chartDebugUiBpmColor: {
+    widget: 'checkbox',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里勾，把非主流 BPM 的按键染色并在按键下方标出 BPM',
+  },
+  chartDebugUiBpmTextOffset: {
+    widget: 'number',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里调，染色 BPM 文本离按键中心向下的距离',
+  },
+  chartDebugUiBpmTextSize: {
+    widget: 'number',
+    note: '没有独立控件：只在「界面调试」齿轮弹窗里调，染色 BPM 文本的字号',
+  },
   backgroundDim: { widget: 'number', uiValue: 'number' },
   bgBlurriness: { widget: 'number' },
   watermark: { widget: 'textarea' },

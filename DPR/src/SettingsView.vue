@@ -28,6 +28,10 @@ import BilibiliIcon from './components/BilibiliIcon.vue';
 import { useStorage } from '@vueuse/core';
 import { finishPageLoad } from './pageLoad';
 
+// 「PEZ 默认打开方式」那一行左侧的图标：就是程序自己的图标（窗口图标也来自这张图），
+// 所以关联出去的文件图标与程序图标永远一致。
+import pezIcon from './assets/favicon.png';
+
 /** 设置页只有这一份，页内分三组：通用 / DPR / DPE（条目不随左栏当前部分切换）。 */
 
 const form = ref<VForm>();
@@ -434,6 +438,26 @@ function openLogDir() {
   invoke('open_log_folder').catch(toastError);
 }
 
+/** 「PEZ 默认打开方式」里那枚「关联到当前程序」。
+ *
+ *  后端只写 `HKCU`：注册 ProgID、把图标与打开命令指到当前 exe，并补上 `.pez` 的候选列表。
+ *  返回 `"blocked"` 说明 Windows 的「用户选择」优先（`FileExts\.pez\UserChoice`），
+ *  这时默认值不会变，只能把用户送到系统默认应用页去手选 —— 送去之前先 toast 一句，
+ *  免得用户以为按钮没反应。 */
+async function applyPezAssociation() {
+  try {
+    const result = (await invoke('set_pez_default')) as string;
+    if (result === 'applied') {
+      toast(t('pez-default-done'), 'success');
+      return;
+    }
+    toast(t('pez-default-blocked'), 'info');
+    await invoke('open_default_apps_settings');
+  } catch (e) {
+    toastError(e);
+  }
+}
+
 async function openInFolder(path: string | null, isOutput: boolean = false) {
   try {
     if (!path && !isOutput) {
@@ -729,6 +753,15 @@ const forkedDeps = [
                    手动改的值也不会被存回去时抹掉）。 -->
               <CfgSwitch v-if="false" :label="t('high-performance')" :tip="t('high-performance-tip')" v-model="config.highPerformance"></CfgSwitch>
               <CfgSlider :label="t('strip-width')" :tip="t('strip-width-tip')" :min="15" :max="100" :step="1" v-model="stripWidth"></CfgSlider>
+              <!-- 「PEZ 默认打开方式」：把 .pez 关联到当前程序。图标直接用程序自己的
+                   （`assets/favicon.png`），改图标时这里跟着变，不用另存一枚。
+                   Windows 有「用户选择」时默认值改不动，按钮会把人送到系统默认应用页。 -->
+              <CfgField :label="t('pez-default')" :tip="t('pez-default-tip')">
+                <div class="settings-pez">
+                  <img class="settings-pez__icon" :src="pezIcon" :alt="t('pez-default')" />
+                  <v-btn size="small" variant="tonal" color="primary" @click="applyPezAssociation">{{ t('pez-default-apply') }}</v-btn>
+                </div>
+              </CfgField>
             </div>
           </PhiGroup>
 
@@ -881,6 +914,22 @@ const forkedDeps = [
 .settings-path--default :deep(.v-field input) {
   color: var(--phi-label-tertiary);
   opacity: var(--v-disabled-opacity, 0.5);
+}
+
+/* 「PEZ 默认打开方式」：图标与按钮排成一行，图标按文字高度收。
+   图标是 512×512 的原图，这里只负责缩放，不重画。 */
+.settings-pez {
+  display: flex;
+  align-items: center;
+  gap: var(--phi-space-2);
+  min-height: 40px;
+}
+
+.settings-pez__icon {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  flex: none;
 }
 
 /* 「重置」图标按钮挂在「设置」标题右边，只要一排跟着标题右端走，

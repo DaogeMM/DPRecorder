@@ -405,7 +405,35 @@ impl Chart {
             // 「Clock Paradox」：正中的白线大表盘同样垫在判定线与按键下面。
             crate::core::clock_paradox_sp::render(res);
 
+            // 「实时 BPM 染色」：每帧先统计一次全谱的「主流 BPM」——拥有按键最多的那个 BPM 值。
+            // 统计口径是按键个数而不是时长：染色是按颗的，按键多的那个 BPM 才该算「主流」。
+            // 放在渲染入口而不是按键里，是因为这个值要看全谱；每帧只多一次 O(按键数) 的遍历。
             let mut guard = self.bpm_list.borrow_mut();
+            if res.config.chart_debug_ui && res.config.chart_debug_ui_bpm_color {
+                let mut counted: Vec<(i64, f64, u32)> = Vec::new();
+                for (line_id, line) in self.lines.iter().enumerate() {
+                    for note in &line.notes {
+                        if note.fake {
+                            continue;
+                        }
+                        let bpm = guard.bpm_at(note.time, line_id);
+                        let key = (bpm * 1000.).round() as i64;
+                        match counted.iter_mut().find(|(k, _, _)| *k == key) {
+                            Some((_, _, count)) => *count += 1,
+                            None => counted.push((key, bpm, 1)),
+                        }
+                    }
+                }
+                let mut best = (0., 0u32);
+                for (_, bpm, count) in counted {
+                    if count > best.1 {
+                        best = (bpm, count);
+                    }
+                }
+                res.chart_debug_main_bpm.set(best.0);
+            } else {
+                res.chart_debug_main_bpm.set(f64::NAN);
+            }
             for id in &self.order {
                 // 「痉挛SP」：谱面里摆在正中、没有音符、只用来被插画顶替的判定线不画
                 //（不管谱面把它们的 `alpha` 写成多少）；按键所在那根线照常显示。

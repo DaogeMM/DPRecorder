@@ -329,6 +329,10 @@ impl JudgeInner {
     pub fn counts(&self) -> [u32; 4] {
         self.counts
     }
+
+    pub fn num_of_notes(&self) -> u32 {
+        self.num_of_notes
+    }
 }
 
 #[cfg(feature = "closed")]
@@ -1166,6 +1170,12 @@ impl Judge {
             }
         }
         for (judgement, line_id, id, diff) in judgements {
+            // 「实时 BPM 染色」的打击特效：与按键本体同一个颜色（含「浅 20%」），先于下面的
+            // 可变借用算好，避免和 `chart.lines` 的借用撞车。
+            let bpm_tint = {
+                let note = &chart.lines[line_id].notes[id as usize];
+                note.bpm_debug_tint(res, &mut chart.bpm_list.borrow_mut(), line_id)
+            };
             let line = &mut chart.lines[line_id];
             let note = &mut line.notes[id as usize];
             line.object.set_time(t);
@@ -1195,18 +1205,26 @@ impl Judge {
             }
             if match judgement {
                 Judgement::Perfect => {
-                    let color = note
+                    let base = note
                         .hit_fx_color
                         .now_opt()
                         .unwrap_or_else(|| Note::hit_fx_color(res, true));
+                    let color = match bpm_tint {
+                        Some((_, rgb)) => Color::new(rgb[0], rgb[1], rgb[2], base.a),
+                        None => base,
+                    };
                     res.with_model(line_tr * note_transform, |res| res.emit_at_origin(note.rotation(line), color));
                     true
                 }
                 Judgement::Good => {
-                    let color = note
+                    let base = note
                         .hit_fx_color
                         .now_opt()
                         .unwrap_or_else(|| Note::hit_fx_color(res, false));
+                    let color = match bpm_tint {
+                        Some((_, rgb)) => Color::new(rgb[0], rgb[1], rgb[2], base.a),
+                        None => base,
+                    };
                     res.with_model(line_tr * note_transform, |res| res.emit_at_origin(note.rotation(line), color));
                     true
                 }
@@ -1340,6 +1358,10 @@ impl Judge {
             }
         }
         for (line_id, id) in judgements.into_iter() {
+            let bpm_tint = {
+                let note = &chart.lines[line_id].notes[id as usize];
+                note.bpm_debug_tint(res, &mut chart.bpm_list.borrow_mut(), line_id)
+            };
             let mut note_transform = {
                 let line = &mut chart.lines[line_id];
                 let note = &mut line.notes[id as usize];
@@ -1355,10 +1377,13 @@ impl Judge {
             }
             match note.kind {
                 NoteKind::Click => {
-                    let color = if let Some(color) = note.hit_fx_color.now_opt() {
-                        color
-                    } else {
-                        fx_color
+                    let base = match note.hit_fx_color.now_opt() {
+                        Some(color) => color,
+                        None => fx_color,
+                    };
+                    let color = match bpm_tint {
+                        Some((_, rgb)) => Color::new(rgb[0], rgb[1], rgb[2], base.a),
+                        None => base,
                     };
                     self.commit(t, judge_type, line_id as _, id, 0.);
                     if note.time >= res.config.play_start_time && !res.disable_hit_fx {
@@ -1381,10 +1406,13 @@ impl Judge {
                     self.commit(t, judge_type_hold, line_id as _, id, 0.);
                 }
                 _ => {
-                    let color = if let Some(color) = note.hit_fx_color.now_opt() {
-                        color
-                    } else {
-                        fx_color
+                    let base = match note.hit_fx_color.now_opt() {
+                        Some(color) => color,
+                        None => fx_color,
+                    };
+                    let color = match bpm_tint {
+                        Some((_, rgb)) => Color::new(rgb[0], rgb[1], rgb[2], base.a),
+                        None => base,
                     };
                     self.commit(t, Judgement::Perfect, line_id as _, id, 0.);
                     if note.time >= res.config.play_start_time && !res.disable_hit_fx {
@@ -1507,6 +1535,46 @@ impl Judge {
     #[inline]
     pub fn counts(&self) -> [u32; 4] {
         self.inner.counts()
+    }
+
+    /// 参与判定的按键总数（不含 `fake`），界面调试的「按键数量」分母。
+    #[inline]
+    pub fn num_of_notes(&self) -> u32 {
+        self.inner.num_of_notes()
+    }
+
+    /// 已判定的按键按种类计数，顺序 TAP / HOLD / FLICK / DRAG（长条按下那条 `Err` 记录不计）。
+    ///
+    /// 直接按 `judgements` 数：回退时那张表会被裁掉，分类计数因此与分数同步，不用另存一份。
+    pub fn counts_by_kind(&self, chart: &Chart) -> [u32; 4] {
+        let mut counts = [0; 4];
+        for (_, line_id, note_id, what) in self.judgements.borrow().iter() {
+            if what.is_ok() {
+                if let Some(note) = chart.lines.get(*line_id as usize).and_then(|line| line.notes.get(*note_id as usize)) {
+                    counts[note.kind.kind_index()] += 1;
+                }
+            }
+        }
+        counts
+    }
+
+    /// 参与判定的按键按种类计数（不含 `fake`），与 `num_of_notes()` 同一口径。
+    pub fn num_of_notes_by_kind(&self, chart: &Chart) -> [u32; 4] {
+        let mut counts = [0; 4];
+        for note in chart.lines.iter().flat_map(|it| it.notes.iter()).filter(|it| !it.fake) {
+            counts[note.kind.kind_index()] += 1;
+        }
+        counts
+    }
+
+    /// 最近一条成功判定记录的（判定线下标, 按键下标）；「实时 BPM」用它定位。
+    pub fn last_judged(&self) -> Option<(usize, usize)> {
+        self.judgements
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(_, _, _, what)| what.is_ok())
+            .map(|(_, line_id, note_id, _)| (*line_id as usize, *note_id as usize))
     }
 }
 
