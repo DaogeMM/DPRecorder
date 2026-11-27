@@ -817,7 +817,9 @@ defineExpose({
               <CfgSwitch :label="t('aggressive-particle')" v-model="aggressiveParticle" :disabled="!particle && !particleSquare" :tip="t('aggressive-particle-tips')" />
             </div>
           </PhiSubMenu>
-          <CfgSwitch :label="t('render-extra')" v-model="renderExtra" :tip="t('render-extra-tips')" />
+          <!-- 「附加着色器」（`renderExtra`）在谱面组的「元素」分区末尾：
+               它管的是谱面自带 extra.json 里的表演着色器，属于「谱面画什么」，
+               不跟渲染管线（编码、抗锯齿）摆在一起。 -->
           <!-- 谱面侧渲染参数：它们是配置项，会进预设、
                进 config.toml，也出现在批量页的预设弹窗里。 -->
           <CfgSwitch :label="t('info.force-aspect-ratio')" v-model="forceAspectRatio" :tip="t('info.force-aspect-ratio-tip')"></CfgSwitch>
@@ -922,8 +924,8 @@ defineExpose({
       <PhiSection id="sec-render-item" :title="t('render-item')">
                   <div class="cfg-grid">
                     <!-- 本网格的次序：按键 双押提示 打击特效 特效粒子 判定线 噪域
-                         背景 暂停按钮 曲目名称 分数 难度 定数 连击数 进度条
-                         （前半是元素开关，后半是界面叠加项）。
+                         背景 暂停按钮 曲目名称 分数 难度 定数 连击数 进度条 附加着色器
+                         （前半是元素开关，后半是界面叠加项，附加着色器收尾）。
                          「判定线」这一格排第 5，与「判定线」分区表头那个 ⏻ 是同一个
                          `renderLine`，所以那边照样能开关、子项照样跟着变灰。 -->
                     <CfgSwitch :label="t('render-note')" v-model="renderNote" />
@@ -942,6 +944,9 @@ defineExpose({
                     <CfgSwitch :label="t('render-ui-level')" v-model="renderUiLevel" :disabled="!renderUiDifficulty" :tip="t('render-ui-level-tip')" />
                     <CfgSwitch :label="t('render-ui-combo')" v-model="renderUiCombo" />
                     <CfgSwitch :label="t('render-ui-bar')" v-model="renderUiBar" :tip="t('render-ui-bar-tip')" />
+                    <!-- 「附加着色器」：谱面 extra.json 里的表演着色器开关，
+                         与渲染管线无关，所以排在元素网格的最后。 -->
+                    <CfgSwitch :label="t('render-extra')" v-model="renderExtra" :tip="t('render-extra-tips')" />
           <!-- `chart-ratio`（谱面缩放）在下面的「界面」分区；`speed`（速度）与
                `fade`（上隐/下隐）在谱面组的「更多」分区。
                这个分区剩下的都是开关，网格里不混数值项。 -->

@@ -1,0 +1,23 @@
+[package]
+name = "dpr-pez-icon"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+
+[lib]
+name = "dpr_pez_icon"
+crate-type = ["cdylib"]
+
+[dependencies]
+image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
+zip = { version = "8.3.0", default-features = false, features = ["deflate-flate2"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+	"Win32_Foundation",
+	"Win32_Graphics_Gdi",
+	"Win32_System_Com",
+	"Win32_UI_Shell",
+	"Win32_UI_WindowsAndMessaging",
+] }

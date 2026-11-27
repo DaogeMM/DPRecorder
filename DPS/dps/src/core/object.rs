@@ -84,6 +84,9 @@ pub struct CtrlObject {
     pub size: AnimFloat,
     pub pos: AnimFloat,
     pub y: AnimFloat,
+    /// rpe-next 的 `skewControl`：音符沿 X 方向的斜切量，单位是「每 RPE 单位的度数」
+    /// （实际角度 = 音符 x 坐标 × 这个值），只有 Click / Flick / Drag 用，Hold 不切。
+    pub skew: AnimFloat,
 }
 
 impl CtrlObject {
@@ -92,5 +95,6 @@ impl CtrlObject {
         self.size.set_time(height);
         self.pos.set_time(height);
         self.y.set_time(height);
+        self.skew.set_time(height);
     }
 }

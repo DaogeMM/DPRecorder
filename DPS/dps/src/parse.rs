@@ -1,3 +1,5 @@
+mod expr;
+
 mod extra;
 pub use extra::parse_extra;
 
@@ -9,6 +11,8 @@ pub use pgr::parse_phigros;
 
 mod rpe;
 pub use rpe::{parse_rpe, RPE_HEIGHT, RPE_WIDTH, RPEChart};
+
+mod trajectory;
 
 pub(crate) fn process_lines(v: &mut [crate::core::JudgeLine]) {
     use crate::ext::NotNanExt;

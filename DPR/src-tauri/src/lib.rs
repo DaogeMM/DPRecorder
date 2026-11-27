@@ -330,6 +330,12 @@ pub fn run() -> Result<()> {
                     .build(),
             )
             .manage(TaskQueue::new())
+            .setup(|_app| {
+                // 安装包只写 ProgID 与文件类型；装完第一次启动把曲绘图标处理器补上，
+                // 用户不用再去设置页点「关联到本程序」。
+                ensure_pez_icon_handlers();
+                Ok(())
+            })
             .invoke_handler(tauri::generate_handler![
                 exit_program,
                 open_output_folder,
@@ -676,6 +682,13 @@ fn exit_program(code: i32) {
 /// `.pez` 默认打开方式在注册表里的 ProgID。
 const PEZ_PROG_ID: &str = "DPRecorder.pez";
 
+/// `.pez` 曲绘图标处理器的 CLSID，必须与 `DPR/pez-icon` 里的
+/// `CLSID_PEZ_ICON` 一致。
+const PEZ_ICON_CLSID: &str = "{8b2f0c4e-5a6d-4b7e-9c31-2f7d5a8e6b40}";
+
+/// 曲绘图标处理器的 DLL 文件名，随安装包放在 exe 旁边。
+const PEZ_ICON_DLL: &str = "pez_icon.dll";
+
 /// 用 `reg.exe` 写一个字符串值；`name` 为空串表示写键的默认值（`/ve`）。
 ///
 /// 走 `reg.exe` 而不是直接调 `RegSetValueExW`：这里只写几个 `HKCU` 下的键，
@@ -704,6 +717,147 @@ fn reg_set_string(key: &str, name: &str, value: &str) -> Result<()> {
         bail!("写注册表失败：{key} 下的 {}", if name.is_empty() { "默认值" } else { name });
     }
     Ok(())
+}
+
+/// 删掉某个键下的一个值；`name` 为空串表示默认值（`/ve`）。删不存在的值不算错。
+fn reg_delete_value(key: &str, name: &str) {
+    let mut cmd = std::process::Command::new("reg");
+    cmd.arg("delete").arg(key);
+    if name.is_empty() {
+        cmd.arg("/ve");
+    } else {
+        cmd.arg("/v").arg(name);
+    }
+    cmd.arg("/f");
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    // 删不存在的值会返回非 0，这里只是清理旧注册，失败不影响主流程。
+    let _ = cmd.status();
+}
+
+/// 读某个键下的一个字符串值；`name` 为空串表示默认值。读不到返回 `None`。
+fn reg_query_value(key: &str, name: &str) -> Option<String> {
+    let mut cmd = std::process::Command::new("reg");
+    cmd.arg("query").arg(key);
+    if name.is_empty() {
+        cmd.arg("/ve");
+    } else {
+        cmd.arg("/v").arg(name);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        // 形如 `    (Default)    REG_SZ    D:\xxx\DPRecorder.exe,0`
+        let Some(index) = line.find("REG_SZ") else {
+            continue;
+        };
+        return Some(line[index + "REG_SZ".len()..].trim().to_string());
+    }
+    None
+}
+
+/// 需要挂曲绘图标处理器的 ProgID：自己的一个，加上「实际生效且指向本程序」的那一个。
+///
+/// `.pez` 的默认打开方式可能停在旧安装写下的 ProgID 上（`UserChoice` 锁死之后改不动），
+/// 只要那个 ProgID 确实指向 DPRecorder.exe，就也给它的 `shellex` 挂一份。
+fn pez_icon_progs() -> Vec<String> {
+    let mut progs = vec![PEZ_PROG_ID.to_string()];
+    if let Some(effective) = reg_query_value(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pez\UserChoice",
+        "ProgId",
+    ) {
+        let ours = reg_query_value(
+            &format!(r"HKCU\Software\Classes\{effective}\DefaultIcon"),
+            "",
+        )
+        .map(|icon| icon.to_ascii_lowercase().contains("dprecorder.exe"))
+        .unwrap_or(false);
+        if ours && !effective.eq_ignore_ascii_case(PEZ_PROG_ID) {
+            progs.push(effective);
+        }
+    }
+    progs
+}
+
+/// 把曲绘图标处理器写成 / 清掉。
+///
+/// `dll` 存在时写 CLSID 的 `InprocServer32` 和各 ProgID 的 `shellex\IconHandler`；
+/// 不存在（比如直接从源码目录跑）时删掉 IconHandler，让资源管理器退回静态图标。
+fn write_pez_icon_handlers(dll: &Path, progs: &[String]) -> Result<()> {
+    let clsid = format!(r"HKCU\Software\Classes\CLSID\{PEZ_ICON_CLSID}");
+    for prog in progs {
+        let handler = format!(r"HKCU\Software\Classes\{prog}\shellex\IconHandler");
+        if dll.is_file() {
+            reg_set_string(
+                &format!(r"{clsid}\InprocServer32"),
+                "",
+                &dll.to_string_lossy(),
+            )?;
+            reg_set_string(
+                &format!(r"{clsid}\InprocServer32"),
+                "ThreadingModel",
+                "Apartment",
+            )?;
+            reg_set_string(&handler, "", PEZ_ICON_CLSID)?;
+        } else {
+            reg_delete_value(&handler, "");
+        }
+    }
+    Ok(())
+}
+
+/// 启动时补齐曲绘图标处理器。
+///
+/// 安装包只创建 ProgID 与文件类型，不写 CLSID 和 IconHandler；装完第一次启动补上，
+/// 用户不用再去设置页点「关联到本程序」。已经是对的就不重复写注册表，失败只记日志。
+fn ensure_pez_icon_handlers() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let dll = dir.join(PEZ_ICON_DLL);
+    if !dll.is_file() {
+        return;
+    }
+    let progs = pez_icon_progs();
+    let dll_text = dll.to_string_lossy().into_owned();
+    let server_ok = reg_query_value(
+        &format!(r"HKCU\Software\Classes\CLSID\{PEZ_ICON_CLSID}\InprocServer32"),
+        "",
+    )
+    .map(|value| value.eq_ignore_ascii_case(&dll_text))
+    .unwrap_or(false);
+    let handlers_ok = progs.iter().all(|prog| {
+        reg_query_value(
+            &format!(r"HKCU\Software\Classes\{prog}\shellex\IconHandler"),
+            "",
+        )
+        .map(|value| value.eq_ignore_ascii_case(PEZ_ICON_CLSID))
+        .unwrap_or(false)
+    });
+    if server_ok && handlers_ok {
+        return;
+    }
+    match write_pez_icon_handlers(&dll, &progs) {
+        Ok(()) => info!("[图标] 已为 .pez 注册曲绘图标处理器（{}）", dll.display()),
+        Err(err) => warn!("[图标] 注册曲绘图标处理器失败：{err:#}"),
+    }
 }
 
 /// 某个键下有没有指定值（看 `reg query` 的退出码，不解析输出）。
@@ -769,6 +923,15 @@ fn set_pez_default() -> Result<String, InvokeError> {
             PEZ_PROG_ID,
             "",
         )?;
+
+        // 曲绘图标：把 pez-icon crate 编出的 DLL 注册成 ProgID 的 `shellex\IconHandler`，
+        // 资源管理器画 `.pez` 图标时会先让这个进程内组件按文件里的曲绘取图。
+        // 除了自己的 ProgID，实际生效且指向本程序的那一个也挂一份；DLL 不存在时清掉旧值。
+        let exe_dir = std::path::Path::new(&exe)
+            .parent()
+            .context("取程序目录失败")?;
+        let icon_dll = exe_dir.join(PEZ_ICON_DLL);
+        write_pez_icon_handlers(&icon_dll, &pez_icon_progs())?;
 
         let blocked = reg_has_value(
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pez\UserChoice",

@@ -1,4 +1,4 @@
-use macroquad::prelude::{vec2, Color, Rect, Vec2};
+use macroquad::prelude::{vec2, vec3, Color, Rect, Vec2, Vec3};
 use once_cell::sync::Lazy;
 use std::{any::Any, ops::Range, rc::Rc};
 
@@ -335,8 +335,45 @@ impl ClampedTween {
     }
 }
 
-pub struct IntegralClampedTween {
-    tween_id: TweenId,
+/// rpe-next 的 `customEasing`（v250 动画曲线）。
+///
+/// 曲线是 x 单调递增的分段三次贝塞尔，取值要把 x 反解成参数 t，逐帧对每个事件都算一遍太贵，
+/// 所以解析期把整条曲线烘成一张采样表，求值时一次线性插值就够（节点数 ≤ 256，误差肉眼不可见）。
+pub struct CurveTween {
+    table: Vec<f32>,
+    /// 映射进曲线坐标系：`customEasing.domain`，缺省 [0, 1]。
+    domain: (f32, f32),
+}
+
+impl CurveTween {
+    /// 采样点数：129 个点把误差压在千分之一以内，同时让一张长曲线也不至于占太多内存。
+    const SAMPLES: usize = 129;
+
+    /// `curve(x)` 是曲线本身的值，x 已在 [0, 1] 内。曲线非法（节点不足等）时返回 None。
+    pub fn bake(curve: impl Fn(f32) -> f32, domain: (f32, f32)) -> Self {
+        let table = (0..Self::SAMPLES)
+            .map(|i| curve(i as f32 / (Self::SAMPLES - 1) as f32))
+            .collect();
+        Self { table, domain }
+    }
+}
+
+impl TweenFunction for CurveTween {
+    fn y(&self, x: f32) -> f32 {
+        let cx = self.domain.0 + (self.domain.1 - self.domain.0) * x.clamp(0., 1.);
+        let pos = cx.clamp(0., 1.) * (self.table.len() - 1) as f32;
+        let i = pos.floor() as usize;
+        let i1 = (i + 1).min(self.table.len() - 1);
+        let t = pos - i as f32;
+        self.table[i] + (self.table[i1] - self.table[i]) * t
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+pub struct IntegralClampedTween {    tween_id: TweenId,
     x_range: Range<f32>,
     y_range: Range<f32>,
     base: f32,
@@ -612,6 +649,38 @@ impl Tweenable for Vec2 {
 impl Tweenable for Color {
     fn tween(x: &Self, y: &Self, t: f32) -> Self {
         Self::new(f32::tween(&x.r, &y.r, t), f32::tween(&x.g, &y.g, t), f32::tween(&x.b, &y.b, t), f32::tween(&x.a, &y.a, t))
+    }
+}
+
+impl Tweenable for Vec3 {
+    fn tween(x: &Self, y: &Self, t: f32) -> Self {
+        vec3(f32::tween(&x.x, &y.x, t), f32::tween(&x.y, &y.y, t), f32::tween(&x.z, &y.z, t))
+    }
+
+    fn add(x: &Self, y: &Self) -> Self {
+        vec3(x.x + y.x, x.y + y.y, x.z + y.z)
+    }
+}
+
+impl Tweenable for i32 {
+    /// 整数着色器参数（`int` 版 uniform）：按浮点插值后四舍五入，取整方式与 rpe-next 一致。
+    fn tween(x: &Self, y: &Self, t: f32) -> Self {
+        (*x as f32 + (*y - *x) as f32 * t).round() as i32
+    }
+
+    fn add(x: &Self, y: &Self) -> Self {
+        x + y
+    }
+}
+
+impl Tweenable for bool {
+    /// 布尔着色器参数不插值，区间内保持起点的值。
+    fn tween(x: &Self, _y: &Self, t: f32) -> Self {
+        if t < 1.0 {
+            *x
+        } else {
+            *_y
+        }
     }
 }
 

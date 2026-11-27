@@ -66,7 +66,7 @@ pub use smooth::Smooth;
 
 mod tween;
 pub use tween::{
-    easing_from, BezierTween, ClampedTween, GeneralIntegralTween, IntegralClampedTween, IntegralStaticTween, SpeedIntegralTween, StaticTween,
+    easing_from, BezierTween, ClampedTween, CurveTween, GeneralIntegralTween, IntegralClampedTween, IntegralStaticTween, SpeedIntegralTween, StaticTween,
     TweenFunction, TweenId, TweenMajor, TweenMinor, Tweenable, TWEEN_FUNCTIONS,
 };
 

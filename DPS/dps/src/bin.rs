@@ -1,6 +1,6 @@
 use crate::{
     core::{
-        Anim, AnimVector, BezierTween, BpmList, Chart, ChartExtra, ChartSettings, ClampedTween, CtrlObject, JudgeLine, JudgeLineCache, JudgeLineKind, Keyframe, Note, NoteKind, Object, StaticTween, TextData, Tweenable, UIElement
+        Anim, AnimFloat, AnimVector, BezierTween, BpmList, Chart, ChartExtra, ChartSettings, ClampedTween, CtrlObject, JudgeLine, JudgeLineCache, JudgeLineKind, Keyframe, Note, NoteKind, Object, StaticTween, TextData, Tweenable, UIElement
     },
     judge::{HitSound, JudgeStatus},
     parse::process_lines,
@@ -376,21 +376,28 @@ impl BinaryData for Object {
 
 impl BinaryData for CtrlObject {
     fn read_binary<R: Read>(r: &mut BinaryReader<R>) -> Result<Self> {
-        assert_eq!(r.read::<u8>()?, 8);
+        // 版本 8 的缓冲区里没有 skew 轨，读出来当成 0 即可（`.pbc` 谱面不会有斜切）。
+        let version = r.read::<u8>()?;
+        assert!(
+            (8..=9).contains(&version),
+            "unsupported CtrlObject version: {version}"
+        );
         Ok(Self {
             alpha: r.read()?,
             size: r.read()?,
             pos: r.read()?,
             y: r.read()?,
+            skew: if version >= 9 { r.read()? } else { AnimFloat::default() },
         })
     }
 
     fn write_binary<W: Write>(&self, w: &mut BinaryWriter<W>) -> Result<()> {
-        w.write_val(8_u8)?;
+        w.write_val(9_u8)?;
         w.write(&self.alpha)?;
         w.write(&self.size)?;
         w.write(&self.pos)?;
         w.write(&self.y)?;
+        w.write(&self.skew)?;
         Ok(())
     }
 }

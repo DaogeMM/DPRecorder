@@ -3,7 +3,7 @@
   "mainBinaryName": "DPRecorder",
   "identifier": "com.daogemm.dpr",
   "build": {
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/build-before-tauri.mjs",
     "beforeDevCommand": "pnpm dev",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173"
@@ -44,7 +44,8 @@
     },
     "resources": {
       "../../assets": "assets",
-      "config.toml": "config.toml"
+      "config.toml": "config.toml",
+      "pez-icon/pez_icon.dll": "pez_icon.dll"
     },
     "shortDescription": "",
     "linux": {

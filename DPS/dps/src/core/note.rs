@@ -3,7 +3,7 @@ use crate::{
     core::{Anim, HEIGHT_RATIO},
     ext::{parse_alpha, WHITE_TEXTURE},
     judge::JudgeStatus,
-    parse::RPE_HEIGHT,
+    parse::{RPE_HEIGHT, RPE_WIDTH},
     ui::Ui,
 };
 
@@ -559,7 +559,19 @@ impl Note {
             let progress = 1. - (self.water.death / total).clamp(0., 1.);
             rot = rot * Matrix::new_rotation(crate::core::water::WATER_DEATH_TILT * progress);
         }
-        rot.append_nonuniform_scaling(&scale).append_translation(&tr)
+        let mut mat = rot.append_nonuniform_scaling(&scale);
+        // rpe-next 的斜切：角度 = 音符的 RPE x 坐标 × `skewControl` 的值，Hold 不切。
+        // 剪切作用在音符自身的局部坐标上（宽高同单位），所以插在缩放之后、平移之前。
+        if !matches!(self.kind, NoteKind::Hold { .. }) {
+            let rpe_x = self.object.translation.0.now() * (RPE_WIDTH / 2.);
+            let deg = rpe_x * ctrl_obj.skew.now_opt().unwrap_or(0.);
+            if deg.abs() > 1e-4 {
+                let slope = deg.to_radians().tan();
+                // nalgebra 按行构造：x' = x + slope * y，y' = y。
+                mat = mat * Matrix::new(1., slope, 0., 0., 1., 0., 0., 0., 1.);
+            }
+        }
+        mat.append_translation(&tr)
     }
 
     /// 「强制定位」的**延后视窗**（`block_area_force_delay`，默认 0.3 秒）：判定完的按键周围

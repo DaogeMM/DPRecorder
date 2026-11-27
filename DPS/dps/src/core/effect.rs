@@ -66,6 +66,14 @@ impl UniformValue for Vec2 {
     const UNIFORM_TYPE: UniformType = UniformType::Float2;
 }
 
+impl UniformValue for Vec3 {
+    const UNIFORM_TYPE: UniformType = UniformType::Float3;
+}
+
+impl UniformValue for i32 {
+    const UNIFORM_TYPE: UniformType = UniformType::Int1;
+}
+
 impl UniformValue for Color {
     const UNIFORM_TYPE: UniformType = UniformType::Float4;
 }
@@ -102,6 +110,35 @@ impl<T: UniformValue + Tweenable> Uniform for (String, Anim<T>) {
     }
 }
 
+/// 布尔参数单独实现：GLSL 的 `bool` uniform 在 GL 里按整数上传，
+/// 而 `bool` 本身只有一个字节，走不了按字节大小匹配的通用分支。
+impl Uniform for (String, Anim<bool>) {
+    fn uniform_pair(&self) -> (String, UniformType) {
+        (self.0.clone(), UniformType::Int1)
+    }
+
+    fn set_time(&mut self, t: f64) {
+        self.1.set_time(t);
+    }
+
+    fn apply(&self, material: &Material) {
+        material.set_uniform(&self.0, i32::from(self.1.now()));
+    }
+}
+
+/// 着色器源码里写的布尔默认值（`uniform bool x; // %true%`），同样是按整数上传。
+impl Uniform for (String, bool) {
+    fn uniform_pair(&self) -> (String, UniformType) {
+        (self.0.clone(), UniformType::Int1)
+    }
+
+    fn set_time(&mut self, _t: f64) {}
+
+    fn apply(&self, material: &Material) {
+        material.set_uniform(&self.0, i32::from(self.1));
+    }
+}
+
 pub struct Effect {
     time_range: Range<f64>,
     t: f64,
@@ -121,28 +158,48 @@ impl Effect {
     }
 
     pub fn new(time_range: Range<f64>, shader: &str, uniforms: Vec<Box<dyn Uniform>>, global: bool) -> Result<Self> {
-        static DEF_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"uniform\s+(\w+)\s+(\w+);\s+//\s+%([^%]+)%").unwrap());
+        // 默认值写在声明行的注释里（`uniform vec2 x; // %0.1, 0.2%`）。rpe-next 的谱面自带
+        // 着色器允许类型前加 precision 限定符、`;` 与 `%` 之间还有别的注释内容，这两种写法
+        // 都要认；认不出的类型（`mat4` 之类）直接跳过，不能让整张谱面加载失败。
+        static DEF_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"uniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+(\w+)\s*;[^\r\n]*?%([^%\r\n]+)%").unwrap());
         let defaults = DEF_REGEX
             .captures_iter(shader)
-            .map(|caps| -> Result<Box<dyn Uniform>> {
+            .filter_map(|caps| -> Option<Result<Box<dyn Uniform>>> {
                 let type_name = caps.get(1).unwrap().as_str();
+                if !matches!(type_name, "float" | "int" | "bool" | "vec2" | "vec3" | "vec4") {
+                    return None;
+                }
                 let name = caps.get(2).unwrap().as_str().to_owned();
                 let value = caps.get(3).unwrap().as_str();
-                Ok(match type_name {
-                    "float" => Box::new((name, value.parse::<f32>()?)),
-                    "vec2" => Box::new((name, {
-                        let (x, y) = value.split_once(',').ok_or_else(|| anyhow!("Expected x,y"))?;
-                        vec2(x.trim().parse()?, y.trim().parse()?)
-                    })),
-                    "vec4" => Box::new((name, {
-                        let values: Vec<_> = value.split(',').map(|it| it.trim()).collect();
-                        if values.len() != 4 {
-                            bail!("Expected r,g,b,a");
-                        }
-                        Color::new(values[0].parse()?, values[1].parse()?, values[2].parse()?, values[3].parse()?)
-                    })),
-                    _ => bail!("Unknown type: {type_name}"),
-                })
+                Some(
+                    (|| -> Result<Box<dyn Uniform>> {
+                        let numbers = || -> Result<Vec<f32>> { value.split(',').map(|it| Ok(it.trim().parse::<f32>()?)).collect() };
+                        Ok(match type_name {
+                            "float" => Box::new((name, value.trim().parse::<f32>()?)),
+                            "int" => Box::new((name, value.trim().parse::<i32>()?)),
+                            "bool" => Box::new((name, matches!(value.trim(), "true" | "1" | "1.0"))),
+                            "vec2" => {
+                                let (x, y) = value.split_once(',').ok_or_else(|| anyhow!("Expected x,y"))?;
+                                Box::new((name, vec2(x.trim().parse()?, y.trim().parse()?)))
+                            }
+                            "vec3" => {
+                                let values = numbers()?;
+                                if values.len() != 3 {
+                                    bail!("Expected x,y,z");
+                                }
+                                Box::new((name, vec3(values[0], values[1], values[2])))
+                            }
+                            "vec4" => {
+                                let values = numbers()?;
+                                if values.len() != 4 {
+                                    bail!("Expected r,g,b,a");
+                                }
+                                Box::new((name, Color::new(values[0], values[1], values[2], values[3])))
+                            }
+                            _ => unreachable!(),
+                        })
+                    })(),
+                )
             })
             .collect::<Result<Vec<Box<dyn Uniform>>>>()?;
         let mut ocurred_uniforms = HashSet::new();

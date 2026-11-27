@@ -50,3 +50,18 @@ DPR/public/player/assets/
 # ── 静态库（体积大、可重建）────────────────────────────────────────────────
 static-lib/
 *.tsbuildinfo
+
+# ── 曲绘图标处理器（`DPR/scripts/build-before-tauri.mjs` 从 target 复制过来）──
+DPR/src-tauri/pez-icon/pez_icon.dll
+
+# build outputs that must never land in the repo root (cargo writes to target/)
+/DPRecorder.exe
+/DPRecorder.pdb
+/DPRecorder.d
+/dpr_lib.*
+/libdpr_lib.*
+/pez_icon.dll
+/config.toml
+/.cargo-lock
+/.cargo-build-lock
+/.cargo-artifact-lock

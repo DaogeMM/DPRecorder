@@ -1,9 +1,13 @@
 crate::tl_file!("parser" ptl);
 
-use super::{process_lines, RPE_TWEEN_MAP};
+use super::{
+    process_lines,
+    trajectory::{self, Trajectory},
+    RPE_TWEEN_MAP,
+};
 use crate::{
     core::{
-        Anim, AnimFloat, AnimFloatF64, AnimVector, BezierTween, BpmList, Chart, ChartExtra, ChartSettings, ClampedTween, CtrlObject, EPS, GeneralIntegralTween, GifFrames, HEIGHT_RATIO, HitSoundMap, IntegralClampedTween, IntegralStaticTween, JudgeLine, JudgeLineCache, JudgeLineKind, Keyframe, Note, NoteKind, Object, SpeedIntegralTween, StaticTween, TextData, Triple, TweenFunction, Tweenable, UIElement, Vector
+        Anim, AnimFloat, AnimFloatF64, AnimVector, BezierTween, BpmList, Chart, ChartExtra, ChartSettings, ClampedTween, CtrlObject, CurveTween, EPS, GeneralIntegralTween, GifFrames, HEIGHT_RATIO, HitSoundMap, IntegralClampedTween, IntegralStaticTween, JudgeLine, JudgeLineCache, JudgeLineKind, Keyframe, Note, NoteKind, Object, SpeedIntegralTween, StaticTween, TextData, Triple, TweenFunction, Tweenable, UIElement, Vector
     },
     ext::{NotNanExt, SafeTexture},
     fs::FileSystem,
@@ -51,11 +55,174 @@ fn i32_one() -> i32 {
     1
 }
 
+/// `inst` 在 RPE 谱面里可能写成 `true` / `false`，也可能写成 `1` / `0`，两种都认。
+fn bool_like<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Bool(bool),
+        Int(i64),
+        Float(f32),
+    }
+    Ok(match Option::<Raw>::deserialize(deserializer)? {
+        None => false,
+        Some(Raw::Bool(value)) => value,
+        Some(Raw::Int(value)) => value != 0,
+        Some(Raw::Float(value)) => value != 0.,
+    })
+}
+
 type BezierMap = FxHashMap<(u16, i16, i16), Rc<dyn TweenFunction>>;
+
+impl RPECustomEasing {
+    /// 把曲线烘成采样表。定义不合法（版本、节点数、首尾不是 (0,0)/(1,1)）时返回 None，
+    /// 调用方退回 `easingType` —— rpe-next 遇到同样情况是拒绝加载，这里宁可放过。
+    fn compile(&self) -> Option<CurveTween> {
+        let ns = &self.curve.nodes;
+        let (first, last) = (ns.first()?, ns.last()?);
+        if self.curve.version != 1 || ns.len() < 2 || ns.len() > 256 {
+            return None;
+        }
+        if (first.x).abs() > 1e-6 || (first.y).abs() > 1e-6 || (last.x - 1.).abs() > 1e-6 || (last.y - 1.).abs() > 1e-6 {
+            return None;
+        }
+        let segs: Vec<[f32; 8]> = (0..ns.len() - 1).map(|i| curve_segment(ns, i)).collect();
+        let curve = move |x: f32| {
+            let x = x.clamp(0., 1.);
+            if x <= 0. {
+                return 0.;
+            }
+            if x >= 1. {
+                return 1.;
+            }
+            let s = segs.iter().find(|s| x <= s[3]).unwrap_or(&segs[segs.len() - 1]);
+            if (x - s[0]).abs() < 1e-9 {
+                return s[4];
+            }
+            cubic_eval(&s[4..8], curve_parameter(&s[0..4], x))
+        };
+        let domain = self.domain.unwrap_or([0., 1.]);
+        Some(CurveTween::bake(curve, (domain[0], domain[1])))
+    }
+}
+
+fn cubic_eval(ys: &[f32], t: f32) -> f32 {
+    let u = 1. - t;
+    u * u * u * ys[0] + 3. * u * u * t * ys[1] + 3. * u * t * t * ys[2] + t * t * t * ys[3]
+}
+
+/// 段内 x 单调（控制柄的 x 按定义被夹在节点之间），二分反解参数 t。
+fn curve_parameter(xs: &[f32], x: f32) -> f32 {
+    let (mut a, mut b) = (0., 1.);
+    for _ in 0..32 {
+        let m = (a + b) / 2.;
+        if cubic_eval(xs, m) < x {
+            a = m;
+        } else {
+            b = m;
+        }
+    }
+    (a + b) / 2.
+}
+
+/// 一段曲线的四个控制点，前半是 x、后半是 y。
+fn curve_segment(ns: &[RPEAnimationNode], i: usize) -> [f32; 8] {
+    let (a, b) = (&ns[i], &ns[i + 1]);
+    let dx = b.x - a.x;
+    let mode = a.mode.as_deref().unwrap_or("corner");
+    if mode == "hold" {
+        return [a.x, a.x, b.x, b.x, a.y, a.y, a.y, a.y];
+    }
+    if mode == "linear" {
+        return [
+            a.x,
+            a.x + dx / 3.,
+            b.x - dx / 3.,
+            b.x,
+            a.y,
+            a.y + (b.y - a.y) / 3.,
+            b.y - (b.y - a.y) / 3.,
+            b.y,
+        ];
+    }
+    let h1 = curve_handle(ns, i, true, dx);
+    let h2 = curve_handle(ns, i + 1, false, dx);
+    [a.x, h1.0, h2.0, b.x, a.y, h1.1, h2.1, b.y]
+}
+
+/// `out` 是节点右侧的控制柄、`in` 是左侧的。写了控制柄且 mode 不是 auto 时用写的，
+/// 否则按前后节点的连线斜率算自动控制柄。
+fn curve_handle(ns: &[RPEAnimationNode], i: usize, out: bool, dx: f32) -> (f32, f32) {
+    let n = &ns[i];
+    let explicit = if out { n.out_handle } else { n.in_handle };
+    if n.mode.as_deref().unwrap_or("corner") != "auto" {
+        if let Some(h) = explicit {
+            return (h[0], h[1]);
+        }
+    }
+    let before = &ns[i.saturating_sub(1)];
+    let after = &ns[(i + 1).min(ns.len() - 1)];
+    let span = after.x - before.x;
+    let slope = if span.abs() < 1e-9 { 0. } else { (after.y - before.y) / span };
+    let delta = if out { dx / 3. } else { -dx / 3. };
+    (n.x + delta, n.y + delta * slope)
+}
+
+/// rpe-next 的动画曲线（`customEasing`，RPEVersion 250 起）。
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RPECustomEasing {
+    /// 把事件进度映射进曲线坐标的区间，缺省 [0, 1]。
+    #[serde(default)]
+    domain: Option<[f32; 2]>,
+    curve: RPEAnimationCurve,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RPEAnimationCurve {
+    #[serde(default)]
+    #[allow(dead_code)]
+    name: Option<String>,
+    #[serde(default = "i32_one")]
+    version: i32,
+    nodes: Vec<RPEAnimationNode>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RPEAnimationNode {
+    x: f32,
+    y: f32,
+    /// `auto` / `smooth` / `corner` / `linear` / `hold`，缺省按 `corner`。
+    #[serde(default)]
+    mode: Option<String>,
+    /// 控制柄是绝对坐标，不是相对偏移。
+    #[serde(default, rename = "in")]
+    in_handle: Option<[f32; 2]>,
+    #[serde(default)]
+    out_handle: Option<[f32; 2]>,
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RPEEvent<T = f32> {
+    #[serde(default)]
+    custom_easing: Option<RPECustomEasing>,
+    /// 曲线事件真正的首尾值（`sourceStart` / `sourceEnd`），缺省等于 `start` / `end`。
+    #[serde(default)]
+    source_start: Option<T>,
+    #[serde(default)]
+    source_end: Option<T>,
+    /// rpe-next 的曲线轨迹，只会出现在 `moveXEvents` 上（见 [`Trajectory`]）。
+    #[serde(default)]
+    trajectory: Option<Trajectory>,
+    /// 瞬时事件：轨迹取 `domain` 起点那一个值，不随时间推进。
+    #[serde(default, deserialize_with = "bool_like")]
+    inst: bool,
     #[serde(default = "f32_zero")]
     easing_left: f32,
     #[serde(default = "f32_one")]
@@ -79,7 +246,19 @@ impl<T> RPEEvent<T> {
         ((int(p[0]) * 100 + int(p[1])) as u16, int(p[2]), int(p[3]))
     }
 
+    /// 曲线事件真正用的首值：rpe-next 把端值写在 `sourceStart`，`start` 只是裁剪后的端点。
+    fn start_value(&self) -> &T {
+        self.source_start.as_ref().unwrap_or(&self.start)
+    }
+
+    fn end_value(&self) -> &T {
+        self.source_end.as_ref().unwrap_or(&self.end)
+    }
+
     pub fn tween(&self, bezier_map: &BezierMap) -> Rc<dyn TweenFunction> {
+        if let Some(t) = self.custom_easing.as_ref().and_then(|c| c.compile()) {
+            return Rc::new(t);
+        }
         let tween = RPE_TWEEN_MAP.get(self.easing_type.max(1) as usize).copied().unwrap_or(RPE_TWEEN_MAP[0]);
         let left = self.easing_left.clamp(0., 1.);
         let right = self.easing_right.clamp(0., 1.);
@@ -154,7 +333,7 @@ pub struct RPEEventLayer {
     speed_events: Option<Vec<RPEEvent<f64>>>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct RGBColor(u8, u8, u8);
 
 impl Default for RGBColor {
@@ -198,12 +377,22 @@ pub struct RPENote {
     speed: f64,
     is_fake: u8,
     visible_time: f64,
+    /// 音符颜色。`tint` 是现在这套键名，老谱面写的是 `color`；rpe-next 读的是
+    /// `note.tint ?? note.color`，这里保持同样优先级。
     #[serde(default, rename = "tint")]
-    color: RGBColor,
+    tint: Option<RGBColor>,
+    #[serde(default, rename = "color")]
+    legacy_tint: Option<RGBColor>,
     #[serde(rename = "tintHitEffects")]
     hit_fx_color: Option<RGBColor>,
     #[serde(default="f64_one", rename = "judgeArea")]
     judge_scale: f64,
+}
+
+impl RPENote {
+    fn tint(&self) -> Color {
+        Color::from(self.tint.or(self.legacy_tint).unwrap_or_default())
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -216,8 +405,10 @@ pub struct RPEJudgeLine {
     texture: String,
     #[serde(rename = "father")]
     parent: Option<isize>,
+    /// 是否跟随父判定线旋转。RPE 163 起才有这个字段：缺省时 rpe-next 按
+    /// 「`RPEVersion >= 163` 就是 true」处理，手写或更早版本导出的谱面才缺省。
     #[serde(default, rename = "rotateWithFather")]
-    rotate_with_parent: bool,
+    rotate_with_parent: Option<bool>,
     anchor: Option<[f32; 2]>,
     #[serde(default="f64_one", rename = "bpmfactor")]
     bpm_factor: f64,
@@ -238,6 +429,9 @@ pub struct RPEJudgeLine {
     alpha_control: Vec<RPECtrlEvent>,
     #[serde(default)]
     y_control: Vec<RPECtrlEvent>,
+    /// rpe-next 扩展的斜切控件轨；RPE 原生格式里没有这个字段。
+    #[serde(default)]
+    skew_control: Vec<RPECtrlEvent>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -285,10 +479,10 @@ fn parse_events<T: Tweenable, V: Clone + Into<T>>(
     for e in rpe {
         kfs.push(Keyframe {
             time: r.time(&e.start_time),
-            value: e.start.clone().into(),
+            value: e.start_value().clone().into(),
             tween: e.tween(&bezier_map),
         });
-        kfs.push(Keyframe::new(r.time(&e.end_time), e.end.clone().into(), 0));
+        kfs.push(Keyframe::new(r.time(&e.end_time), e.end_value().clone().into(), 0));
     }
     Ok(Anim::new(kfs))
 }
@@ -467,6 +661,7 @@ async fn parse_notes(
     let mut notes = Vec::with_capacity(rpe.len());
     for note in rpe {
         let time: f64 = r.time(&note.start_time);
+        let tint = note.tint();
         height.set_time(time);
         let note_height = height.now();
         let y_offset = note.y_offset * 2. / RPE_HEIGHT * note.speed as f32;
@@ -537,11 +732,10 @@ async fn parse_notes(
             judge: JudgeStatus::NotJudged,
             judge_scale: note.judge_scale,
             color: {
-                let color = Color::from(note.color);
-                if matches!(color, WHITE) {
+                if matches!(tint, WHITE) {
                     Anim::default()
                 } else {
-                    Anim::fixed(color)
+                    Anim::fixed(tint)
                 }
             },
             hit_fx_color: {
@@ -573,6 +767,119 @@ fn parse_ctrl_events(rpe: &[RPECtrlEvent], key: &str) -> AnimFloat {
     )
 }
 
+/// 位移/旋转事件展开时取的轴。`trajectory` 挂在 `moveXEvents` 上，却同时决定 x、y 与旋转，
+/// 所以这三个轴都要从同一批轨迹事件里采样。
+#[derive(Clone, Copy, PartialEq)]
+enum MoveAxis {
+    X,
+    Y,
+    Rotation,
+}
+
+impl MoveAxis {
+    fn factor(self) -> f32 {
+        match self {
+            Self::X => 2. / RPE_WIDTH,
+            Self::Y => 2. / RPE_HEIGHT,
+            Self::Rotation => -1.,
+        }
+    }
+
+    fn desc(self) -> &'static str {
+        match self {
+            Self::X => "move X",
+            Self::Y => "move Y",
+            Self::Rotation => "rotate",
+        }
+    }
+
+    fn value(self, point: &trajectory::Point) -> f32 {
+        match self {
+            Self::X => point.x,
+            Self::Y => point.y,
+            Self::Rotation => point.rotation,
+        }
+    }
+}
+
+/// 一层的位移事件展开成关键帧：带 `trajectory` 的段换成采样点，其余照常走 [`parse_events`]。
+fn layer_axis_events(r: &mut BpmList, layer: &RPEEventLayer, events: &[RPEEvent], axis: MoveAxis, bezier_map: &BezierMap) -> Result<AnimFloat> {
+    const SAMPLES: usize = 128;
+    let anim = parse_events(r, events, None, bezier_map)?;
+    let mut samples = Vec::new();
+    let mut spans = Vec::new();
+    // 轨迹只能挂在 `moveXEvents` 上，但它同时决定 x、y 与旋转，所以各轴都从这里取采样点。
+    for event in layer.move_x_events.iter().flatten() {
+        let Some(trajectory) = event.trajectory.as_ref().and_then(|it| it.compile()) else {
+            continue;
+        };
+        // 轨迹不带旋转时，`rotateEvents` 那份不该被它接管。
+        if axis == MoveAxis::Rotation && !trajectory.has_rotation() {
+            continue;
+        }
+        let start = r.time(&event.start_time);
+        let end = r.time(&event.end_time);
+        spans.push((start, end));
+        // 瞬时事件只有一个值（取 `domain` 起点），落在事件开始的那一刻。
+        let (samples_count, fixed) = if event.inst || end <= start { (0, true) } else { (SAMPLES, false) };
+        for index in 0..=samples_count {
+            let progress = index as f32 / samples_count.max(1) as f32;
+            let Some(point) = trajectory.value(progress) else {
+                continue;
+            };
+            let time = if fixed { start } else { start + (end - start) * progress as f64 };
+            // 2 号缓动是线性：采样点之间直接连线，等于把曲线折线化。
+            samples.push(Keyframe::new(time, axis.value(&point), 2));
+        }
+    }
+    if spans.is_empty() {
+        return Ok(anim);
+    }
+    // 轨迹覆盖的那一段用采样点，原来的首尾关键帧去掉，避免两套值打架。
+    let mut keyframes: Vec<_> = anim
+        .keyframes
+        .iter()
+        .filter(|it| !spans.iter().any(|(start, end)| it.time >= *start && it.time <= *end))
+        .cloned()
+        .collect();
+    keyframes.extend(samples);
+    keyframes.sort_by(|a, b| a.time.total_cmp(&b.time));
+    Ok(AnimFloat::new(keyframes))
+}
+
+/// 一个轴上的动画。`trajectory` 挂在 `moveXEvents` 上却决定三个轴，所以要按层一起算。
+fn parse_axis_events(r: &mut BpmList, event_layers: &[RPEEventLayer], axis: MoveAxis, bezier_map: &BezierMap) -> Result<AnimFloat> {
+    let anis: Vec<_> = event_layers
+        .iter()
+        .filter(|layer| {
+            // 自己这一轴有事件，或者 `moveXEvents` 里挂了轨迹（轨迹同时决定三个轴）。
+            let own = match axis {
+                MoveAxis::X => &layer.move_x_events,
+                MoveAxis::Y => &layer.move_y_events,
+                MoveAxis::Rotation => &layer.rotate_events,
+            };
+            own.is_some() || layer.move_x_events.iter().flatten().any(|event| event.trajectory.is_some())
+        })
+        .map(|layer| {
+            let events: &[RPEEvent] = match axis {
+                MoveAxis::X => layer.move_x_events.as_deref(),
+                MoveAxis::Y => layer.move_y_events.as_deref(),
+                MoveAxis::Rotation => layer.rotate_events.as_deref(),
+            }
+            .unwrap_or_default();
+            layer_axis_events(r, layer, events, axis, bezier_map)
+        })
+        .collect::<Result<Vec<_>>>()
+        .with_context(|| ptl!("type-events-parse-failed", "type" => axis.desc()))?;
+    let mut res = AnimFloat::chain(anis);
+    if res.is_default() {
+        return Ok(AnimFloat::fixed(0.0));
+    }
+    let factor = axis.factor();
+    res.map_value(|v| v * factor);
+    Ok(res)
+}
+
 async fn parse_judge_line(
     bpm_list: Vec<RPEBpmItem>,
     rpe: RPEJudgeLine,
@@ -582,6 +889,7 @@ async fn parse_judge_line(
     hitsounds: &mut HitSoundMap,
     font_cache: &mut HashMap<String, usize>,
     fonts: &mut Vec<RefCell<TextPainter>>,
+    rpe_version: i32,
 ) -> Result<JudgeLine> {
     let mut line_texture_map: FxHashMap<String, SafeTexture> = FxHashMap::default();
     let event_layers: Vec<_> = rpe.event_layers.into_iter().flatten().collect();
@@ -624,16 +932,17 @@ async fn parse_judge_line(
         res.map_value(|v| v * factor);
         Ok(res)
     }
+
     let mut height = parse_speed_events(r, &event_layers, bezier_map, max_time)?;
     let mut notes = parse_notes(r, rpe.notes.unwrap_or_default(), fs, &mut height, hitsounds).await?;
     let cache = JudgeLineCache::new(&mut notes);
     Ok(JudgeLine {
         object: Object {
             alpha: events_with_factor(r, &event_layers, |it| &it.alpha_events, 1. / 255., "alpha", bezier_map)?,
-            rotation: events_with_factor(r, &event_layers, |it| &it.rotate_events, -1., "rotate", bezier_map)?,
+            rotation: parse_axis_events(r, &event_layers, MoveAxis::Rotation, bezier_map)?,
             translation: AnimVector(
-                events_with_factor(r, &event_layers, |it| &it.move_x_events, 2. / RPE_WIDTH, "move X", bezier_map)?,
-                events_with_factor(r, &event_layers, |it| &it.move_y_events, 2. / RPE_HEIGHT, "move Y", bezier_map)?,
+                parse_axis_events(r, &event_layers, MoveAxis::X, bezier_map)?,
+                parse_axis_events(r, &event_layers, MoveAxis::Y, bezier_map)?,
             ),
             scale: {
                 fn parse(r: &mut BpmList, opt: &Option<Vec<RPEEvent>>, factor: f32, bezier_map: &BezierMap) -> Result<AnimFloat> {
@@ -679,6 +988,7 @@ async fn parse_judge_line(
             size: parse_ctrl_events(&rpe.size_control, "size"),
             pos: parse_ctrl_events(&rpe.pos_control, "pos"),
             y: parse_ctrl_events(&rpe.y_control, "y"),
+            skew: parse_ctrl_events(&rpe.skew_control, "skew"),
         }),
         height,
         incline: if let Some(events) = rpe.extended.as_ref().and_then(|e| e.incline_events.as_ref()) {
@@ -777,7 +1087,7 @@ async fn parse_judge_line(
                 Some(parent as usize)
             }
         },
-        rotate_with_parent: rpe.rotate_with_parent,
+        rotate_with_parent: rpe.rotate_with_parent.unwrap_or(rpe_version >= 163),
         anchor: rpe.anchor.unwrap_or([0.5, 0.5]),
         z_index: rpe.z_order,
         show_below: rpe.is_cover != 1,
@@ -884,10 +1194,11 @@ pub async fn parse_rpe(source: &str, fs: &mut dyn FileSystem, extra: ChartExtra)
     let mut lines = Vec::with_capacity(rpe.judge_line_list.len());
     let mut font_cache: HashMap<String, usize> = HashMap::new();
     let mut fonts: Vec<RefCell<TextPainter>> = Vec::new();
+    let rpe_version = rpe.meta.rpe_version;
     for (id, line) in rpe.judge_line_list.into_iter().enumerate() {
         let name = line.name.clone();
         lines.push(
-            parse_judge_line(bpm_list.clone(), line, max_time, fs, &bezier_map, &mut hitsounds, &mut font_cache, &mut fonts)
+            parse_judge_line(bpm_list.clone(), line, max_time, fs, &bezier_map, &mut hitsounds, &mut font_cache, &mut fonts, rpe_version)
                 .await
                 .with_context(move || ptl!("judge-line-location-name", "jlid" => id, "name" => name))?,
         );
@@ -967,5 +1278,73 @@ mod tests {
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0]["id"], "main");
         assert_eq!(chart.noise_area_options.unwrap()["ignoreTripleInversion"], true);
+    }
+
+    /// 带 `trajectory` 的位移事件要变成采样关键帧（而不是首尾两点），两个轴都从轨迹取。
+    #[test]
+    fn trajectory_events_become_sampled_keyframes() {
+        let mut bpm = BpmList::new(vec![(0., 120.)]);
+        let layer: RPEEventLayer = serde_json::from_str(
+            r#"{"moveXEvents": [{
+                "startTime": [0, 0, 1], "endTime": [2, 0, 1], "start": 0, "end": 0,
+                "trajectory": {"version": 1, "options": {"xExpression": "100*t", "yExpression": "-100*t"}}
+            }]}"#,
+        )
+        .unwrap();
+        let bezier_map = BezierMap::default();
+        let x = layer_axis_events(&mut bpm, &layer, layer.move_x_events.as_deref().unwrap(), MoveAxis::X, &bezier_map).unwrap();
+        // y 轴没有自己的事件，但轨迹照样决定它。
+        let y = layer_axis_events(&mut bpm, &layer, &[], MoveAxis::Y, &bezier_map).unwrap();
+        assert!(x.keyframes.len() > 100, "{}", x.keyframes.len());
+        let mut x = x;
+        let mut y = y;
+        x.set_time(0.5);
+        y.set_time(0.5);
+        // 120 BPM 下两个拍是 1 秒，中点是 t = 0.5。
+        assert!((x.now() - 50.).abs() < 0.5, "x = {}", x.now());
+        assert!((y.now() + 50.).abs() < 0.5, "y = {}", y.now());
+    }
+
+    /// `inst` 在谱面里写成 0/1（RPE 导出的就是这个），解析时不能当布尔失败；
+    /// 写成 1 时轨迹只出一个值，落在事件开始的那一刻。
+    #[test]
+    fn inst_is_a_number_and_freezes_the_trajectory() {
+        let mut bpm = BpmList::new(vec![(0., 120.)]);
+        let layer: RPEEventLayer = serde_json::from_str(
+            r#"{"moveXEvents": [{
+                "startTime": [0, 0, 1], "endTime": [2, 0, 1], "start": 0, "end": 0, "inst": 1,
+                "trajectory": {"version": 1, "options": {"xExpression": "100*t", "yExpression": "0"}}
+            }]}"#,
+        )
+        .unwrap();
+        let bezier_map = BezierMap::default();
+        let x = layer_axis_events(&mut bpm, &layer, layer.move_x_events.as_deref().unwrap(), MoveAxis::X, &bezier_map).unwrap();
+        assert_eq!(x.keyframes.len(), 1, "{:?}", x.keyframes.first().map(|it| it.time));
+        let mut x = x;
+        x.set_time(1.);
+        // 瞬时事件固定在 `domain` 起点，所以时间推进到中间也还是起点的值。
+        assert!(x.now().abs() < 1e-3, "x = {}", x.now());
+    }
+
+    /// 切线旋转的轨迹同时驱动旋转轴；不带旋转的轨迹不碰 `rotateEvents`。
+    #[test]
+    fn trajectory_rotation_reaches_the_rotation_axis() {
+        let mut bpm = BpmList::new(vec![(0., 120.)]);
+        let layer: RPEEventLayer = serde_json::from_str(
+            r#"{"moveXEvents": [{
+                "startTime": [0, 0, 1], "endTime": [2, 0, 1], "start": 0, "end": 0,
+                "trajectory": {"version": 1, "options": {
+                    "xExpression": "200*cos(2*pi*t)", "yExpression": "200*sin(2*pi*t)", "tangentRotation": true
+                }}
+            }]}"#,
+        )
+        .unwrap();
+        let bezier_map = BezierMap::default();
+        let rotation = parse_axis_events(&mut bpm, std::slice::from_ref(&layer), MoveAxis::Rotation, &bezier_map).unwrap();
+        assert!(rotation.keyframes.len() > 100, "{}", rotation.keyframes.len());
+        let mut rotation = rotation;
+        rotation.set_time(0.);
+        // 逆时针走圆，起点切线朝 -y（轨迹给 -90°），再乘上 RPE 旋转的 -1 系数。
+        assert!((rotation.now() - 90.).abs() < 1., "{}", rotation.now());
     }
 }
