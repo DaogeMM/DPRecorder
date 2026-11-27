@@ -810,6 +810,7 @@ pub struct Resource {
     pub disable_hit_fx: bool,
 
     pub chart_target: Option<MSRenderTarget>,
+    pub(super) effect_input: Option<super::effect::EffectInput>,
 
     /// 「拖影效果」专用的一张整屏缓冲：它自己就是上一帧的画面。
     ///
@@ -1030,6 +1031,7 @@ impl Resource {
             disable_hit_fx: false,
 
             chart_target: None,
+            effect_input: None,
             keep_target: None,
             no_effect,
             has_noise_skin: false,

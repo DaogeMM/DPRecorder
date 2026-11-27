@@ -146,6 +146,7 @@ export interface RenderConfig {
   /** 「实时 BPM 染色」的 BPM 文本字号 */
   chartDebugUiBpmTextSize: number;
   chartRatio: number;
+  effectChartInput: boolean;
   allGood: boolean;
   allBad: boolean;
   /** 「落点模拟」：AUTOPLAY 下长条按下时把落点钉在按键当时的中心，之后判定照着这个固定落点
@@ -752,6 +753,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   chartDebugUiBpmTextOffset: 0.04,
   chartDebugUiBpmTextSize: 0.4,
   chartRatio: 1,
+  effectChartInput: true,
   allGood: false,
   allBad: false,
   touchSim: false,

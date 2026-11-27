@@ -139,6 +139,7 @@ pub struct RenderConfig {
     /// 「实时 BPM 染色」的 BPM 文本字号，与 `Ui::text` 的 size 同单位。
     pub chart_debug_ui_bpm_text_size: f32,
     pub chart_ratio: f32,
+    pub effect_chart_input: bool,
     pub all_good: bool,
     pub all_bad: bool,
     /// 「落点模拟」（默认关闭）：AUTOPLAY 下长条按下时把落点钉在按键当时的中心，
@@ -808,6 +809,7 @@ impl RenderConfig {
             chart_debug_ui_bpm_text_offset: self.chart_debug_ui_bpm_text_offset,
             chart_debug_ui_bpm_text_size: self.chart_debug_ui_bpm_text_size,
             chart_ratio: self.chart_ratio,
+            effect_chart_input: self.effect_chart_input,
             all_good: self.all_good,
             all_bad: self.all_bad,
             touch_sim: self.touch_sim,
@@ -1167,6 +1169,7 @@ impl Default for RenderConfig {
             chart_debug_ui_bpm_text_offset: 0.04,
             chart_debug_ui_bpm_text_size: 0.4,
             chart_ratio: 1.0,
+            effect_chart_input: true,
             all_good: false,
             all_bad: false,
             touch_sim: false,
