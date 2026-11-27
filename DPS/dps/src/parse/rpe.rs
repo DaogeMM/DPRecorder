@@ -898,7 +898,7 @@ async fn parse_judge_line(
     if let Some(extended) = &rpe.extended {
         if let Some(text_events) = &extended.text_events {
             for event in text_events {
-                if let Some(font_path) = &event.font {
+                if let Some(font_path) = event.font.as_ref().filter(|path| !path.trim().is_empty() && !path.starts_with("cmdysj")) {
                     if !font_cache.contains_key(font_path) {
                         let font_data = fs.load_file(font_path).await.with_context(|| format!("failed to load font: {font_path}"))?;
                         let font_arc = FontArc::try_from_vec(font_data).map_err(|err| anyhow::anyhow!("failed to parse font: {err}"))?;
