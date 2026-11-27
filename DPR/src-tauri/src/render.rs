@@ -1169,7 +1169,7 @@ impl Default for RenderConfig {
             chart_debug_ui_bpm_text_offset: 0.04,
             chart_debug_ui_bpm_text_size: 0.4,
             chart_ratio: 1.0,
-            effect_chart_input: true,
+            effect_chart_input: false,
             all_good: false,
             all_bad: false,
             touch_sim: false,
