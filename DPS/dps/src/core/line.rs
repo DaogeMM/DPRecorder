@@ -833,12 +833,14 @@ impl JudgeLine {
                         } else {
                             Color::new(1., 1., 1., parse_alpha(alpha, res.alpha, 0.15, res.config.chart_debug_line > 0.))
                         };
-                        ui.text(debug_text)
-                        .pos(0., -res.config.chart_debug_line * 0.1)
-                        .anchor(0.5, 1.)
-                        .size(res.config.chart_debug_line)
-                        .color(color)
-                        .draw();
+                        if !debug_text.is_empty() {
+                            res.line_debug_labels.push(super::resource::LineDebugLabel {
+                                text: debug_text,
+                                model: *res.model_stack.last().unwrap(),
+                                size: res.config.chart_debug_line,
+                                color,
+                            });
+                        }
                     });
                 });
             }

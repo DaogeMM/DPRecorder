@@ -586,6 +586,12 @@ export interface RenderConfig {
   /** 噪域文字淡色：简化噪域编号在 enable 之前的颜色（rgb 0~1），默认白 */
   simplifiedBlockAreaTextPaleColor: [number, number, number];
   blockAreaAlpha: number;
+  blockAreaDrawOnTop: boolean;
+  blockAreaIgnoreSkin: boolean;
+  blockAreaReveal: boolean;
+  blockAreaRevealCutouts: boolean;
+  blockAreaRevealOutline: boolean;
+  blockAreaRevealAlpha: number;
   /** 噪域密度：噪域边缘那圈像素颗粒的疏密，默认 2.5，越大颗粒越细越密 */
   blockAreaDensity: number;
   /** 噪域火花：完整噪域里那层火花点阵（默认 true） */
@@ -1002,6 +1008,12 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   simplifiedBlockAreaTextColor: [0xff / 255, 0x60 / 255, 0x94 / 255],
   simplifiedBlockAreaTextPaleColor: [1, 1, 1],
   blockAreaAlpha: 0.25,
+  blockAreaDrawOnTop: false,
+  blockAreaIgnoreSkin: false,
+  blockAreaReveal: false,
+  blockAreaRevealCutouts: true,
+  blockAreaRevealOutline: true,
+  blockAreaRevealAlpha: 0.5,
   blockAreaDensity: 2.5,
   blockAreaSpark: true,
   blockAreaNoiseBlotch: true,

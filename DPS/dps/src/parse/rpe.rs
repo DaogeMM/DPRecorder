@@ -1238,6 +1238,25 @@ pub async fn parse_rpe(source: &str, fs: &mut dyn FileSystem, extra: ChartExtra)
         }
     }
     chart.next_noise_layers = noise_layers.into_layers();
+    if !chart.next_block_areas.is_empty() {
+        for layer in &chart.next_noise_layers {
+            let skin = match crate::core::block_area::skin::Skin::load(layer, fs).await {
+                Ok(Some(skin)) => {
+                    tracing::info!(layer = %layer.id, skin = ?layer.skin, "Loaded RPEN noise skin");
+                    Some(skin)
+                }
+                Ok(None) => None,
+                Err(error) => {
+                    tracing::warn!(layer = %layer.id, %error, "RPEN noise skin could not load; using the native material");
+                    None
+                }
+            };
+            chart.noise_skins.push(skin.map(|mut skin| {
+                skin.time_offset = chart.offset;
+                skin
+            }));
+        }
+    }
     // v230 的层模型与 `noiseAreaOptions.ignoreTripleInversion` 都改成「恰好一次反转才算减掉覆盖」，
     // 三次反转不再翻回去（参考实现的 `rpen::features`）。旧谱面保持奇偶规则。
     chart.next_single_inversion = ignore_triple_inversion

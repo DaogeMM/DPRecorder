@@ -763,6 +763,13 @@ impl NoteBuffer {
     }
 }
 
+pub(crate) struct LineDebugLabel {
+    pub text: String,
+    pub model: Matrix,
+    pub size: f32,
+    pub color: Color,
+}
+
 pub struct Resource {
     pub config: Config,
     pub info: ChartInfo,
@@ -817,6 +824,7 @@ pub struct Resource {
     pub keep_target: Option<MSRenderTarget>,
 
     pub no_effect: bool,
+    pub(crate) has_noise_skin: bool,
 
     pub note_buffer: RefCell<NoteBuffer>,
 
@@ -868,6 +876,7 @@ pub struct Resource {
 
 
     pub model_stack: Vec<Matrix>,
+    pub(crate) line_debug_labels: Vec<LineDebugLabel>,
     #[cfg(feature = "play")]
     pub shake_play_mode_deque: VecDeque<(f64, f32)>, // time, acceleration
     #[cfg(feature = "play")]
@@ -1023,6 +1032,7 @@ impl Resource {
             chart_target: None,
             keep_target: None,
             no_effect,
+            has_noise_skin: false,
 
             note_buffer: RefCell::new(NoteBuffer::default()),
 
@@ -1036,6 +1046,7 @@ impl Resource {
             sim_touch_points: Vec::new(),
 
             model_stack: vec![Matrix::identity()],
+            line_debug_labels: Vec::new(),
             #[cfg(feature = "play")]
             shake_play_mode_deque: VecDeque::new(),
             #[cfg(feature = "play")]
@@ -1174,8 +1185,10 @@ impl Resource {
         // 之前建过的也一并释放。
         if self.keep_frame() {
             self.chart_target = None;
-        } else if !self.no_effect || self.config.sample_count != 1 || self.config.low_resolution_mode {
+        } else if self.has_noise_skin || !self.no_effect || self.config.sample_count != 1 || self.config.low_resolution_mode {
             self.chart_target = Some(MSRenderTarget::new((vp.2 as u32, vp.3 as u32), self.config.sample_count));
+        } else {
+            self.chart_target = None;
         }
         fn viewport(aspect_ratio: f32, (x, y, w, h): (i32, i32, i32, i32)) -> (i32, i32, i32, i32) {
             let w = w as f32;

@@ -232,7 +232,7 @@ const {
   blockAreaForcePosition, blockAreaForceHeight, blockAreaForceWidth, blockAreaForceShow,
   blockAreaForceTime, blockAreaForceDelay, blockAreaForceInvert, blockAreaForceKeepNoise, blockAreaColor,
   blockAreaNormalColor, simplifiedBlockAreaTextColor, simplifiedBlockAreaTextPaleColor,
-  blockAreaAlpha, blockAreaDensity, blockAreaSpark, blockAreaNoiseBlotch, blockAreaDisplaceStrength,
+  blockAreaDrawOnTop, blockAreaIgnoreSkin, blockAreaReveal, blockAreaRevealAlpha, blockAreaRevealCutouts, blockAreaRevealOutline, blockAreaAlpha, blockAreaDensity, blockAreaSpark, blockAreaNoiseBlotch, blockAreaDisplaceStrength,
   blockAreaHover, blockAreaHoverRadius,
   blockAreaPixelScale, blockAreaDisplaceSpeed, blockAreaNoiseRadius, blockAreaNoiseSmoothness,
   blockAreaEdgeNoise, directBlockHollow, blockAreaDistort, renderJudgeRange, judgeRangeWidth,
@@ -1040,6 +1040,12 @@ defineExpose({
              岩浆噪域开启时由引擎按「有效值」忽略这三项（`DPS/dps/src/core/block_area/native/shader.rs`
              里 `set_fill_style` 的 `|| lava` / `&& !lava`）。 -->
         <div class="cfg-grid">
+          <CfgSwitch :label="t('block-area-reveal')" v-model="blockAreaReveal" :disabled="!renderBlockArea" />
+          <CfgSwitch :label="t('block-area-reveal-cutouts')" v-model="blockAreaRevealCutouts" :disabled="!renderBlockArea || !blockAreaReveal" />
+          <CfgSwitch :label="t('block-area-reveal-outline')" v-model="blockAreaRevealOutline" :disabled="!renderBlockArea || !blockAreaReveal" />
+          <CfgField :label="t('block-area-reveal-alpha')"><v-text-field v-model="blockAreaRevealAlpha" :disabled="!renderBlockArea || !blockAreaReveal" type="number" min="0" max="1" step="0.05" density="compact" :rules="[RULES.notEmpty, RULES.alpha01]" /></CfgField>
+          <CfgSwitch :label="t('block-area-draw-on-top')" v-model="blockAreaDrawOnTop" :disabled="!renderBlockArea || blockAreaReveal" />
+          <CfgSwitch :label="t('block-area-ignore-skin')" v-model="blockAreaIgnoreSkin" :disabled="!renderBlockArea || blockAreaReveal" />
           <CfgSwitch :label="t('block-area-noise-blotch')" v-model="blockAreaNoiseBlotch" :disabled="!renderBlockArea" :tip="t('block-area-noise-blotch-tip')" />
           <CfgSwitch :label="t('block-area-distort')" v-model="blockAreaDistort" :disabled="!renderBlockArea" :tip="t('block-area-distort-tip')" />
           <CfgSwitch :label="t('block-area-spark')" v-model="blockAreaSpark" :disabled="!renderBlockArea" :tip="t('block-area-spark-tip')" />

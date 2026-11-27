@@ -883,7 +883,7 @@ fn noise(uv: [f32; 2]) -> f32 {
 }
 
 /// 按行求旋转矩形覆盖的 x 半开区间（`write(y, first, last)`）。
-fn raster_rows(width: usize, height: usize, aspect: f32, zone: &Zone, mut write: impl FnMut(usize, usize, usize)) {
+pub(in crate::core::block_area) fn raster_rows(width: usize, height: usize, aspect: f32, zone: &Zone, mut write: impl FnMut(usize, usize, usize)) {
     if zone.half.x <= 0. || zone.half.y <= 0. {
         return;
     }
