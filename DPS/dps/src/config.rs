@@ -641,6 +641,12 @@ pub struct Config {
     /// 「噪域不透明度」：简化噪域填充的 alpha（0~1，默认 0.25）。< 1 时会另外补一圈合并后的
     /// 最外框，那一圈恒为 alpha = 1，不受这个值影响
     pub block_area_alpha: f32,
+    pub block_area_reveal: bool,
+    pub block_area_reveal_cutouts: bool,
+    pub block_area_reveal_outline: bool,
+    pub block_area_reveal_alpha: f32,
+    pub block_area_draw_on_top: bool,
+    pub block_area_ignore_skin: bool,
     /// 「噪域密度」：噪域边缘那圈像素颗粒的疏密，默认 2.5（= 1 时是上游硬编码的 `width / 8` 栅格）。
     /// 越大 ⇒ 颗粒格子越小、边缘越细越密、越贴近方块轮廓；越小 ⇒ 格子越大越粗。
     /// 落点是掩码栅格化的格边长（`native\mask.rs` 的 `Masks::cell`，`8 / density` 后夹到 2~32），
@@ -1114,6 +1120,12 @@ impl Default for Config {
             block_area_color: hex_color("#E61A1A"),
             block_area_normal_color: hex_color("#E61A1A"),
             block_area_alpha: 0.25,
+            block_area_reveal: false,
+            block_area_reveal_cutouts: true,
+            block_area_reveal_outline: true,
+            block_area_reveal_alpha: 0.5,
+            block_area_draw_on_top: false,
+            block_area_ignore_skin: false,
             block_area_density: 2.5,
             block_area_spark: true,
             block_area_noise_blotch: true,

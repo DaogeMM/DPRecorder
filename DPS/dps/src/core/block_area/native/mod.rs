@@ -320,7 +320,7 @@ pub fn block_touch_blocked(areas: &[BlockArea], next: &[NextArea], p: Vector, t:
     native || super::next::blocked(next, p, t, aspect, single_inversion)
 }
 
-mod mask;
+pub(super) mod mask;
 mod shader;
 mod touch;
 

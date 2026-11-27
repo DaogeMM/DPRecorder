@@ -21,8 +21,10 @@
 //! 只是逐帧覆写 uniform 把它降级成纯色。细节见 [`native`] 与 `blockArea/NATIVE_PORT.md`。
 
 mod layers;
-mod native;
-mod next;
+pub(super) mod native;
+pub(super) mod next;
+pub(super) mod reveal;
+pub(crate) mod skin;
 pub mod simple;
 
 pub use layers::{NoiseLayer, NoiseLayers};

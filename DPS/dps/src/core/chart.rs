@@ -48,6 +48,8 @@ pub struct Chart {
     ///
     /// 没有层字段的谱面只有一层 `default`（见 [`super::NoiseLayers`]），旧谱面的行为不变。
     pub next_noise_layers: Vec<NoiseLayer>,
+    noise_reveal_texture: RefCell<Option<crate::ext::SafeTexture>>,
+    pub(crate) noise_skins: Vec<Option<super::block_area::skin::Skin>>,
     /// rpe-next 噪域的遮挡规则：为真时层内只有**恰好一次**反转才算减掉覆盖（v230 的层模型
     /// 与 `noiseAreaOptions.ignoreTripleInversion` 都走这一套），为假时按奇偶规则。
     pub next_single_inversion: bool,
@@ -116,6 +118,8 @@ impl Chart {
             block_areas: Vec::new(),
             next_block_areas: Vec::new(),
             next_noise_layers: Vec::new(),
+            noise_skins: Vec::new(),
+            noise_reveal_texture: RefCell::new(None),
             next_single_inversion: false,
             blocked_touches: Vec::new(),
             block_groups: Vec::new(),
@@ -291,7 +295,18 @@ impl Chart {
         Ok(())
     }
 
+    pub(crate) fn has_noise_skin(&self) -> bool {
+        self.noise_skins.iter().any(Option::is_some)
+    }
+
+    fn reset_noise_skins(&self) {
+        for skin in self.noise_skins.iter().flatten() {
+            skin.reset();
+        }
+    }
+
     pub fn reset(&mut self) {
+        self.reset_noise_skins();
         self.lines.iter_mut().flat_map(|it| it.notes.iter_mut()).for_each(|note| {
             note.judge = JudgeStatus::NotJudged;
             note.protected = false;
@@ -309,6 +324,7 @@ impl Chart {
     /// ⚠️ 不能改用 `reset()`：它把每个音符都改成 `NotJudged`、动画时刻归零，判定器重扫时会
     /// 把回退点之前的音符**一口气全判掉**，音符也会以开局那一刻的样子堆在判定线上。
     pub fn rewind_to(&mut self, time: f64) {
+        self.reset_noise_skins();
         self.lines.iter_mut().flat_map(|it| it.notes.iter_mut()).for_each(|note| {
             if note.time >= time {
                 note.judge = JudgeStatus::NotJudged;
@@ -508,6 +524,50 @@ impl Chart {
     /// 注意必须在 MSAA `blit()` **之后**调用：blit 会把多重采样 FBO 解析成
     /// `chart_target.output()`，之后屏幕上显示的就是那张已经解析好的纹理，所以这里直接
     /// 写 `output()`，写进多重采样输入 FBO 反而会被丢掉。
+    pub(crate) fn render_noise_reveal(&self, res: &Resource) {
+        if !res.config.render_block_area || res.config.fixed_lane_chart || res.config.chart_mod_arrange
+            || res.config.pure_config_chart
+        {
+            return;
+        }
+        use super::block_area::{next, reveal};
+        let native = super::block_area::collect_zones(&self.block_areas, res.time, res.aspect_ratio, false);
+        if !res.config.block_area_reveal_cutouts {
+            reveal::draw_individual(res, native.into_iter().chain(next::zones(&self.next_block_areas, res.time, res.aspect_ratio)));
+            return;
+        }
+        let (_, _, vw, vh) = res.last_vp;
+        let scale = (1280. / vw.max(vh).max(1) as f32).min(1.);
+        let width = (vw as f32 * scale).round().max(1.) as usize;
+        let height = (vh as f32 * scale).round().max(1.) as usize;
+        let mut state = vec![0; width * height];
+        reveal::combine(&mut state, width, height, res, &native, false);
+        for areas in self.next_block_areas.chunk_by(|a, b| a.layer() == b.layer()) {
+            let zones = next::zones(areas, res.time, res.aspect_ratio);
+            reveal::combine(&mut state, width, height, res, &zones, self.next_single_inversion);
+        }
+        if !state.iter().any(|&value| value != 0) {
+            return;
+        }
+        let rgba = reveal::outline(
+            &state, width, height, res.config.block_area_normal_color,
+            res.config.block_area_reveal_alpha.clamp(0., 1.), res.config.block_area_reveal_outline,
+        );
+        let mut cached = self.noise_reveal_texture.borrow_mut();
+        if let Some(texture) = cached.as_ref().filter(|t| t.width() == width as f32 && t.height() == height as f32) {
+            texture.update(&Image { bytes: rgba, width: width as u16, height: height as u16 });
+        } else {
+            let texture = Texture2D::from_rgba8(width as u16, height as u16, &rgba);
+            texture.set_filter(FilterMode::Nearest);
+            *cached = Some(texture.into());
+        }
+        let top = 1. / res.aspect_ratio;
+        draw_texture_ex(
+            **cached.as_ref().unwrap(), -1., -top, WHITE,
+            DrawTextureParams { dest_size: Some(vec2(2., 2. * top)), ..Default::default() },
+        );
+    }
+
     pub fn render_block_area(&self, res: &mut Resource) {
         // 判定范围（`Chart::render` 里画的，在本函数之前）读的是**上一帧**烘出来的噪域掩码
         // 画布 + 判定范围材质；这里先清掉，等这一帧的管线跑完（`native/shader.rs` 里
@@ -515,6 +575,10 @@ impl Chart {
         // 噪域整个关掉时它就一直保持 None，判定范围恢复原样。
         res.block_area_paint = None;
         res.judge_range_mat = None;
+        if res.config.block_area_reveal {
+            res.force_position_quads.borrow_mut().clear();
+            return;
+        }
         // 「定轨谱面」与「陈列按键」都不画噪域：谱面被拍平到轨道、或整张收成一条基准线之后，
         // 方块与「强制定位」的挖洞都失去几何意义，判定范围也一并让开（它要
         // `block_area_paint` / `judge_range_mat` 两个都非空才画）。开关只看配置，所以
@@ -579,6 +643,41 @@ impl Chart {
         let simplified = res.config.simplified_block_area || self.block_area_renderer.borrow().style.simplified;
         // 「噪域复用」同理：只换「简化噪域文字」印的号（条目序号 → 噪域编号），不碰画面。
         let reuse = res.config.block_area_reuse || self.block_area_renderer.borrow().style.reuse;
-        super::block_area::render_native_block_areas(res, underlay, blocks, next, time, flip_x, simplified, reuse, &self.blocked_touches);
+        if force || simplified || res.keep_frame() || res.config.block_area_ignore_skin || !self.has_noise_skin() || res.chart_target.is_none() {
+            super::block_area::render_native_block_areas(res, underlay, blocks, next, time, flip_x, simplified, reuse, &self.blocked_touches);
+            return;
+        }
+
+        super::block_area::render_native_block_areas(res, underlay, blocks, &[], time, flip_x, simplified, reuse, &self.blocked_touches);
+        let touches = if res.config.block_area_hover { self.blocked_touches.as_slice() } else { &[] };
+        for (layer_index, skin) in self.noise_skins.iter().enumerate() {
+            let start = next.partition_point(|area| area.layer() < layer_index);
+            let end = next.partition_point(|area| area.layer() <= layer_index);
+            let areas = &next[start..end];
+            if areas.is_empty() {
+                continue;
+            }
+            if let Some(skin) = skin {
+                let mut zones = super::block_area::next::zones(areas, time, res.aspect_ratio);
+                let [sx, sy] = res.block_area_chart_scale;
+                let fx = if flip_x { -1. } else { 1. };
+                let fy = if res.config.flip_chart { -1. } else { 1. };
+                let transform = |point: Vector| {
+                    let point = Vector::new(fx * point.x, fy * point.y);
+                    res.mirror_angle().map_or(point, |angle| Resource::mirror_vector(-angle, point))
+                };
+                for zone in &mut zones {
+                    zone.center = transform(zone.center).component_mul(&Vector::new(sx, sy));
+                    zone.half = zone.half.component_mul(&Vector::new(sx, sy));
+                    let dir = transform(Vector::new(zone.angle.cos(), zone.angle.sin()));
+                    zone.angle = dir.y.atan2(dir.x);
+                }
+                let touches: Vec<_> = touches.iter().map(|&(id, p)| (id, transform(p).component_mul(&Vector::new(sx, sy)))).collect();
+                if skin.render(res, &zones, &touches) {
+                    continue;
+                }
+            }
+            super::block_area::render_native_block_areas(res, &[], &[], areas, time, flip_x, simplified, reuse, &self.blocked_touches);
+        }
     }
 }

@@ -12,7 +12,7 @@ pub type Matrix = nalgebra::Matrix3<f32>;
 mod anim;
 pub use anim::{Anim, AnimFloat, AnimFloatF64, AnimVector, Keyframe};
 
-mod block_area;
+pub(crate) mod block_area;
 pub use block_area::simple as simple_block_area;
 pub use block_area::{
     assign_layers as assign_next_layers, block_touch_blocked, collect_zones, ease as block_area_ease, group_block_areas, is_native_block_area,

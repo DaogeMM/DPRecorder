@@ -548,6 +548,8 @@ struct Sample {
 }
 
 impl NextArea {
+    pub(crate) fn layer(&self) -> usize { self.layer }
+
     fn from_value(value: &Value, tempo: &Tempo) -> Result<Self> {
         let data: AreaData = serde_json::from_value(value.clone())?;
         Self::new(data, tempo)

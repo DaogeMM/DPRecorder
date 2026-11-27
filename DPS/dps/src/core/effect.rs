@@ -146,6 +146,7 @@ pub struct Effect {
     defaults: Vec<Box<dyn Uniform>>,
     uniforms: Vec<Box<dyn Uniform>>,
     pub global: bool,
+    pub(crate) chart_only: bool,
 }
 
 impl Effect {
@@ -233,6 +234,7 @@ impl Effect {
             )?,
             uniforms,
             global,
+            chart_only: false,
         })
     }
 
@@ -246,8 +248,12 @@ impl Effect {
         }
     }
 
-    pub fn render(&self, res: &mut Resource) {
-        if !self.time_range.contains(&self.t) {
+    pub(crate) fn is_active(&self) -> bool {
+        self.time_range.contains(&self.t)
+    }
+
+    pub fn render(&self, res: &mut Resource, chart_rect: (i32, i32, i32, i32)) {
+        if !self.is_active() {
             return;
         }
         let mut gl = unsafe { get_internal_gl() };
@@ -267,7 +273,34 @@ impl Effect {
         let Some(target) = res.chart_target.as_mut() else {
             return;
         };
+        let (width, height) = target.dim();
+        let (x, y, w, h) = chart_rect;
+        let x0 = x.clamp(0, width as i32);
+        let y0 = y.clamp(0, height as i32);
+        let x1 = (x + w).clamp(x0, width as i32);
+        let y1 = (y + h).clamp(y0, height as i32);
+        let clip = (self.chart_only && !cfg!(target_arch = "wasm32")
+            && (x0, y0, x1, y1) != (0, 0, width as i32, height as i32))
+            .then_some((x0, height as i32 - y1, x1 - x0, y1 - y0));
+        if clip.is_some_and(|(_, _, w, h)| w == 0 || h == 0) {
+            return;
+        }
         target.swap();
+        if clip.is_some() {
+            // The destination may still hold a previous frame. Preserve the
+            // current image outside the scissor before drawing this effect.
+            let copied = unsafe {
+                use miniquad::gl::*;
+                glDisable(GL_SCISSOR_TEST);
+                let result = super::copy_fbo(super::internal_id(target.old()), super::internal_id(target.output()), target.dim());
+                glEnable(GL_SCISSOR_TEST);
+                result
+            };
+            if !copied {
+                target.swap();
+                return;
+            }
+        }
         let tex = target.old().texture;
         self.material.set_texture("screenTexture", tex);
         let screen_dim = vec2(tex.width(), tex.height());
@@ -278,8 +311,14 @@ impl Effect {
         self.material.set_uniform("UVScale", vec2(vp.2 as _, vp.3 as _) / screen_dim);
 
         gl_use_material(self.material);
+        if clip.is_some() {
+            gl.quad_gl.scissor(clip);
+        }
         let top = 1. / if self.global { screen_aspect() } else { res.aspect_ratio };
         draw_rectangle(-1., -top, 2., top * 2., WHITE);
+        if clip.is_some() {
+            gl.quad_gl.scissor(None);
+        }
         gl_use_default_material();
     }
 }

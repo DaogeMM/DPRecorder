@@ -1439,6 +1439,12 @@ impl GameScene {
                 ui.fill_rect(Rect::new(-aspect_ratio + dest - hw, top, hw * 2., height), Color::new(0.95, 0.95, 0.95, color.a * c.a));
             });
         }
+        Ok(())
+    }
+
+    fn render_debug_ui(&self, ui: &mut Ui) {
+        let res = &self.res;
+        let aspect_ratio = res.aspect_ratio;
         if res.config.chart_debug_ui {
             // 「界面调试」的浮层：按键数量与实时 BPM 各占一行，整块按锚点居中。
             let mut lines: Vec<String> = Vec::new();
@@ -1498,7 +1504,7 @@ impl GameScene {
                 // 逐行画、每行各自按锚点居中 —— `centered_multiline` 在没有 max_width 时按无限宽排版，
                 // 行会挤到左边缘去，不能用来做「整块居中」。
                 let size = res.config.chart_debug_ui_size.max(0.);
-                let color = Color::new(1., 1., 1., res.config.chart_debug_ui_alpha.clamp(0., 1.) * c.a);
+                let color = Color::new(1., 1., 1., res.config.chart_debug_ui_alpha.clamp(0., 1.) * res.alpha);
                 let x = aspect_ratio * res.config.chart_debug_ui_anchor_x;
                 let y = -res.config.chart_debug_ui_anchor_y;
                 let line_height = ui.text("Ag").size(size).measure().h * 1.05;
@@ -1509,7 +1515,6 @@ impl GameScene {
                 }
             }
         }
-        Ok(())
     }
 
     fn overlay_ui(&mut self, ui: &mut Ui, tm: &mut TimeManager) -> Result<()> {
@@ -2345,6 +2350,11 @@ impl Scene for GameScene {
             res.config.chart_ratio
         };
 
+        let has_noise_skin = self.chart.has_noise_skin() && res.config.render_block_area;
+        if res.has_noise_skin != has_noise_skin {
+            res.has_noise_skin = has_noise_skin;
+            res.last_vp = (0, 0, 0, 0);
+        }
         if res.update_size(ui.viewport) || self.mode == GameMode::View {
             set_camera(&res.camera);
         }
@@ -2474,6 +2484,20 @@ impl Scene for GameScene {
 
         let chart_zoom = if res.config.chart_ratio < 1. { vec2(asp2_chart / asp2_window * ratio, -asp2_chart * ratio) } else { vec2(1. * ratio, -asp2_chart * ratio) };
         let chart_viewport = if res.config.chart_ratio < 1. { viewport_window } else { viewport_chart };
+        let effect_chart_rect = {
+            let (x, y, w, h) = if res.config.chart_ratio < 1. {
+                (0, 0, ui_viewport.2, ui_viewport.3)
+            } else {
+                viewport_chart.unwrap_or(ui_viewport)
+            };
+            let half_w = w as f32 * chart_zoom.x.abs().min(1.) * 0.5;
+            let half_h = h as f32 * (chart_zoom.y.abs() / res.aspect_ratio).min(1.) * 0.5;
+            let center_x = x as f32 + w as f32 * 0.5;
+            let center_y = y as f32 + h as f32 * 0.5;
+            let left = (center_x - half_w).round() as i32;
+            let bottom = (center_y - half_h).round() as i32;
+            (left, bottom, (center_x + half_w).round() as i32 - left, (center_y + half_h).round() as i32 - bottom)
+        };
         // 噪域图层用的是它自己那台相机的投影矩阵反解（见 `shader.rs::draw_layer_at`），
         // 于是谱面按 `chartRatio` 放大/缩小时噪域纹丝不动。这里把谱面相机相对噪域相机的
         // 缩放比（`ratio` × 两侧视口尺寸比）记下来，噪域图层再乘回去就跟谱面同步了。
@@ -2501,7 +2525,7 @@ impl Scene for GameScene {
         } else {
             0.
         };
-        set_camera( &Camera2D {
+        let chart_camera = Camera2D {
             zoom: chart_zoom,
             viewport: chart_viewport.map(|(x, y, w, h)| {
                 if res.info.fold_animation && matches!(self.state, State::Starting) {
@@ -2521,8 +2545,10 @@ impl Scene for GameScene {
             }),
             rotation: angle.to_degrees(),
             ..Default::default()
-        });
+        };
+        set_camera(&chart_camera);
         self.gl.quad_gl.render_pass(chart_onto.map(|it| it.render_pass));
+        res.line_debug_labels.clear();
         self.chart.render(ui, res);
 
         // 打击特效（`emitter`）与坏键标记跟谱面同一层：拖影下必须画进累积缓冲。
@@ -2543,7 +2569,7 @@ impl Scene for GameScene {
                 ..Default::default()
             });
             for effect in &self.chart.extra.effects {
-                effect.render(res);
+                effect.render(res, effect_chart_rect);
             }
             // 「Message SP」：整套演出盖在谱面自带 effects 之后、界面之前 ——
             // 它压的是背景与谱面（判定线、音符、粒子），界面不该跟着一起反相或白掉。
@@ -2599,14 +2625,13 @@ impl Scene for GameScene {
             }
         }
 
-
         if !self.res.no_effect && !self.effects.is_empty() {
             set_camera(&Camera2D {
                 zoom: vec2(1., asp2_window),
                 ..Default::default()
             });
             for effect in &self.effects {
-                effect.render(&mut self.res);
+                effect.render(&mut self.res, effect_chart_rect);
             }
         }
 
@@ -2656,6 +2681,29 @@ impl Scene for GameScene {
             self.chart.render_pending_tint(ui, &mut self.res);
         }
 
+        // 「噪域画在着色器上层」：方块/描边是加算混合的，被全局双色着色器压过一遍之后
+        // 就只剩浅灰，看不出噪域在动哪儿。开关打开时在着色器**之后**再把噪域图层铺一遍 ——
+        // 这一层不覆写任何材质参数，纯粹是同一份噪域再画一次，叠在着色器成品之上。
+        if self.res.config.block_area_reveal && !trail {
+            set_camera(&Camera2D {
+                zoom: vec2(1., self.res.aspect_ratio),
+                render_target: self.res.chart_onto(),
+                ..Default::default()
+            });
+            self.gl.quad_gl.viewport(None);
+            self.chart.render_noise_reveal(&self.res);
+        } else if !self.res.no_effect && self.effects.iter().any(|effect| effect.is_active())
+            && self.res.config.render_block_area && self.res.config.block_area_draw_on_top
+        {
+            set_camera(&Camera2D {
+                zoom: vec2(1., self.res.aspect_ratio),
+                render_target: self.res.chart_onto(),
+                ..Default::default()
+            });
+            self.gl.quad_gl.viewport(None);
+            self.chart.render_block_area(&mut self.res);
+        }
+
         // 「QZKAGO」：整屏异象闪现。素材是游戏自己的整屏截图，因此画在整帧的最后，
         // 连判定线、按键与界面一起盖住（相机会话与最后拷屏那一趟一致）。
         {
@@ -2668,8 +2716,38 @@ impl Scene for GameScene {
             crate::core::qzkago_sp::render(&mut self.res);
         }
 
+        if !self.res.line_debug_labels.is_empty() {
+            set_camera(&Camera2D { render_target: self.res.chart_onto(), ..chart_camera });
+            for label in self.res.line_debug_labels.drain(..) {
+                self.gl.quad_gl.push_model_matrix(crate::ext::nalgebra_to_glm(&label.model));
+                ui.text(label.text)
+                    .pos(0., -label.size * 0.1)
+                    .anchor(0.5, 1.)
+                    .size(label.size)
+                    .color(label.color)
+                    .draw();
+                self.gl.quad_gl.pop_model_matrix();
+            }
+        }
+
+        if self.res.config.chart_debug_ui {
+            set_camera(&Camera2D {
+                zoom: if self.res.config.chart_ratio < 1. {
+                    vec2(asp2_ui_window * ratio, -ratio)
+                } else {
+                    vec2(asp2_ui * ratio, -ratio)
+                },
+                viewport: chart_viewport,
+                render_target: self.res.chart_onto(),
+                ..Default::default()
+            });
+            ui.flip_ui = flip_ui;
+            self.render_debug_ui(ui);
+            ui.flip_ui = false;
+        }
+
         // 拖影的噪域与屏幕进水补画在拷屏之后（累积缓冲不能被它们污染），画完即弃。
-                let noise_on_screen = trail;
+        let noise_on_screen = trail;
 
         // 拖影要把累积缓冲整块拷到屏幕。
         let copy_target = if trail {
@@ -2680,6 +2758,7 @@ impl Scene for GameScene {
         if copy_target.is_some()
             && (trail
                 || !self.res.no_effect
+                || self.res.has_noise_skin
                 || msaa
                 || self.res.config.low_resolution_mode)
         {
@@ -2711,6 +2790,9 @@ impl Scene for GameScene {
                     });
                     self.gl.quad_gl.viewport(None);
                     self.chart.render_block_area(&mut self.res);
+                    if self.res.config.block_area_reveal {
+                        self.chart.render_noise_reveal(&self.res);
+                    }
                     crate::core::water::draw_water(&mut self.res);
                 }
             }
