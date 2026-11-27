@@ -226,6 +226,7 @@ pub struct RenderConfig {
 
     pub render_line: bool,
     pub render_line_extra: bool,
+    pub hide_notes_on_negative_line_alpha: bool,
     pub render_note: bool,
     pub render_double_hint: bool,
     /// 待判按键：把最近一个将要判定的按键染成 `pending_note_color` 再画一遍，画在噪域之上。
@@ -822,6 +823,7 @@ impl RenderConfig {
 
             render_line: self.render_line,
             render_line_extra: self.render_line_extra,
+            hide_notes_on_negative_line_alpha: self.hide_notes_on_negative_line_alpha,
             render_note: self.render_note,
             render_double_hint: self.render_double_hint,
             render_pending_note: self.render_pending_note,
@@ -1176,6 +1178,7 @@ impl Default for RenderConfig {
 
             render_line: true,
             render_line_extra: true,
+            hide_notes_on_negative_line_alpha: true,
             render_note: true,
             render_double_hint: true,
             render_pending_note: false,

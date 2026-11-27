@@ -221,6 +221,7 @@ export interface RenderConfig {
 
   renderLine: boolean;
   renderLineExtra: boolean;
+  hideNotesOnNegativeLineAlpha: boolean;
   renderNote: boolean;
   renderDoubleHint: boolean;
   /** 待判按键：把最近一个将要判定的按键染色再画一遍（画在噪域之上）。 */
@@ -810,6 +811,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   fileNameFormat: '%date% %time% %file%',
   renderLine: true,
   renderLineExtra: true,
+  hideNotesOnNegativeLineAlpha: true,
   renderNote: true,
   renderDoubleHint: true,
   renderPendingNote: false,

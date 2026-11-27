@@ -192,6 +192,7 @@ pub struct Config {
 
     pub render_line: bool,
     pub render_line_extra: bool,
+    pub hide_notes_on_negative_line_alpha: bool,
     pub render_note: bool,
     pub render_double_hint: bool,
     /// 「待判按键」：把**最近一个将要判定**的按键染成 `pending_note_color` 再画一遍。
@@ -932,6 +933,7 @@ impl Default for Config {
 
             render_line: true,
             render_line_extra: true,
+            hide_notes_on_negative_line_alpha: true,
             render_note: true,
             render_double_hint: true,
             render_pending_note: false,

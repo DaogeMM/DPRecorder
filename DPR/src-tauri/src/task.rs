@@ -260,6 +260,7 @@ pub fn generate_filename(info: &ChartInfo, config: &RenderConfig, source: Option
             "judge_offset" => config.judge_offset.to_string(),
             "render_line" => config.render_line.to_string(),
             "render_line_extra" => config.render_line_extra.to_string(),
+            "hide_notes_on_negative_line_alpha" => config.hide_notes_on_negative_line_alpha.to_string(),
             "render_note" => config.render_note.to_string(),
             "render_double_hint" => config.render_double_hint.to_string(),
             "render_ui_pause" => config.render_ui_pause.to_string(),

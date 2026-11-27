@@ -674,6 +674,7 @@ const PERFORMANCE = {
   aggressiveNote: { widget: 'checkbox' },
   aggressiveParticle: { widget: 'checkbox' },
   renderLineExtra: { widget: 'checkbox' },
+  hideNotesOnNegativeLineAlpha: { widget: 'checkbox' },
   renderExtra: { widget: 'checkbox' },
   roman: { widget: 'checkbox' },
   chinese: { widget: 'checkbox' },
