@@ -525,6 +525,14 @@ impl Masks {
             // 之后逐像素结果完全相同，但省掉每格两次浮点除法 / 一次 `round`。
             let add = unorm(opacity);
             let add_green = unorm(0.1 * z.opacity);
+            // ready 一层的强度再乘一遍闪烁系数：rpe-next 的 ready 期按 `(1 + cos(φ·6π)) / 2`
+            // 闪三次，`ready_mix == 1` 的原生噪域则与原来逐字节相同。
+            let ready_add = if z.ready_mix >= 1. { add } else { unorm(opacity * z.ready_mix) };
+            let ready_add_green = if z.ready_mix >= 1. {
+                add_green
+            } else {
+                unorm(0.1 * z.opacity * z.ready_mix)
+            };
             let ready_layer = 4 + usize::from(z.invert);
             let ready = z.ready;
             let green = z.invert && !z.active;
@@ -561,9 +569,9 @@ impl Masks {
                     }
                     if ready {
                         let cell = &mut layers[ready_layer];
-                        cell[i] = cell[i].saturating_add(add);
+                        cell[i] = cell[i].saturating_add(ready_add);
                         if ready_green_on {
-                            ready_green[i] = ready_green[i].saturating_add(add_green);
+                            ready_green[i] = ready_green[i].saturating_add(ready_add_green);
                         }
                     }
                 }
@@ -967,6 +975,7 @@ mod tests {
             invert,
             active: true,
             ready: false,
+            ready_mix: 1.,
             before_enable: false,
             opacity: 1.,
             index: 0,

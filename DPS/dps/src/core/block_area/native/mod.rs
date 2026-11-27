@@ -470,6 +470,7 @@ fn push_quad_zones(quads: &[([[f32; 2]; 4], f32)], zones: &mut Vec<Zone>, cover:
             invert: false,
             active: true,
             ready: false,
+            ready_mix: 1.,
             before_enable: false,
             opacity: 1.,
             index: usize::MAX,

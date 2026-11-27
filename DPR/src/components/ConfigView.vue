@@ -884,7 +884,7 @@ defineExpose({
       </PhiSection>
       <PhiSection id="sec-player" :title="t('title.player')">
         <!-- 全部挤成一行：头像 / RKS / 课题模式颜色 / 课题模式等级 / 玩家名（各占 1/5） -->
-        <div class="cfg-grid"><CfgField :label="t('player-avatar')"><v-text-field density="compact" hide-details="auto" readonly accept="image/*" @click="chooseAvatar" @click.clear="playerAvatar = undefined" clearable :model-value="playerAvatar ? playerAvatar.split('\\').pop()!.split('/').pop() : ''"></v-text-field></CfgField><CfgField :label="t('player-rks')"><v-text-field density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" type="number" v-model="playerRks"></v-text-field></CfgField><CfgField :label="t('challenge-color')"><v-autocomplete density="compact" hide-details="auto" :rules="[RULES.notEmpty]" :items="t('challenge-colors').split(',')" v-model="challengeColor"></v-autocomplete></CfgField><CfgField :label="t('challenge-rank')"><v-text-field density="compact" hide-details="auto" :rules="[RULES.int, RULES.positiveOrZero]" type="number" v-model="challengeRank"></v-text-field></CfgField><CfgField :label="t('player-name')"><v-text-field density="compact" hide-details="auto" v-model="playerName"></v-text-field></CfgField></div>
+        <div class="cfg-grid"><CfgField :label="t('player-avatar')" :tip="t('player-avatar-tip')"><v-text-field density="compact" hide-details="auto" readonly accept="image/*" @click="chooseAvatar" @click.clear="playerAvatar = undefined" clearable :model-value="playerAvatar ? playerAvatar.split('\\').pop()!.split('/').pop() : ''"></v-text-field></CfgField><CfgField :label="t('player-rks')"><v-text-field density="compact" hide-details="auto" :rules="[RULES.positiveOrZero]" type="number" v-model="playerRks"></v-text-field></CfgField><CfgField :label="t('challenge-color')"><v-autocomplete density="compact" hide-details="auto" :rules="[RULES.notEmpty]" :items="t('challenge-colors').split(',')" v-model="challengeColor"></v-autocomplete></CfgField><CfgField :label="t('challenge-rank')"><v-text-field density="compact" hide-details="auto" :rules="[RULES.int, RULES.positiveOrZero]" type="number" v-model="challengeRank"></v-text-field></CfgField><CfgField :label="t('player-name')"><v-text-field density="compact" hide-details="auto" v-model="playerName"></v-text-field></CfgField></div>
       </PhiSection>
       <!-- ===== 更多（渲染组的尾巴）=====
            「其他语言」在本组末尾这个二级分区「更多」里，
@@ -928,21 +928,21 @@ defineExpose({
                          （前半是元素开关，后半是界面叠加项，附加着色器收尾）。
                          「判定线」这一格排第 5，与「判定线」分区表头那个 ⏻ 是同一个
                          `renderLine`，所以那边照样能开关、子项照样跟着变灰。 -->
-                    <CfgSwitch :label="t('render-note')" v-model="renderNote" />
+                    <CfgSwitch :label="t('render-note')" :tip="t('render-note-tip')" v-model="renderNote" />
                     <CfgSwitch :label="t('render-double-hint')" v-model="renderDoubleHint" :disabled="!renderNote" :tip="t('render-double-hint-tip')" />
-                    <CfgSwitch :label="t('render-particle')" v-model="particle" />
+                    <CfgSwitch :label="t('render-particle')" :tip="t('render-particle-tip')" v-model="particle" />
                     <CfgSwitch :label="t('render-particle-square')" v-model="particleSquare" :tip="t('render-particle-square-tip')" />
-                    <CfgSwitch :label="t('render-line')" v-model="renderLine" />
+                    <CfgSwitch :label="t('render-line')" :tip="t('render-line-tip')" v-model="renderLine" />
                     <CfgSwitch :label="t('render-block-area')" v-model="renderBlockArea" :tip="t('render-block-area-tips')" />
                     <!-- 背景：「拖影效果」开着时必须关掉（那一趟会整屏盖掉上一帧，见 `sec-more-chart`），
                          所以那时这个开关是灰的（值由 useRenderConfig 的联动强制写成 false）。 -->
                     <CfgSwitch :label="t('render-background')" v-model="renderBg" :tip="t('render-background-tip')" />
-                    <CfgSwitch :label="t('render-ui-pause')" v-model="renderUiPause" />
-                    <CfgSwitch :label="t('render-ui-name')" v-model="renderUiName" />
-                    <CfgSwitch :label="t('render-ui-score')" v-model="renderUiScore" />
-                    <CfgSwitch :label="t('render-ui-difficulty')" v-model="renderUiDifficulty" />
+                    <CfgSwitch :label="t('render-ui-pause')" :tip="t('render-ui-pause-tip')" v-model="renderUiPause" />
+                    <CfgSwitch :label="t('render-ui-name')" :tip="t('render-ui-name-tip')" v-model="renderUiName" />
+                    <CfgSwitch :label="t('render-ui-score')" :tip="t('render-ui-score-tip')" v-model="renderUiScore" />
+                    <CfgSwitch :label="t('render-ui-difficulty')" :tip="t('render-ui-difficulty-tip')" v-model="renderUiDifficulty" />
                     <CfgSwitch :label="t('render-ui-level')" v-model="renderUiLevel" :disabled="!renderUiDifficulty" :tip="t('render-ui-level-tip')" />
-                    <CfgSwitch :label="t('render-ui-combo')" v-model="renderUiCombo" />
+                    <CfgSwitch :label="t('render-ui-combo')" :tip="t('render-ui-combo-tip')" v-model="renderUiCombo" />
                     <CfgSwitch :label="t('render-ui-bar')" v-model="renderUiBar" :tip="t('render-ui-bar-tip')" />
                     <!-- 「附加着色器」：谱面 extra.json 里的表演着色器开关，
                          与渲染管线无关，所以排在元素网格的最后。 -->
@@ -956,9 +956,9 @@ defineExpose({
            分区显示名是「界面」，locale 键仍是 `title.background`。 -->
       <PhiSection id="sec-chart-bg" :title="t('title.background')">
         <div class="cfg-grid">
+          <CfgSwitch :label="t('effect-chart-input')" :tip="t('effect-chart-input-tip')" v-model="effectChartInput" />
           <!-- 配置里的 `render_bg_dim` 由下面这个数值派生（见 script 里的 watch），0 就是不压暗。 -->
           <CfgField :label="t('chart-ratio')"><v-text-field density="compact" hide-details="auto" type="number" :title="t('chart-ratio-tip')" :rules="[RULES.notEmpty, RULES.positive]" :model-value="String(chartRatio)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartRatio = n; }"></v-text-field></CfgField>
-          <CfgSwitch :label="t('effect-chart-input')" v-model="effectChartInput" />
           <!-- 0~1 范围的项用数值输入框（`CfgSlider` 全项目已不再被引用），0 等于不压暗（见上面的 watch）。 -->
           <CfgField :label="t('background-dim')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderBg" :title="t('background-dim-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(backgroundDim)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) backgroundDim = n; }"></v-text-field></CfgField>
           <CfgField :label="t('bg-blurriness')" :tip="t('bg-blurriness-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBg" v-model="bgBlurriness" type="number" :rules="[RULES.positiveOrZero, RULES.less10000]"></v-text-field></CfgField>
@@ -995,22 +995,22 @@ defineExpose({
       <!-- 二级总开关：「按键」标题行上那个开关就是「渲染项目」里的「按键」开关
            （`renderNote`），两处是同一个值，关掉时整块收起。 -->
       <PhiSection id="sec-chart-key" :title="t('title.keys')" v-model:gate="renderNote">
-        <!-- Note 等比缩放 / Hold 尾部遮罩 / 允许负长度 Hold / Hold 打击特效间隔倍率
-             （它们与谱面信息同名，也是配置项，会进预设与 config.toml） -->
+        <!-- Note 等比缩放 / Hold 尾部遮罩 / 允许负长度 Hold / 隐藏负透明度判定线 Note /
+             Hold 打击特效间隔倍率（它们与谱面信息同名，也是配置项，会进预设与 config.toml） -->
         <div class="cfg-grid">
           <CfgSwitch :label="t('info.note-uniform-scale')" v-model="noteUniformScale" :disabled="!renderNote" :tip="t('info.note-uniform-scale-tip')" />
           <CfgSwitch :label="t('info.hold-partial-cover')" v-model="holdPartialCover" :disabled="!renderNote" :tip="t('info.hold-partial-cover-tip')" />
           <CfgSwitch :label="t('info.negative-length-hold')" v-model="negativeLengthHold" :disabled="!renderNote" :tip="t('info.negative-length-hold-tip')" />
+          <CfgSwitch :label="t('hide-notes-on-negative-line-alpha')" :tip="t('hide-notes-on-negative-line-alpha-tip')" v-model="hideNotesOnNegativeLineAlpha" :disabled="!renderNote" />
           <!-- Hold 打击特效跟着「特效粒子」走，所以它的上级链比上面三个多一条 -->
           <CfgField :label="t('info.hold-particle-interval-ratio')" :tip="t('info.hold-particle-interval-ratio-tip')">
             <v-text-field type="number" density="compact" hide-details="auto" :disabled="!renderNote || (!particle && !particleSquare)" :rules="[RULES.positive]" v-model="holdParticleIntervalRatio"></v-text-field>
           </CfgField>
           <CfgField :label="t('note-scale')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('note-scale-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(noteScale)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) noteScale = n; }"></v-text-field></CfgField>
           <CfgField :label="t('chart-debug-note')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('chart-debug-note-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugNote)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugNote = n; }" :append-inner-icon="chartDebugNote > 0 ? 'mdi-cog-outline' : undefined" @click:append-inner="openDebugNoteDialog"></v-text-field></CfgField>
-          <CfgSwitch :label="t('hide-notes-on-negative-line-alpha')" v-model="hideNotesOnNegativeLineAlpha" />
           <!-- 按键染色 / 打击特效染色都在本分区 -->
-          <CfgField :label="t('notecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderNote" v-model="notecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
-          <CfgField :label="t('hitcolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!particle" v-model="hitcolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
+          <CfgField :label="t('notecolor')" :tip="t('notecolor-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderNote" v-model="notecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
+          <CfgField :label="t('hitcolor')" :tip="t('hitcolor-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!particle" v-model="hitcolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
         </div>
       </PhiSection>
       <!-- ===== 判定线 =====
@@ -1023,7 +1023,7 @@ defineExpose({
       <PhiSection id="sec-chart-line" :title="t('title.judge-line')" v-model:gate="renderLine">
         <div class="cfg-grid">
           <CfgSwitch :label="t('render-line-extra')" v-model="renderLineExtra" :disabled="!renderLine" :tip="t('render-line-extra-tips')" />
-          <CfgField :label="t('linecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderLine" v-model="linecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
+          <CfgField :label="t('linecolor')" :tip="t('linecolor-tip')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderLine" v-model="linecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('chart-debug-line')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderLine" :title="t('chart-debug-line-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugLine)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugLine = n; }" :append-inner-icon="chartDebugLine > 0 ? 'mdi-cog-outline' : undefined" @click:append-inner="openDebugLineDialog"></v-text-field></CfgField>
           <!-- 「判定线长度」与谱面信息同名，也是配置项 -->
           <CfgField :label="t('info.lineLength')" :tip="t('info.lineLength-tip')">
@@ -1032,8 +1032,8 @@ defineExpose({
         </div>
       </PhiSection>
       <PhiSection id="sec-block-area" :title="t('title.block-area')" v-model:gate="renderBlockArea" :gate-tip="t('render-block-area-tips')">
-        <!-- 本分区只剩噪域自己的参数：`simplifiedBlockArea`（简化噪域）是一条三级闸门行
-             （勾选框只管开关，子项收进齿轮弹窗），后面是完整噪域的数值项。
+        <!-- 本分区只剩噪域自己的参数：`blockAreaReveal`（噪域调试）与 `simplifiedBlockArea`
+             （简化噪域）都是三级闸门行（勾选框只管开关，子项收进齿轮弹窗），其余是完整噪域的数值项。
              注：`blockAreaLava`（岩浆噪域）与 `blockAreaForcePosition`（强制定位）已搬到
              谱面组的「更多」（下面 `sec-more-chart`）；它们与「简化噪域」的互斥、
              对 `renderBlockArea` 的依赖都跟着一起走，没有改。
@@ -1041,12 +1041,6 @@ defineExpose({
              岩浆噪域开启时由引擎按「有效值」忽略这三项（`DPS/dps/src/core/block_area/native/shader.rs`
              里 `set_fill_style` 的 `|| lava` / `&& !lava`）。 -->
         <div class="cfg-grid">
-          <CfgSwitch :label="t('block-area-reveal')" v-model="blockAreaReveal" :disabled="!renderBlockArea" />
-          <CfgSwitch :label="t('block-area-reveal-cutouts')" v-model="blockAreaRevealCutouts" :disabled="!renderBlockArea || !blockAreaReveal" />
-          <CfgSwitch :label="t('block-area-reveal-outline')" v-model="blockAreaRevealOutline" :disabled="!renderBlockArea || !blockAreaReveal" />
-          <CfgField :label="t('block-area-reveal-alpha')"><v-text-field v-model="blockAreaRevealAlpha" :disabled="!renderBlockArea || !blockAreaReveal" type="number" min="0" max="1" step="0.05" density="compact" :rules="[RULES.notEmpty, RULES.alpha01]" /></CfgField>
-          <CfgSwitch :label="t('block-area-draw-on-top')" v-model="blockAreaDrawOnTop" :disabled="!renderBlockArea || blockAreaReveal" />
-          <CfgSwitch :label="t('block-area-ignore-skin')" v-model="blockAreaIgnoreSkin" :disabled="!renderBlockArea || blockAreaReveal" />
           <CfgSwitch :label="t('block-area-noise-blotch')" v-model="blockAreaNoiseBlotch" :disabled="!renderBlockArea" :tip="t('block-area-noise-blotch-tip')" />
           <CfgSwitch :label="t('block-area-distort')" v-model="blockAreaDistort" :disabled="!renderBlockArea" :tip="t('block-area-distort-tip')" />
           <CfgSwitch :label="t('block-area-spark')" v-model="blockAreaSpark" :disabled="!renderBlockArea" :tip="t('block-area-spark-tip')" />
@@ -1062,6 +1056,18 @@ defineExpose({
               <CfgField :label="t('simplified-block-area-text-pale-color')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderBlockArea || !simplifiedBlockAreaText" :title="t('simplified-block-area-text-pale-color-tip')" v-model="simplifiedBlockAreaTextPaleColor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
             </div>
           </PhiSubMenu>
+          <!-- 「噪域调试」是一条三级闸门行：✅/❌ 就是 `blockAreaReveal`，镂空 / 描边 / 不透明度
+               收进齿轮弹窗（只有开着、且分区启用时才有齿轮入口）。排在「简化噪域」之后。 -->
+          <PhiSubMenu id="sec3-block-area-reveal" :label="t('block-area-reveal')" :tip="t('block-area-reveal-tip')" v-model="blockAreaReveal" :disabled="!renderBlockArea">
+            <div class="cfg-grid">
+              <CfgSwitch :label="t('block-area-reveal-cutouts')" :tip="t('block-area-reveal-cutouts-tip')" v-model="blockAreaRevealCutouts" />
+              <CfgSwitch :label="t('block-area-reveal-outline')" :tip="t('block-area-reveal-outline-tip')" v-model="blockAreaRevealOutline" />
+              <CfgField :label="t('block-area-reveal-alpha')" :tip="t('block-area-reveal-alpha-tip')"><v-text-field v-model="blockAreaRevealAlpha" type="number" min="0" max="1" step="0.05" density="compact" :rules="[RULES.notEmpty, RULES.alpha01]" /></CfgField>
+            </div>
+          </PhiSubMenu>
+          <!-- 噪域置于着色器上层 / 忽略谱面噪域皮肤：与「噪域调试」同属噪域叠画方式，排在它后面。 -->
+          <CfgSwitch :label="t('block-area-draw-on-top')" :tip="t('block-area-draw-on-top-tip')" v-model="blockAreaDrawOnTop" :disabled="!renderBlockArea || blockAreaReveal" />
+          <CfgSwitch :label="t('block-area-ignore-skin')" :tip="t('block-area-ignore-skin-tip')" v-model="blockAreaIgnoreSkin" :disabled="!renderBlockArea || blockAreaReveal" />
           <CfgField :label="t('block-area-density')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-density-tip')" v-model="blockAreaDensity" type="number" :rules="[RULES.notEmpty, RULES.positive]"></v-text-field></CfgField>
           <CfgField :label="t('block-area-normal-color')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderBlockArea" :title="t('block-area-normal-color-tip')" v-model="blockAreaNormalColor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('block-area-displace-strength')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBlockArea" :title="t('block-area-displace-strength-tip')" v-model="blockAreaDisplaceStrength" type="number" :rules="[RULES.notEmpty, RULES.positiveOrZero]"></v-text-field></CfgField>

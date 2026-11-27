@@ -59,8 +59,10 @@
     "windows": [
       {
         "fullscreen": false,
-        "width": 1920,
-        "height": 1080,
+        "width": 1280,
+        "height": 720,
+        "minWidth": 640,
+        "minHeight": 360,
         "resizable": true,
         "title": "DPRecorder",
         "dragDropEnabled": true,

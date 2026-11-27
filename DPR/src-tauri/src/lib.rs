@@ -63,6 +63,12 @@ pub use dps::console;
 
 static ASSET_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+/// 主窗口最近一次「非最大化」的尺寸（逻辑像素，宽、高）。
+///
+/// `Resized` 在拖动窗口时连续触发，这里只记在内存里，关窗时再写 `config/window.toml`，
+/// 免得每拖一下都写一次文件。`None` 表示这次启动还没收到过 `Resized`。
+static MAIN_WINDOW_SIZE: std::sync::Mutex<Option<(u32, u32)>> = std::sync::Mutex::new(None);
+
 /// 找 `assets/` 目录：从 exe 目录开始逐级向上，取第一个存在 `assets/` 的那一层。
 ///
 /// assets 只有一份，放在仓库根（`<repo>/assets`，DPS 与 DPR 共用，见 README §2）：
@@ -273,6 +279,63 @@ fn set_taskbar_app_id() {
 #[cfg(not(target_os = "windows"))]
 fn set_taskbar_app_id() {}
 
+/// 把记忆的窗口尺寸限制在当前显示器内：换到更小的屏幕后，上次在大屏上拉大的
+/// 窗口不至于整块落在屏幕外。拿不到显示器信息时只做下限保护。
+fn clamp_window_size(window: &tauri::WebviewWindow, width: u32, height: u32) -> (u32, u32) {
+    let mut width = width.max(640);
+    let mut height = height.max(360);
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let scale = window.scale_factor().unwrap_or(1.);
+        let screen = monitor.size().to_logical::<f64>(scale);
+        width = width.min((screen.width.round() as u32).max(640));
+        height = height.min((screen.height.round() as u32).max(360));
+    }
+    (width, height)
+}
+
+/// `Resized` 连续触发时只更新内存；最大化 / 全屏的尺寸不代表「上次大小」，跳过。
+fn remember_main_window_size(window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
+    if window.is_maximized().unwrap_or(false)
+        || window.is_fullscreen().unwrap_or(false)
+        || window.is_minimized().unwrap_or(false)
+    {
+        return;
+    }
+    let scale = window.scale_factor().unwrap_or(1.);
+    let logical = size.to_logical::<f64>(scale);
+    let width = logical.width.round() as u32;
+    let height = logical.height.round() as u32;
+    if width < 320 || height < 200 {
+        return;
+    }
+    if let Ok(mut slot) = MAIN_WINDOW_SIZE.lock() {
+        *slot = Some((width, height));
+    }
+}
+
+/// 关主窗口前把尺寸落盘。最大化时用最后一次非最大化的尺寸，而不是整屏尺寸。
+fn save_main_window_size(window: &tauri::Window) {
+    let maximized = window.is_maximized().unwrap_or(false);
+    let remembered = MAIN_WINDOW_SIZE.lock().ok().and_then(|it| *it);
+    let size = remembered.or_else(|| {
+        let size = window.inner_size().ok()?;
+        let scale = window.scale_factor().unwrap_or(1.);
+        let logical = size.to_logical::<f64>(scale);
+        Some((logical.width.round() as u32, logical.height.round() as u32))
+    });
+    let Some((width, height)) = size else {
+        return;
+    };
+    let state = common::WindowState {
+        width,
+        height,
+        maximized,
+    };
+    if let Err(err) = common::save_window_state(state) {
+        warn!("[窗口] 保存窗口大小失败：{}", common::error_chain(&err));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() -> Result<()> {
     common::init_console();
@@ -447,7 +510,14 @@ pub fn run() -> Result<()> {
                     if window.label() != EDITOR_WINDOW_LABEL
                         && window.label() != debugger::DEBUG_WINDOW_LABEL
                     {
+                        save_main_window_size(window);
                         exit_program(0);
+                    }
+                }
+                // 只记主窗口：编辑 / 调试窗口是固定尺寸的浮动工具窗。
+                WindowEvent::Resized(size) => {
+                    if window.label() == "main" {
+                        remember_main_window_size(window, *size);
                     }
                 }
                 _ => {}
@@ -512,6 +582,29 @@ pub fn run() -> Result<()> {
 
     let config = common::read_config()?;
     let is_gui = std::env::args().len() == 1;
+
+    // 主窗口尺寸：记忆上次的（`config/window.toml`），没有记录就用默认小窗口。
+    // 必须放在 `build()` 之后：窗口是 `build()` 里按 `tauri.conf.json` 建好的，
+    // `CONFIG_DIR` 也是在那之后才登记，`setup()` 阶段两边都还拿不到。
+    if is_gui {
+        if let Some(window) = app.get_webview_window("main") {
+            let state = common::read_window_state();
+            let (width, height) = clamp_window_size(&window, state.width, state.height);
+            if let Ok(mut slot) = MAIN_WINDOW_SIZE.lock() {
+                *slot = Some((width, height));
+            }
+            if let Err(err) =
+                window.set_size(tauri::LogicalSize::new(width as f64, height as f64))
+            {
+                warn!("[窗口] 恢复窗口大小失败：{}", err);
+            }
+            if state.maximized {
+                if let Err(err) = window.maximize() {
+                    warn!("[窗口] 恢复最大化状态失败：{}", err);
+                }
+            }
+        }
+    }
 
     // 上次的队列等配置目录登记好之后再读回：`TaskQueue::new()` 比这里早，那时还没有
     // `CONFIG_DIR`，读不到 tasks.json。只有 GUI 进程管这个队列 —— CLI 的渲染 / 预览进程

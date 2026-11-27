@@ -36,6 +36,11 @@ pub struct Zone {
     pub active: bool,
     /// Ready 层在 `enableTime` 之前的最后 0.5 秒内选中。
     pub ready: bool,
+    /// Ready 一闪一闪的强度（0~1，只有 [`Self::ready`] 为真时才有意义）。
+    ///
+    /// rpe-next 的 ready 期不是恒亮，而是按 `(1 + cos(φ·6π)) / 2` 闪三次；原生噪域的
+    /// ready 已经在自己的透明度里体现了这一点，填 1 表示「不用再调」。
+    pub ready_mix: f32,
     /// 这一帧处在 `appearTime..enableTime`（「还没生效」那一段）。
     ///
     /// 「岩浆噪域」用它决定这块该印 netherrock 还是 lava：`Disabled` 与 `DisabledOut`
@@ -95,6 +100,8 @@ impl Zone {
             invert: area.is_subtract,
             active,
             ready: !active && time < area.enable_time && time >= area.enable_time - 0.5,
+            // 原生噪域的 ready 已经在 `opacity` 里渐显了，这里不再额外调制。
+            ready_mix: 1.,
             before_enable: !active && time < area.enable_time,
             opacity: if !active && fades_in {
                 ((time - area.appear_time) / 0.5).clamp(0., 1.) as f32
@@ -1320,6 +1327,7 @@ mod tests {
             invert: false,
             active: true,
             ready: false,
+            ready_mix: 1.,
             before_enable: false,
             opacity: 1.,
             index: 0,
@@ -1349,6 +1357,7 @@ mod tests {
             invert: false,
             active: true,
             ready: false,
+            ready_mix: 1.,
             before_enable: false,
             opacity: 1.,
             index: 0,

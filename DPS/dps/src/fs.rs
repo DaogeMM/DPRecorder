@@ -680,7 +680,9 @@ fn info_from_kv<'a>(it: impl Iterator<Item = (&'a str, String)>, csv: bool) -> R
             "Chart" => &mut info.chart,
             "Image" | "Picture" => &mut info.illustration,
             "Level" => &mut info.difficulty,
-            "Illustrator" => &mut info.illustrator,
+            // RPE / RPEN 导出的 info.txt 把画师写成 `Illustration`，PEZ 原生才是 `Illustrator`；
+            // 只认后者会让画师停在默认的 `UK`。
+            "Illustrator" | "Illustration" => &mut info.illustrator,
             "Artist" | "Composer" | "Musician" => &mut info.composer,
             "Charter" | "Designer" => &mut info.charter,
             //_ => bail!("Unknown key: {key}"),
@@ -974,6 +976,16 @@ mod tests {
         split_difficulty(&mut info);
         assert_eq!(info.diff, "SP");
         assert_eq!(info.lvl, ChartInfo::default().lvl);
+    }
+
+    /// RPE 导出的 `info.txt` 用 `Illustration` 记画师，PEZ 原生用 `Illustrator`，两个键都要认。
+    #[test]
+    fn info_txt_accepts_rpe_illustration_key() {
+        let info = info_from_txt("#\nName: Test\nIllustration: 群青kurara feat. Jimwaz\n").unwrap();
+        assert_eq!(info.illustrator, "群青kurara feat. Jimwaz");
+
+        let info = info_from_txt("#\nName: Test\nIllustrator: 名無し\n").unwrap();
+        assert_eq!(info.illustrator, "名無し");
     }
 
     /// `difficulty` 写成字符串时同样当定数；没有 `level` 就保留原串。

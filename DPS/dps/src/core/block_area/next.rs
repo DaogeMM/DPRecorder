@@ -524,8 +524,14 @@ pub struct NextArea {
     /// `appearTime` / `disappearTime` 换算成秒后的可见窗口（左闭右开）。
     appear: f64,
     disappear: f64,
-    /// 生效区间 `(start, end, readyFlash 秒)`，已按 start 排序、互不重叠、并裁到可见窗口内。
+    /// 生效区间 `(start, end, readyFlash 秒)`，已按 start 排序、同起点合并、并裁到可见窗口内。
+    ///
+    /// 含零长度区间：它们不会让噪域生效，只用来放 ready 闪烁。
     intervals: Vec<(f64, f64, f64)>,
+    /// 真正会生效的区间 `(start, end)`，即 [`Self::intervals`] 里长度非零的那些。
+    ///
+    /// 判「此刻是否生效」只看这里：零长度区间若插在别的区间中间，不能把那一整段判成不生效。
+    activations: Vec<(f64, f64)>,
     /// 减算块标记（见 `AreaData::is_invert`）。
     invert: bool,
     /// 横移、纵移、旋转、横缩放、纵缩放。
@@ -574,17 +580,37 @@ impl NextArea {
             let start = tempo.time(i.start_time)?;
             let end = tempo.time(i.end_time)?;
             ensure!(start <= end, "invalid active interval");
-            // 零长度区间不生效（也就没有 ready 闪烁）。
-            if start < end {
-                raw_intervals.push((start, end, i.ready_flash.seconds()));
+            // 零长度区间不激活这块噪域，但它的 `readyFlash` 仍然要放出来（编辑器里常拿它
+            // 当「这一刻闪一下」用），所以照样留着。
+            let (start, end) = (start.max(appear), end.min(disappear));
+            if start > end {
+                continue;
             }
+            raw_intervals.push((start, end, i.ready_flash.seconds()));
         }
         raw_intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
-        ensure!(raw_intervals.windows(2).all(|w| w[0].1 <= w[1].0), "overlapping active intervals");
-        let intervals = raw_intervals
-            .into_iter()
-            .map(|(a, b, r)| (a.max(appear), b.min(disappear), r))
-            .filter(|(a, b, _)| a < b)
+        // 同起点的区间并成一条：后一条覆盖前一条的尾巴，ready 闪烁取长的那个。
+        let mut intervals: Vec<(f64, f64, f64)> = Vec::with_capacity(raw_intervals.len());
+        for (start, end, ready) in raw_intervals {
+            match intervals.last_mut() {
+                Some(last) if (last.0 - start).abs() <= EPS => {
+                    last.1 = last.1.max(end);
+                    last.2 = last.2.max(ready);
+                }
+                _ => intervals.push((start, end, ready)),
+            }
+        }
+        // 只有「真的会让噪域生效」的区间之间不允许重叠；零长度区间只是闪烁锚点，
+        // 它与别的区间重合是正常的。
+        let mut previous_end = f64::NEG_INFINITY;
+        for &(start, end, _) in intervals.iter().filter(|(start, end, _)| start < end) {
+            ensure!(start >= previous_end - EPS, "overlapping active intervals");
+            previous_end = previous_end.max(end);
+        }
+        let activations = intervals
+            .iter()
+            .filter(|(start, end, _)| start < end)
+            .map(|&(start, end, _)| (start, end))
             .collect();
         let track = |events, axis, fallback, name: &str| {
             Track::new(events, axis, fallback, center, tempo).with_context(|| name.to_owned())
@@ -595,6 +621,7 @@ impl NextArea {
             appear,
             disappear,
             intervals,
+            activations,
             invert: data.is_invert,
             tracks: [
                 track(data.move_x_events, Axis::Move, center.x, "moveXEvents")?,
@@ -614,10 +641,19 @@ impl NextArea {
         if time + EPS < self.appear || time + EPS >= self.disappear {
             return None;
         }
-        let n = self.intervals.partition_point(|i| i.0 <= time + EPS);
-        let active = n != 0 && time + EPS < self.intervals[n - 1].1;
-        let next = self.intervals.get(n);
+        let n = self.activations.partition_point(|i| i.0 <= time + EPS);
+        let active = n != 0 && time + EPS < self.activations[n - 1].1;
+        // ready 看的是「下一个还没开始的区间」，含零长度的那种。
+        let next = self.intervals.get(self.intervals.partition_point(|i| i.0 <= time + EPS));
         let ready = !active && next.is_some_and(|&(a, _, r)| r > 0. && time + EPS >= a - r);
+        // ready 期闪三次：`(1 + cos(φ·6π)) / 2`，φ 是 ready 窗口里的进度。
+        let ready_mix = match (ready, next) {
+            (true, Some(&(start, _, ready_for))) if ready_for > 0. => {
+                let phase = ((time + EPS - (start - ready_for)) / ready_for).clamp(0., 1.);
+                ((1. + (phase * 6. * std::f64::consts::PI).cos()) / 2.) as f32
+            }
+            _ => 1.,
+        };
         let values = [
             self.tracks[0].sample(time),
             self.tracks[1].sample(time),
@@ -647,6 +683,7 @@ impl NextArea {
             invert: self.invert,
             active,
             ready,
+            ready_mix,
             // 没有 `enableTime`，「没生效」就是「没在生效区间里」。
             before_enable: !active,
             opacity: 1.,
@@ -1035,6 +1072,80 @@ mod tests {
             assert!((curve(id, 1.) - 1.).abs() < 1e-3, "id={id}");
         }
         assert!((curve(1, 0.25) - 0.25).abs() < 1e-12);
+    }
+
+    /// 零长度区间只贡献 ready 闪烁，不会让噪域生效，也不能把别的生效区间切断。
+    #[test]
+    fn zero_length_intervals_only_flash() {
+        let tempo = tempo_120();
+        // 120 bpm：beat × 0.5 = 秒。生效区间 [2, 4) beat = [1.0, 2.0) 秒，
+        // 中间再插一条零长度的 [3, 3] beat = 1.5 秒。
+        let value = full_canvas(json!({
+            "activeIntervals": [
+                {"startTime": [2, 0, 1], "endTime": [4, 0, 1]},
+                {"startTime": [3, 0, 1], "endTime": [3, 0, 1], "readyFlash": 0.25},
+            ],
+        }));
+        let areas = parse_next(&[value], &tempo);
+        assert_eq!(areas.len(), 1);
+        // 零长度区间落在生效区间里面，既不能把这一段判成不生效，也不能报重叠。
+        assert_eq!(areas[0].sample(1.6, 1.5).unwrap().state, 2);
+        assert_eq!(areas[0].sample(1.1, 1.5).unwrap().state, 2);
+        // 它自己的 readyFlash 照常放出来：[1.25, 1.5) 是闪烁窗口，但此刻仍算生效。
+        let flashy = parse_next(
+            &[full_canvas(json!({
+                "activeIntervals": [
+                    {"startTime": [2, 0, 1], "endTime": [2, 0, 1], "readyFlash": 0.25},
+                    {"startTime": [4, 0, 1], "endTime": [6, 0, 1]},
+                ],
+            }))],
+            &tempo,
+        );
+        let sample = flashy[0].sample(0.9, 1.5).unwrap();
+        assert_eq!(sample.state, 1, "零长度区间开始前的 ready 窗口");
+        assert!(sample.zone.ready && !sample.zone.active);
+        // 紧接着就是下一个真实区间的 ready 窗口（默认 0.5 秒），所以这里不是「什么都不画」。
+        assert_eq!(flashy[0].sample(1.6, 1.5).unwrap().state, 1);
+    }
+
+    /// 同起点的区间并成一条：后写的补前一条的尾巴，不然整张谱面的重叠校验会误报。
+    #[test]
+    fn same_start_intervals_are_merged() {
+        let tempo = tempo_120();
+        let value = full_canvas(json!({
+            "activeIntervals": [
+                {"startTime": [2, 0, 1], "endTime": [4, 0, 1]},
+                {"startTime": [2, 0, 1], "endTime": [6, 0, 1]},
+            ],
+        }));
+        let areas = parse_next(&[value], &tempo);
+        assert_eq!(areas.len(), 1);
+        // 合并后是 [1.0, 3.0) 秒，2.5 秒仍在生效。
+        assert_eq!(areas[0].sample(2.5, 1.5).unwrap().state, 2);
+        // 真的重叠（起点不同的两条有交叠）仍然按坏数据丢掉。
+        let overlapping = full_canvas(json!({
+            "activeIntervals": [
+                {"startTime": [2, 0, 1], "endTime": [6, 0, 1]},
+                {"startTime": [4, 0, 1], "endTime": [8, 0, 1]},
+            ],
+        }));
+        assert!(parse_next(&[overlapping], &tempo).is_empty());
+    }
+
+    /// ready 期按 `(1 + cos(φ·6π)) / 2` 闪三次；非 ready 的块不受影响（`ready_mix == 1`）。
+    #[test]
+    fn ready_mix_follows_the_blink_curve() {
+        let tempo = tempo_120();
+        let areas = parse_next(&[full_canvas(json!({}))], &tempo);
+        let mix = |t: f64| areas[0].sample(t, 1.5).unwrap().zone.ready_mix;
+        // 生效区间 [1.0, 2.0) 秒，ready 窗口默认 0.5 秒 = [0.5, 1.0)。
+        assert!((mix(0.5) - 1.).abs() < 1e-6, "窗口开头最亮");
+        assert!(mix(0.5 + 0.5 / 6.) < 0.05, "1/6 处最暗");
+        assert!(mix(0.75) < 0.05, "1/2 处最暗");
+        assert!((mix(1.0 - 1e-6) - 1.).abs() < 1e-3, "窗口结尾回到最亮");
+        // 生效中和完全没到 ready 窗口时都不调制。
+        assert_eq!(mix(1.5), 1.);
+        assert_eq!(mix(0.2), 1.);
     }
 
     /// 实弹：`example/pez4/靈.pez`（`META.RPEVersion = 230`）的噪域层。

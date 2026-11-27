@@ -894,6 +894,66 @@ impl Default for AppConfig {
     }
 }
 
+/// 主窗口上次的尺寸（逻辑像素）与是否最大化。
+///
+/// 单独存 `config/window.toml`，不放进 `AppConfig`：窗口几何状态不是设置页里的选项，
+/// 前端整份回写 `AppConfig` 时也不会把它覆盖掉。
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(default)]
+pub struct WindowState {
+    pub width: u32,
+    pub height: u32,
+    pub maximized: bool,
+}
+
+impl Default for WindowState {
+    fn default() -> Self {
+        // 第一次打开（或记录损坏）用未全屏的小窗口。
+        Self {
+            width: 1280,
+            height: 720,
+            maximized: false,
+        }
+    }
+}
+
+impl WindowState {
+    /// 尺寸夹进能看得到的范围：换过屏、手改过文件时，不至于开出一个看不见的窗口。
+    fn sanitized(self) -> Self {
+        Self {
+            width: self.width.clamp(640, 16384),
+            height: self.height.clamp(360, 16384),
+            maximized: self.maximized,
+        }
+    }
+}
+
+fn window_state_file() -> Result<PathBuf> {
+    Ok(CONFIG_DIR
+        .get()
+        .context("CONFIG_DIR is not initialized")?
+        .join("window.toml"))
+}
+
+/// 读上次的窗口状态；文件不存在、读不了或内容不合法时退回默认小窗口。
+pub fn read_window_state() -> WindowState {
+    let Ok(file) = window_state_file() else {
+        return WindowState::default();
+    };
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return WindowState::default();
+    };
+    toml::from_str::<WindowState>(&text)
+        .map(WindowState::sanitized)
+        .unwrap_or_default()
+}
+
+pub fn save_window_state(state: WindowState) -> Result<()> {
+    let file = window_state_file()?;
+    std::fs::write(file, toml::to_string(&state.sanitized())?)?;
+    Ok(())
+}
+
 pub fn get_config_file() -> Result<PathBuf> {
     let file = CONFIG_DIR.get().unwrap().join("config.toml");
     if file.exists() && !file.is_file() {
