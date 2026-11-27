@@ -8,7 +8,7 @@
 | 噪域揭秘 | 在谱面特效之后用纯色标出谱面作者布置的噪域。填充不透明度在 0 到 1 之间，默认 0.5。启用后跳过底层原材质绘制。 | `core/block_area/reveal.rs`、`core/chart.rs` |
 | 反转区挖空 | 默认开启。按层计算有效覆盖，遵循该格式的反转规则，抵消处透明。关时恢复逐块填色和描边。 | `core/block_area/reveal.rs` |
 | 白边框 | 默认开启。可独立关闭，适用于逐块和合成挖空两种模式。 | `core/block_area/reveal.rs` |
-| 自定义着色器区域 | Windows 录制及预览中，带路径的自定义特效按缩放后的游玩矩形裁剪输出。矩形外继续显示原画面。当前 `screenTexture` 和 `screenSize` 仍对应整张渲染纹理。 | `core/effect.rs`、`parse/extra.rs`、`scene/game.rs` |
+| 自定义着色器区域 | Windows 录制及预览中，带路径的自定义特效按缩放后的游玩矩形裁剪输出。界面设置里的「限制自定义着色器采样到游玩区」默认开启，此时 `screenTexture`、`screenSize` 和 UV 对应游玩区，越界采样取边缘像素。关闭时恢复整帧采样，输出仍裁剪到游玩区。 | `core/effect.rs`、`parse/extra.rs`、`scene/game.rs` |
 | 调试信息 | 界面调试的计数、实时 BPM，以及跟随变换的判定线调试文字移到谱面着色器之后。音符上的调试标签仍在谱面绘制阶段。 | `scene/game.rs`、`core/line.rs`、`core/resource.rs` |
 
 以上 Rust 文件路径除特别标注外都位于 `DPS/dps/src/`。渲染设置通过 `DPR/src/components/ConfigView.vue`、配置字段表和前后端数据模型传递。

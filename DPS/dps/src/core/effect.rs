@@ -2,6 +2,7 @@ use super::{Anim, Resource, Tweenable};
 use crate::ext::{get_viewport, screen_aspect};
 use anyhow::{anyhow, bail, Result};
 use macroquad::prelude::*;
+use macroquad::texture::RenderTarget;
 use miniquad::UniformType;
 use once_cell::sync::Lazy;
 use phf::phf_map;
@@ -139,6 +140,17 @@ impl Uniform for (String, bool) {
     }
 }
 
+pub(super) struct EffectInput {
+    size: (i32, i32),
+    target: RenderTarget,
+}
+
+impl Drop for EffectInput {
+    fn drop(&mut self) {
+        self.target.delete();
+    }
+}
+
 pub struct Effect {
     time_range: Range<f64>,
     t: f64,
@@ -216,6 +228,7 @@ impl Effect {
         add_uniform(("time".to_owned(), UniformType::Float1));
         add_uniform(("screenSize".to_owned(), UniformType::Float2));
         add_uniform(("UVScale".to_owned(), UniformType::Float2));
+        add_uniform(("ChartInputUV".to_owned(), UniformType::Float4));
         for u in &uniforms {
             add_uniform(u.uniform_pair());
         }
@@ -285,14 +298,31 @@ impl Effect {
         if clip.is_some_and(|(_, _, w, h)| w == 0 || h == 0) {
             return;
         }
+        let chart_input = clip.filter(|_| res.config.effect_chart_input);
         target.swap();
+        let mut tex = target.old().texture;
         if clip.is_some() {
+            let source = super::internal_id(target.old());
+            let destination = super::internal_id(target.output());
+            let input = chart_input.map(|rect| {
+                let size = (rect.2, rect.3);
+                if res.effect_input.as_ref().is_none_or(|input| input.size != size) {
+                    res.effect_input = Some(EffectInput {
+                        size,
+                        target: render_target(size.0 as u32, size.1 as u32),
+                    });
+                }
+                let input = res.effect_input.as_ref().unwrap();
+                tex = input.target.texture;
+                (super::internal_id(input.target), (x0, y0, size.0, size.1))
+            });
             // The destination may still hold a previous frame. Preserve the
             // current image outside the scissor before drawing this effect.
             let copied = unsafe {
                 use miniquad::gl::*;
                 glDisable(GL_SCISSOR_TEST);
-                let result = super::copy_fbo(super::internal_id(target.old()), super::internal_id(target.output()), target.dim());
+                let result = super::copy_fbo(source, destination, target.dim())
+                    && input.is_none_or(|(dst, rect)| super::render::copy_fbo_region(source, dst, rect));
                 glEnable(GL_SCISSOR_TEST);
                 result
             };
@@ -301,7 +331,6 @@ impl Effect {
                 return;
             }
         }
-        let tex = target.old().texture;
         self.material.set_texture("screenTexture", tex);
         let screen_dim = vec2(tex.width(), tex.height());
         self.material.set_uniform("screenSize", screen_dim);
@@ -309,6 +338,17 @@ impl Effect {
 
         let vp = get_viewport();
         self.material.set_uniform("UVScale", vec2(vp.2 as _, vp.3 as _) / screen_dim);
+        // The viewport and the copied rectangle both use framebuffer coordinates.
+        // Map viewport-relative coordinates to the cropped texture's pixel grid.
+        let chart_uv = chart_input.map_or(Vec4::ZERO, |(_, _, w, h)| {
+            vec4(
+                (vp.0 - x0) as f32 / w as f32,
+                (vp.1 - y0) as f32 / h as f32,
+                vp.2 as f32 / w as f32,
+                vp.3 as f32 / h as f32,
+            )
+        });
+        self.material.set_uniform("ChartInputUV", chart_uv);
 
         gl_use_material(self.material);
         if clip.is_some() {
@@ -339,8 +379,14 @@ varying vec2 uv;
 uniform mat4 Model;
 uniform mat4 Projection;
 uniform vec2 UVScale;
+uniform vec4 ChartInputUV;
 
 void main() {
     gl_Position = Projection * Model * vec4(position, 1);
-    uv = (texcoord - vec2(0.5)) * UVScale + vec2(0.5);
+    if (ChartInputUV.z > 0.0) {
+        vec2 viewportUV = gl_Position.xy / gl_Position.w * 0.5 + vec2(0.5);
+        uv = ChartInputUV.xy + viewportUV * ChartInputUV.zw;
+    } else {
+        uv = (texcoord - vec2(0.5)) * UVScale + vec2(0.5);
+    }
 }"#;

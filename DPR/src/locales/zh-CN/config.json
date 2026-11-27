@@ -325,6 +325,7 @@
   "note-scale": "按键缩放",
   "note-scale-tip": "每个按键的缩放",
   "chart-ratio": "谱面缩放",
+  "effect-chart-input": "限制自定义着色器采样到游玩区",
   "chart-ratio-tip": "画面的缩放",
   "judge-mode": "判定模式",
   "judge-modes": "默认,强制 Good,强制 Bad",

@@ -213,6 +213,7 @@ const RENDER_ITEM = {
 const CHART = {
   renderBgDim: { widget: 'checkbox' },
   chartRatio: { widget: 'number', uiValue: 'number' },
+  effectChartInput: { widget: 'checkbox' },
   noteScale: { widget: 'number', uiValue: 'number' },
   speed: { widget: 'combobox' },
   fade: { widget: 'number' },

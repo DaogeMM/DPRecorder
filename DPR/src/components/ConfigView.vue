@@ -198,7 +198,7 @@ const {
 // 名单 = 模板用到的那些键 + 几个界面独占的槽位（hwAccel / maxParticlesText /
 // judgeRangeTransition / respack / encoder / judgeMode —— 它们不是 RenderConfig 的键）。
 const {
-  resolution, endingLength, renderLoading, hires, chartDebugLine, chartDebugLineFields, chartDebugNote, chartDebugNoteFields, chartDebugUi, chartDebugUiAnchorX, chartDebugUiAnchorY, chartDebugUiSize, chartDebugUiAlpha, chartDebugUiNoteCount, chartDebugUiTap, chartDebugUiHold, chartDebugUiFlick, chartDebugUiDrag, chartDebugUiBpm, chartDebugUiBpmColor, chartDebugUiBpmTextOffset, chartDebugUiBpmTextSize, chartRatio,
+  resolution, endingLength, renderLoading, hires, chartDebugLine, chartDebugLineFields, chartDebugNote, chartDebugNoteFields, chartDebugUi, chartDebugUiAnchorX, chartDebugUiAnchorY, chartDebugUiSize, chartDebugUiAlpha, chartDebugUiNoteCount, chartDebugUiTap, chartDebugUiHold, chartDebugUiFlick, chartDebugUiDrag, chartDebugUiBpm, chartDebugUiBpmColor, chartDebugUiBpmTextOffset, chartDebugUiBpmTextSize, chartRatio, effectChartInput,
   fps, dynamicBitrateControl, bitrate, aggressiveChart, aggressiveNote,
   aggressiveParticle, challengeColor, challengeRank, noteScale, particle, particleSquare,
   hitFxRandomFlip, hitFxRandomFlipChance, hitFxFollowRotation,
@@ -958,6 +958,7 @@ defineExpose({
         <div class="cfg-grid">
           <!-- 配置里的 `render_bg_dim` 由下面这个数值派生（见 script 里的 watch），0 就是不压暗。 -->
           <CfgField :label="t('chart-ratio')"><v-text-field density="compact" hide-details="auto" type="number" :title="t('chart-ratio-tip')" :rules="[RULES.notEmpty, RULES.positive]" :model-value="String(chartRatio)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartRatio = n; }"></v-text-field></CfgField>
+          <CfgSwitch :label="t('effect-chart-input')" v-model="effectChartInput" />
           <!-- 0~1 范围的项用数值输入框（`CfgSlider` 全项目已不再被引用），0 等于不压暗（见上面的 watch）。 -->
           <CfgField :label="t('background-dim')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderBg" :title="t('background-dim-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(backgroundDim)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) backgroundDim = n; }"></v-text-field></CfgField>
           <CfgField :label="t('bg-blurriness')" :tip="t('bg-blurriness-tip')"><v-text-field density="compact" hide-details="auto" :disabled="!renderBg" v-model="bgBlurriness" type="number" :rules="[RULES.positiveOrZero, RULES.less10000]"></v-text-field></CfgField>
