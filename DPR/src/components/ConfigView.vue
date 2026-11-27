@@ -205,7 +205,7 @@ const {
   playerAvatar, playerName, playerRks, sampleCount, speed, volumeMusic, volumeSfx, musicLeftGain, musicRightGain, sfxLeftGain, sfxRightGain, separateTracks, stereoHit, watermark,
   notecolor, rrHitFxColor, rrHitFxScale, rrHitFxSpeed, hitcolor, linecolor, roman, chinese, combo, difficulty, judgeOffset, forceLimit,
   limitThreshold,
-  loudnessEqualization, audioMixOptimization, fileNameFormat, renderLine, renderLineExtra,
+  loudnessEqualization, audioMixOptimization, fileNameFormat, renderLine, renderLineExtra, hideNotesOnNegativeLineAlpha,
   renderNote, renderDoubleHint, renderPendingNote, pendingNoteColor, renderUiPause, renderUiName, renderUiLevel, renderUiDifficulty,
   renderUiScore, renderUiCombo, renderUiBar, flipChart, flipUi, mirrorAngle, renderBg, renderBgDim, solidBg, backgroundDim,
   // 谱面侧渲染参数：它们与谱面信息（ChartInfo）同名，`RenderView.buildParams()` 会并进 info，
@@ -1006,6 +1006,7 @@ defineExpose({
           </CfgField>
           <CfgField :label="t('note-scale')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('note-scale-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(noteScale)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) noteScale = n; }"></v-text-field></CfgField>
           <CfgField :label="t('chart-debug-note')"><v-text-field density="compact" hide-details="auto" type="number" :disabled="!renderNote" :title="t('chart-debug-note-tip')" :rules="[RULES.notEmpty, RULES.positiveOrZero]" :model-value="String(chartDebugNote)" @update:model-value="(v: string) => { const n = parseFloat(v); if (Number.isFinite(n)) chartDebugNote = n; }" :append-inner-icon="chartDebugNote > 0 ? 'mdi-cog-outline' : undefined" @click:append-inner="openDebugNoteDialog"></v-text-field></CfgField>
+          <CfgSwitch :label="t('hide-notes-on-negative-line-alpha')" v-model="hideNotesOnNegativeLineAlpha" />
           <!-- 按键染色 / 打击特效染色都在本分区 -->
           <CfgField :label="t('notecolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!renderNote" v-model="notecolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>
           <CfgField :label="t('hitcolor')"><v-textarea density="compact" hide-details="auto" rows="1" auto-grow :disabled="!particle" v-model="hitcolor" :rules="[RULES.hexColorOptional]"></v-textarea></CfgField>

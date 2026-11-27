@@ -65,6 +65,7 @@ const ALLOWED: &[(&str, Kind)] = &[
     ("renderBgDim", Kind::Bool),
     ("renderLine", Kind::Bool),
     ("renderLineExtra", Kind::Bool),
+    ("hideNotesOnNegativeLineAlpha", Kind::Bool),
     ("renderNote", Kind::Bool),
     ("renderDoubleHint", Kind::Bool),
     ("renderPendingNote", Kind::Bool),

@@ -364,6 +364,7 @@
   "render-item": "元素",
   "render-line": "判定线",
   "render-line-extra": "其他判定线",
+  "hide-notes-on-negative-line-alpha": "启用负透明度判定线隐藏 Note",
   "render-line-extra-tips": "是否绘制文字 / 图片 / GIF / 画笔判定线",
   "render-note": "按键",
   "render-ui-pause": "暂停按钮",

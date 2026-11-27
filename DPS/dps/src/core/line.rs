@@ -560,20 +560,17 @@ impl JudgeLine {
             }
             let mut line_set_debug_alpha = false;
             if alpha < 0.0 {
-                // `w == 0` 就是 `-1 < alpha < 0`：谱面转换器把「这条判定线全透明」写成
-                // `-1.7881394e-08` 这类浮点误差值时落在这里。官方语义只是**线自己不可见**，
-                // 线上的音符照常显示；所以这种情况不能按下面的 PE 负 alpha 扩展整条跳过
-                //（参考实现 Phira 在这里直接 `return`，会把整条线的音符一起吞掉，
-                //  `心の記憶` 的 HD 谱面就是这么被吞光的）。
+                // 转换器可能把全透明写成微小负数。RPE 的 -1 归一化后约为 -0.00392，
+                // 应触发整条线的音符隐藏；PEC 仍按负透明度的整数部分解释扩展指令。
                 let w = (-alpha).floor() as u32;
-                if w != 0 {
-                    if !settings.pe_alpha_extension {
-                        if res.config.chart_debug_note > 0. {
-                            line_set_debug_alpha = true;
-                        } else {
+                if !settings.pe_alpha_extension {
+                    if res.config.hide_notes_on_negative_line_alpha && alpha < -1e-6 {
+                        if res.config.chart_debug_note <= 0. {
                             return;
                         }
+                        line_set_debug_alpha = true;
                     }
+                } else if w != 0 {
                     match w {
                         1 => {
                             if res.config.chart_debug_note > 0. {
