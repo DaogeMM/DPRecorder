@@ -219,7 +219,6 @@ async fn parse_effect(r: &mut BpmList, rpe: ExtEffect, fs: &mut dyn FileSystem) 
             })
         })
         .collect::<Result<_>>()?;
-    let chart_only = rpe.shader.starts_with('/');
     let string;
     let mut effect = Effect::new(
         range,
@@ -238,7 +237,7 @@ async fn parse_effect(r: &mut BpmList, rpe: ExtEffect, fs: &mut dyn FileSystem) 
         vars,
         rpe.global,
     )?;
-    effect.chart_only = chart_only;
+    effect.chart_only = true;
     Ok(effect)
 }
 

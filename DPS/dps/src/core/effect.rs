@@ -143,11 +143,13 @@ impl Uniform for (String, bool) {
 pub(super) struct EffectInput {
     size: (i32, i32),
     target: RenderTarget,
+    output: RenderTarget,
 }
 
 impl Drop for EffectInput {
     fn drop(&mut self) {
         self.target.delete();
+        self.output.delete();
     }
 }
 
@@ -292,55 +294,61 @@ impl Effect {
         let y0 = y.clamp(0, height as i32);
         let x1 = (x + w).clamp(x0, width as i32);
         let y1 = (y + h).clamp(y0, height as i32);
-        let clip = (self.chart_only && !cfg!(target_arch = "wasm32")
+        let clip = (res.config.effect_chart_input && self.chart_only && !cfg!(target_arch = "wasm32")
             && (x0, y0, x1, y1) != (0, 0, width as i32, height as i32))
             .then_some((x0, height as i32 - y1, x1 - x0, y1 - y0));
         if clip.is_some_and(|(_, _, w, h)| w == 0 || h == 0) {
             return;
         }
-        let chart_input = clip.filter(|_| res.config.effect_chart_input);
         target.swap();
         let mut tex = target.old().texture;
-        if clip.is_some() {
+        let full_output = target.output();
+        let mut output = full_output;
+        gl.quad_gl.render_pass(Some(full_output.render_pass));
+        let vp = get_viewport();
+        let saved_viewport = gl.quad_gl.get_viewport();
+        if let Some((_, _, w, h)) = clip {
             let source = super::internal_id(target.old());
-            let destination = super::internal_id(target.output());
-            let input = chart_input.map(|rect| {
-                let size = (rect.2, rect.3);
-                if res.effect_input.as_ref().is_none_or(|input| input.size != size) {
-                    res.effect_input = Some(EffectInput {
-                        size,
-                        target: render_target(size.0 as u32, size.1 as u32),
-                    });
-                }
-                let input = res.effect_input.as_ref().unwrap();
-                tex = input.target.texture;
-                (super::internal_id(input.target), (x0, y0, size.0, size.1))
-            });
-            // The destination may still hold a previous frame. Preserve the
-            // current image outside the scissor before drawing this effect.
+            let destination = super::internal_id(full_output);
+            let size = (w, h);
+            if res.effect_input.as_ref().is_none_or(|input| input.size != size) {
+                res.effect_input = Some(EffectInput {
+                    size,
+                    target: render_target(w as u32, h as u32),
+                    output: render_target(w as u32, h as u32),
+                });
+            }
+            let input = res.effect_input.as_ref().unwrap();
+            tex = input.target.texture;
+            output = input.output;
+            let input_fbo = super::internal_id(input.target);
+            let output_fbo = super::internal_id(output);
+            // Preserve the full frame and initialize the local output for blending.
             let copied = unsafe {
                 use miniquad::gl::*;
                 glDisable(GL_SCISSOR_TEST);
                 let result = super::copy_fbo(source, destination, target.dim())
-                    && input.is_none_or(|(dst, rect)| super::render::copy_fbo_region(source, dst, rect));
+                    && super::render::copy_fbo_region(source, input_fbo, (x0, y0), (0, 0), size)
+                    && super::copy_fbo(input_fbo, output_fbo, (w as u32, h as u32));
                 glEnable(GL_SCISSOR_TEST);
                 result
             };
             if !copied {
                 target.swap();
+                gl.quad_gl.render_pass(Some(target.output().render_pass));
                 return;
             }
+            gl.quad_gl.viewport(None);
         }
         self.material.set_texture("screenTexture", tex);
         let screen_dim = vec2(tex.width(), tex.height());
         self.material.set_uniform("screenSize", screen_dim);
-        gl.quad_gl.render_pass(Some(target.output().render_pass));
+        gl.quad_gl.render_pass(Some(output.render_pass));
 
-        let vp = get_viewport();
         self.material.set_uniform("UVScale", vec2(vp.2 as _, vp.3 as _) / screen_dim);
         // The viewport and the copied rectangle both use framebuffer coordinates.
         // Map viewport-relative coordinates to the cropped texture's pixel grid.
-        let chart_uv = chart_input.map_or(Vec4::ZERO, |(_, _, w, h)| {
+        let chart_uv = clip.map_or(Vec4::ZERO, |(_, _, w, h)| {
             vec4(
                 (vp.0 - x0) as f32 / w as f32,
                 (vp.1 - y0) as f32 / h as f32,
@@ -351,15 +359,26 @@ impl Effect {
         self.material.set_uniform("ChartInputUV", chart_uv);
 
         gl_use_material(self.material);
-        if clip.is_some() {
-            gl.quad_gl.scissor(clip);
-        }
         let top = 1. / if self.global { screen_aspect() } else { res.aspect_ratio };
         draw_rectangle(-1., -top, 2., top * 2., WHITE);
-        if clip.is_some() {
-            gl.quad_gl.scissor(None);
-        }
         gl_use_default_material();
+        if let Some((_, _, w, h)) = clip {
+            gl.flush();
+            gl.quad_gl.viewport(saved_viewport);
+            let copied = unsafe {
+                use miniquad::gl::*;
+                glDisable(GL_SCISSOR_TEST);
+                let result = super::render::copy_fbo_region(
+                    super::internal_id(output), super::internal_id(full_output), (0, 0), (x0, y0), (w, h),
+                );
+                glEnable(GL_SCISSOR_TEST);
+                result
+            };
+            if !copied {
+                target.swap();
+            }
+            gl.quad_gl.render_pass(Some(target.output().render_pass));
+        }
     }
 }
 
@@ -386,6 +405,7 @@ void main() {
     if (ChartInputUV.z > 0.0) {
         vec2 viewportUV = gl_Position.xy / gl_Position.w * 0.5 + vec2(0.5);
         uv = ChartInputUV.xy + viewportUV * ChartInputUV.zw;
+        gl_Position.xy = (uv * 2.0 - vec2(1.0)) * gl_Position.w;
     } else {
         uv = (texcoord - vec2(0.5)) * UVScale + vec2(0.5);
     }

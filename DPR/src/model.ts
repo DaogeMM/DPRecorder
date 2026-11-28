@@ -753,7 +753,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   chartDebugUiBpmTextOffset: 0.04,
   chartDebugUiBpmTextSize: 0.4,
   chartRatio: 1,
-  effectChartInput: true,
+  effectChartInput: false,
   allGood: false,
   allBad: false,
   touchSim: false,
